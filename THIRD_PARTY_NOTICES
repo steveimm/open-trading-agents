@@ -1,0 +1,12 @@
+TradingAgents financial-data adapters and tool behavior
+
+Upstream: https://github.com/TauricResearch/TradingAgents
+Source revision: e8f5503e9b86d5c2710b0c76b1f686703968c9df (0.7.0)
+License: Apache License, Version 2.0 (full text in LICENSE)
+Authors: Tauric Research and TradingAgents contributors
+
+The financial-data modules under src/open_trading_agents/dataflows and the
+financial-tool behavior in src/open_trading_agents/tools.py are adapted from
+TradingAgents. Modifications include independent configuration, package imports,
+typing, documentation, local MCP tool exposure, and removal of graph-framework
+coupling. No upstream telemetry, update checks, or direct model clients are included.
