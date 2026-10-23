@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -64,6 +66,7 @@ class Workflow:
         self.recorder: EventRecorder | None = None
         self.sink: EventSink | None = None
         self.active_steps: dict[str, str] = {}
+        self.screening_futures: set[Future[tuple[list[bool], str]]] = set()
         self.data_config = default_data_config()
         self.data_config["data_cache_dir"] = str(settings.state_dir / "cache")
         for key, value in settings.data.items():
@@ -172,7 +175,7 @@ class Workflow:
         if name not in self.sessions:
             workspace = self.directory / "agents" / "".join(c if c.isalnum() else "_" for c in name)
             tools = role.tools
-            if role.stage == "analysis" and role_key != "reflection" and self.settings.web_research:
+            if role_key in ("market", "social", "news", "fundamentals") and self.settings.web_research:
                 tools = (*tools, "search_web", "fetch_webpage")
             spec = AgentSpec(name, role.stage, system_prompt(role, self.settings.output_language), workspace,
                              workspace / "sessions", self.store.session(name), tools,
@@ -190,10 +193,13 @@ class Workflow:
         self.active_steps[name] = key
         try:
             result = await self.sessions[name].prompt(supplied)
+            if result.stop_reason not in ("stop", "end_turn", "completed") or not result.text.strip():
+                raise RuntimeError(f"{name} did not produce a complete response ({result.stop_reason})")
+        except BaseException as exc:
+            await self._event("error", role.stage, name, f"{type(exc).__name__}: {exc}")
+            raise
         finally:
             self.active_steps.pop(name, None)
-        if result.stop_reason not in ("stop", "end_turn", "completed") or not result.text.strip():
-            raise RuntimeError(f"{name} did not produce a complete response ({result.stop_reason})")
         self.store.save_session(name, result.session_id)
         self.store.finish_step(key, result.text)
         await self._event("agent_end", role.stage, name, output=result.text)
@@ -221,7 +227,26 @@ class Workflow:
                 if not evidence:
                     await self._event("tool_start", "analysis", ROLES[key].name, tool="get_social_sentiment", tool_call_id="prefetch-social")
                     try:
-                        evidence = await asyncio.to_thread(FinancialTools(self.tool_context).get_social_sentiment)
+                        loop = asyncio.get_running_loop()
+
+                        def screen(posts: list[str]) -> tuple[list[bool], str]:
+                            """Request optional screening without blocking the application event loop.
+
+                            Args:
+                                posts: Source posts supplied by the data adapter.
+
+                            Returns:
+                                Relevance decisions and the source summary note.
+                            """
+                            future = asyncio.run_coroutine_threadsafe(self._screen_posts(posts), loop)
+                            self.screening_futures.add(future)
+                            try:
+                                return future.result()
+                            finally:
+                                self.screening_futures.discard(future)
+
+                        tools = FinancialTools(self.tool_context, screen=screen if self.settings.social_screening else None)
+                        evidence = await asyncio.to_thread(tools.get_social_sentiment)
                     except Exception as exc:
                         evidence = f"DATA_UNAVAILABLE: sentiment sources could not be retrieved ({type(exc).__name__})."
                     self.store.set_metadata("sentiment_evidence", evidence)
@@ -229,6 +254,34 @@ class Workflow:
                                       tool="get_social_sentiment", tool_call_id="prefetch-social")
             text = await self._call(f"analyst:{key}", key, f"{self._instrument()}\n\nProduce your research report.\n\n{evidence}")
             self.outputs[ROLES[key].name] = text
+
+    async def _screen_posts(self, posts: list[str]) -> tuple[list[bool], str]:
+        """Screen a source batch through a normal harness session, preserving data on failure.
+
+        Args:
+            posts: Untrusted source post texts in stable order.
+
+        Returns:
+            A keep flag per post and an explicitly model-derived stance summary.
+        """
+        if not posts:
+            return [], "No posts available for screening."
+        body = json.dumps({"ticker": self.ticker, "posts": posts}, ensure_ascii=False)
+        digest = hashlib.sha256(body.encode()).hexdigest()[:16]
+        try:
+            response = await self._call(f"screen:{digest}", "screening", body, f"Sentiment Screening {digest}")
+            parsed = parse_decision("screening", response)
+            indexes = [item.index for item in parsed.items]
+            if sorted(indexes) != list(range(len(posts))):
+                raise ValueError("screening did not return exactly one result per source post")
+            ordered = sorted(parsed.items, key=lambda item: item.index)
+            keep = [item.relevance >= 0.3 for item in ordered]
+            stances = [item.stance if item.confidence >= 0.5 else "unclear" for item, kept in zip(ordered, keep, strict=True) if kept]
+            counts = ", ".join(f"{stances.count(stance)} {stance}" for stance in ("bullish", "bearish", "neutral", "unclear"))
+            return keep, f"Model screening retained {sum(keep)} of {len(posts)} posts for {self.ticker}: {counts}."
+        except Exception as exc:
+            await self._event("status", "analysis", "Sentiment Analyst", f"Optional social screening unavailable: {type(exc).__name__}")
+            return [True] * len(posts), "Model screening unavailable; all source posts were retained."
 
     async def _debate(self, stage: str, keys: tuple[str, ...], rounds: int, evidence: str) -> str:
         """Rotate speakers while appending only new public contributions to each native session.
@@ -358,6 +411,8 @@ class Workflow:
             self.store.set_metadata("status", "complete" if not notes else "partial")
             return notes
         finally:
+            for future in tuple(self.screening_futures):
+                future.cancel()
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
             try:
                 await asyncio.to_thread(self.recorder.close)
@@ -435,6 +490,8 @@ class Workflow:
             await self._event("error", "reports", text=f"{type(exc).__name__}: {exc}")
             raise
         finally:
+            for future in tuple(self.screening_futures):
+                future.cancel()
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
             report_settings = {
                 "harness": self.settings.harness.kind, "quick_model": self.settings.model_settings().model,
