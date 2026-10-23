@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from open-trading-agents!")
+from importlib.metadata import version
+
+__version__ = version("open-trading-agents")
