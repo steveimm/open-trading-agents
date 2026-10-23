@@ -18,7 +18,8 @@ for line in sys.stdin:
  if method=='initialized':continue
  if method=='config/read':result={'config':{'mcp_servers':{'ambient':{}}}}
  if method=='thread/start':
-  assert r['params']['environments']==[]
+  assert 'environments' not in r['params']
+  assert r['params']['sandbox']=='workspace-write'
   assert r['params']['config']['mcp_servers']['ambient']['enabled'] is False
   result={'thread':{'id':'thread1'}}
  if method=='turn/start':
@@ -58,3 +59,24 @@ for line in sys.stdin:
     assert all(row["cache_write_tokens"] is None for row in usage)
     assert any(event.kind == "reasoning" for event in events)
     assert any(event.kind == "tool_result" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_codex_patch_failure_keeps_streamed_native_output(tmp_path: Path) -> None:
+    """Retain sandbox failure output when final patch records contain no output field."""
+    from open_trading_agents.harnesses.codex import CodexSession
+
+    events: list[AgentEvent] = []
+
+    async def emit(event: AgentEvent) -> None:
+        """Collect normalized tool output."""
+        events.append(event)
+
+    session = CodexSession(HarnessConfig(kind="codex"), AgentSpec("a", "analysis", "", tmp_path, tmp_path), emit)
+    session.tool_output = {}
+    await session.handle({"method": "item/fileChange/outputDelta", "params": {"itemId": "patch", "delta": "bwrap failed"}})
+    await session.handle({"method": "item/completed", "params": {"item": {"type": "fileChange", "id": "patch", "status": "failed"}}})
+    assert [event.text for event in events] == ["bwrap failed", "bwrap failed"]
+    assert events[0].data["delta"] is True
+    assert events[1].data["final"] is True
+    assert events[1].data["is_error"] is True

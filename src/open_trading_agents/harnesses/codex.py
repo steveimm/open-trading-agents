@@ -14,6 +14,7 @@ class CodexSession(JsonProcess):
         """Initialize native app-server and create or resume one durable thread."""
         self.turn_id: str | None = None
         self.output = ""
+        self.tool_output: dict[str, str] = {}
         self.turn_status = ""
         self.generation = 0
         self.tool_generations: set[int] = set()
@@ -25,16 +26,18 @@ class CodexSession(JsonProcess):
             if stored.get("session_id") == self.session_id:
                 self.last_usage = stored.get("total", {})
         flags = (
-            "shell_tool", "unified_exec", "apps", "plugins", "tool_suggest", "multi_agent", "multi_agent_v2",
+            "apps", "plugins", "tool_suggest", "multi_agent", "multi_agent_v2",
             "memories", "memory_tool", "hooks", "codex_hooks", "plugin_hooks", "code_mode", "js_repl",
             "browser_use", "computer_use", "image_generation", "view_image", "goals", "sleep_tool",
             "remote_models", "api_key_model_discovery", "runtime_metrics", "search_tool", "tool_search",
         )
+        self.allow_execution = self.spec.allow_execution
         overrides = {
             "analytics.enabled": False, "otel.exporter": "none", "otel.trace_exporter": "none",
             "otel.metrics_exporter": "none", "web_search": "disabled", "tools.update_plan.enabled": False,
             "skills.include_instructions": False, "features.skip_host_skill_discovery": True,
             "project_doc_max_bytes": 0, **{f"features.{name}": False for name in flags},
+            "features.shell_tool": self.allow_execution, "features.unified_exec": self.allow_execution,
         }
         args = [*(self.config.command or ("codex",)), "app-server", *self.config.extra_args]
         for key, value in overrides.items():
@@ -55,8 +58,9 @@ class CodexSession(JsonProcess):
             }
         params: dict[str, Any] = {
             "cwd": str(self.spec.workspace), "baseInstructions": self.spec.system_prompt,
-            "developerInstructions": "Use only the supplied financial tools and evidence. Do not read or modify files or execute commands.",
-            "approvalPolicy": "never", "sandbox": "read-only", "config": {**overrides, "mcp_servers": servers},
+            "developerInstructions": "Use the supplied evidence and tools. Native code execution is for calculation verification inside the agent workspace. Do not install software or change system settings.",
+            "approvalPolicy": "never", "sandbox": "workspace-write" if self.allow_execution else "read-only",
+            "config": {**overrides, "mcp_servers": servers},
         }
         if self.config.model:
             params["model"] = self.config.model
@@ -67,7 +71,9 @@ class CodexSession(JsonProcess):
             params.update(threadId=self.session_id, excludeTurns=True)
         else:
             method = "thread/start"
-            params.update(ephemeral=False, environments=[], selectedCapabilityRoots=[])
+            params.update(ephemeral=False, selectedCapabilityRoots=[])
+            if not self.allow_execution:
+                params["environments"] = []
         response = await self.request({"method": method, "params": params})
         self.session_id = response["result"]["thread"]["id"]
         await self.event("session", session_id=self.session_id)
@@ -86,9 +92,10 @@ class CodexSession(JsonProcess):
             self.tool_generations.clear()
             self.finished = asyncio.get_running_loop().create_future()
             await self.event("prompt", text, message_id=uuid.uuid4().hex)
-            response = await self.request({"method": "turn/start", "params": {
-                "threadId": self.session_id, "input": [{"type": "text", "text": text}], "environments": [],
-            }})
+            params = {"threadId": self.session_id, "input": [{"type": "text", "text": text}]}
+            if not self.allow_execution:
+                params["environments"] = []
+            response = await self.request({"method": "turn/start", "params": params})
             self.turn_id = response["result"]["turn"]["id"]
             await self.event("status", "Prompt accepted by Codex", prompt_accepted=True, turn_id=self.turn_id)
             try:
@@ -106,6 +113,8 @@ class CodexSession(JsonProcess):
         """Interrupt the active native turn without deleting its thread."""
         if self.turn_id and self.process is not None and self.process.returncode is None:
             await self.request({"method": "turn/interrupt", "params": {"threadId": self.session_id, "turnId": self.turn_id}})
+            if self.finished is not None and not self.finished.done():
+                await asyncio.wait_for(asyncio.shield(self.finished), 15)
 
     async def record_usage(self, params: dict[str, Any]) -> None:
         """Convert cumulative native counters into exactly-once incremental usage.
@@ -128,6 +137,17 @@ class CodexSession(JsonProcess):
                          cache_read_tokens=delta.get("cachedInputTokens"), cache_write_tokens=delta.get("cacheWriteInputTokens"),
                          reasoning_tokens=delta.get("reasoningOutputTokens"))
 
+    async def check_tool_budget(self) -> None:
+        """Interrupt excessive tool rounds at native provider-generation boundaries."""
+        self.tool_generations.add(self.generation)
+        if len(self.tool_generations) <= self.spec.max_tool_rounds or self.budget_error:
+            return
+        self.budget_error = f"Codex exceeded its {self.spec.max_tool_rounds} tool rounds"
+        await self.event("error", self.budget_error)
+        await self.send({"id": uuid.uuid4().hex, "method": "turn/interrupt", "params": {
+            "threadId": self.session_id, "turnId": self.turn_id,
+        }})
+
     async def handle(self, record: dict[str, Any]) -> None:
         """Translate app-server items, reasoning, tool activity, and completion.
 
@@ -143,6 +163,11 @@ class CodexSession(JsonProcess):
         elif method in {"item/reasoning/textDelta", "item/reasoning/summaryTextDelta"}:
             suffix = "summary" if "summary" in method else "reasoning"
             await self.event("reasoning", params.get("delta", ""), message_id=f"{params.get('itemId')}:{suffix}")
+        elif method in {"item/commandExecution/outputDelta", "item/fileChange/outputDelta"}:
+            identifier, delta = params.get("itemId", ""), params.get("delta", "")
+            self.tool_output[identifier] = self.tool_output.get(identifier, "") + delta
+            await self.event("tool_result", delta, tool="shell" if "commandExecution" in method else "file_change",
+                             tool_call_id=identifier, delta=True)
         elif method in {"item/started", "item/completed"}:
             item, completed = params.get("item", {}), method.endswith("completed")
             kind = item.get("type")
@@ -151,17 +176,21 @@ class CodexSession(JsonProcess):
                 await self.event("text", self.output, message_id=item.get("id"), final=True)
             elif kind == "mcpToolCall":
                 if not completed:
-                    self.tool_generations.add(self.generation)
-                    if len(self.tool_generations) > self.spec.max_tool_rounds and not self.budget_error:
-                        self.budget_error = f"Codex exceeded its {self.spec.max_tool_rounds} tool rounds"
-                        await self.event("error", self.budget_error)
-                        await self.send({"id": uuid.uuid4().hex, "method": "turn/interrupt", "params": {
-                            "threadId": self.session_id, "turnId": self.turn_id,
-                        }})
+                    await self.check_tool_budget()
                 await self.event("tool_result" if completed else "tool_start",
                                  json.dumps(item.get("result") or item.get("error") if completed else item.get("arguments"),
                                             ensure_ascii=False),
                                  tool=item.get("tool"), tool_call_id=item.get("id"), is_error=bool(item.get("error")))
+            elif kind in {"commandExecution", "fileChange"}:
+                if not completed:
+                    await self.check_tool_budget()
+                if completed:
+                    text = item.get("aggregatedOutput") or self.tool_output.pop(item.get("id", ""), "")
+                else:
+                    text = item.get("command") or json.dumps(item.get("changes", []))
+                await self.event("tool_result" if completed else "tool_start", text,
+                                 tool="shell" if kind == "commandExecution" else "file_change", tool_call_id=item.get("id"),
+                                 final=completed, is_error=item.get("status") in {"failed", "declined"} or item.get("exitCode", 0) not in (None, 0), native=item)
             elif kind in {"contextCompaction", "context_compaction"}:
                 await self.event("status", "Context compaction completed" if completed else "Compacting context", native=item)
         elif method == "thread/tokenUsage/updated":

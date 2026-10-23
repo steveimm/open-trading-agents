@@ -26,24 +26,21 @@ class ClaudeSession(JsonProcess):
         self.pending_prompt_id: str | None = None
         self.turn_usage_count = 0
         self.tool_messages: set[str] = set()
-        self.previous_cumulative: dict[str, int] = {}
-        self.usage_path = self.spec.session_dir / "claude_usage.json"
-        if self.spec.session_id and self.usage_path.exists():
-            stored = json.loads(self.usage_path.read_text())
-            if stored.get("session_id") == self.session_id:
-                self.previous_cumulative = stored.get("total", {})
+        self.turn_usage: dict[str, int] = {}
         servers = {}
         if self.spec.tools and self.spec.tool_server_command:
             servers["trading"] = {"command": self.spec.tool_server_command[0], "args": list(self.spec.tool_server_command[1:]),
                                   "env": self.spec.tool_environment}
+        native_tools = ["Bash", "Read", "Write", "Edit"] if self.spec.allow_execution else []
         args = [*(self.config.command or ("claude",)), "--print", "--input-format", "stream-json", "--output-format", "stream-json",
-                "--verbose", "--include-partial-messages", "--replay-user-messages", "--tools", "",
+                "--verbose", "--include-partial-messages", "--replay-user-messages", "--tools", ",".join(native_tools),
                 "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers}),
                 "--system-prompt", self.spec.system_prompt, "--permission-mode", "dontAsk", "--disable-slash-commands",
                 "--no-chrome", "--settings", json.dumps({"disableAllHooks": True, "enableAllProjectMcpServers": False}),
                 "--setting-sources", "user", "--prompt-suggestions", "false"]
-        if self.spec.tools:
-            args.extend(["--allowedTools", ",".join(f"mcp__trading__{name}" for name in self.spec.tools)])
+        allowed_tools = [*native_tools, *(f"mcp__trading__{name}" for name in self.spec.tools)]
+        if allowed_tools:
+            args.extend(["--allowedTools", ",".join(allowed_tools)])
         args.extend(["--resume" if self.spec.session_id else "--session-id", self.session_id])
         if self.config.model:
             args.extend(["--model", self.config.model])
@@ -68,6 +65,7 @@ class ClaudeSession(JsonProcess):
             self.output, self.result_error = "", ""
             self.turn_number += 1
             self.turn_usage_count = 0
+            self.turn_usage = {}
             self.tool_messages.clear()
             self.finished = asyncio.get_running_loop().create_future()
             identifier = str(uuid.uuid4())
@@ -88,6 +86,8 @@ class ClaudeSession(JsonProcess):
         """Request native interruption without deleting saved conversation state."""
         if self.process is not None and self.process.returncode is None:
             await self.send({"type": "control_request", "request_id": str(uuid.uuid4()), "request": {"subtype": "interrupt"}})
+            if self.finished is not None and not self.finished.done():
+                await asyncio.wait_for(asyncio.shield(self.finished), 15)
 
     async def usage(self, identifier: str, raw: dict[str, Any]) -> None:
         """Publish each native model response once, preserving unknown cache fields.
@@ -100,6 +100,9 @@ class ClaudeSession(JsonProcess):
             return
         self.counted.add(identifier)
         self.turn_usage_count += 1
+        for key, value in raw.items():
+            if isinstance(value, int):
+                self.turn_usage[key] = self.turn_usage.get(key, 0) + value
         read, write = raw.get("cache_read_input_tokens"), raw.get("cache_creation_input_tokens")
         await self.event("usage", request_id=identifier, input_tokens=raw.get("input_tokens", 0) + (read or 0) + (write or 0),
                          output_tokens=raw.get("output_tokens", 0), cache_read_tokens=read, cache_write_tokens=write,
@@ -126,7 +129,7 @@ class ClaudeSession(JsonProcess):
                 if len(self.tool_messages) > self.spec.max_tool_rounds and not self.result_error:
                     self.result_error = f"Claude exceeded its {self.spec.max_tool_rounds} tool rounds"
                     await self.event("error", self.result_error)
-                    await self.cancel()
+                    await self.send({"type": "control_request", "request_id": str(uuid.uuid4()), "request": {"subtype": "interrupt"}})
                 self.block_tools[index] = block
                 await self.event("tool_start", json.dumps(block.get("input", {})), tool=block.get("name"), tool_call_id=block.get("id"))
         elif kind == "content_block_delta":
@@ -136,7 +139,8 @@ class ClaudeSession(JsonProcess):
                 channel = "text" if delta["type"] == "text_delta" else "reasoning"
                 text = delta.get("text", delta.get("thinking", ""))
                 self.message_text[identifier] = self.message_text.get(identifier, "") + text
-                await self.event(channel, text, message_id=identifier)
+                if text:
+                    await self.event(channel, text, message_id=identifier)
             elif delta.get("type") == "input_json_delta":
                 tool = self.block_tools.get(index, {})
                 await self.event("tool_start", delta.get("partial_json", ""), tool=tool.get("name"),
@@ -193,8 +197,9 @@ class ClaudeSession(JsonProcess):
                     await self.event("text", self.output, message_id=self.final_block_id(identifier, "text", self.output, index), final=True)
                 elif block.get("type") == "thinking":
                     thinking = block.get("thinking", "")
-                    await self.event("reasoning", thinking,
-                                     message_id=self.final_block_id(identifier, "thinking", thinking, index), final=True)
+                    if thinking:
+                        await self.event("reasoning", thinking,
+                                         message_id=self.final_block_id(identifier, "thinking", thinking, index), final=True)
             if identifier != self.message_id:
                 await self.usage(identifier, message.get("usage") or {})
             if record.get("error"):
@@ -207,15 +212,13 @@ class ClaudeSession(JsonProcess):
                 if block.get("type") == "tool_result":
                     content = block.get("content", "")
                     await self.event("tool_result", content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
-                                     tool_call_id=block.get("tool_use_id"), is_error=block.get("is_error", False))
+                                     tool_call_id=block.get("tool_use_id"), is_error=block.get("is_error", False), final=True)
         elif kind == "result":
             total = record.get("usage") or {}
-            if not self.turn_usage_count and total:
-                delta = {key: max(0, value - self.previous_cumulative.get(key, 0))
+            remaining = {key: max(0, value - self.turn_usage.get(key, 0))
                          for key, value in total.items() if isinstance(value, int)}
-                await self.usage(f"{self.session_id}:turn:{self.turn_number}", delta)
-            self.previous_cumulative = {key: value for key, value in total.items() if isinstance(value, int)}
-            self.usage_path.write_text(json.dumps({"session_id": self.session_id, "total": self.previous_cumulative}))
+            if any(remaining.values()):
+                await self.usage(f"{self.session_id}:turn:{self.turn_number}:remaining", remaining)
             self.output = record.get("result") or self.output
             if record.get("is_error") or record.get("subtype") != "success":
                 self.result_error = "\n".join(record.get("errors") or []) or record.get("result") or f"Claude ended with {record.get('subtype')}"

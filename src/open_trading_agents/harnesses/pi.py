@@ -18,7 +18,9 @@ class PiSession(JsonProcess):
                 "--no-prompt-templates", "--no-themes", "--no-mcp", "--no-context-files", "--no-approve",
                 "--extension", str(extension), "--system-prompt", self.spec.system_prompt,
                 "--session-dir", str(self.spec.session_dir)]
-        args.extend(["--tools", ",".join(self.spec.tools)] if self.spec.tools else ["--no-tools"])
+        native_tools = ["read", "write", "edit", "bash"] if self.spec.allow_execution else []
+        active_tools = [*native_tools, *self.spec.tools]
+        args.extend(["--tools", ",".join(active_tools)] if active_tools else ["--no-tools"])
         if self.config.model:
             args.extend(["--model", self.config.model])
         if self.config.provider:
@@ -40,6 +42,7 @@ class PiSession(JsonProcess):
             "PI_OFFLINE": "1", "PI_TELEMETRY": "0", "OTA_TOOL_COMMAND": json.dumps(self.spec.tool_server_command),
             "OTA_TOOL_ENV": json.dumps(self.spec.tool_environment), "OTA_TOOLS": json.dumps(self.spec.tools),
             "OTA_MAX_TOOL_ROUNDS": str(self.spec.max_tool_rounds), "OTA_METADATA_FILE": str(self.metadata_path),
+            "OTA_NATIVE_TOOLS": json.dumps(native_tools),
         })
         response = await self.request({"type": "get_state"})
         await self.read_metadata()
@@ -157,12 +160,41 @@ class PiSession(JsonProcess):
                                  cache_write_tokens=cache_write, reasoning_tokens=reasoning)
             if message.get("errorMessage"):
                 await self.event("error", message["errorMessage"], message_id=self.message_id)
-        elif kind in {"tool_execution_start", "tool_execution_end"}:
-            await self.event("tool_start" if kind.endswith("start") else "tool_result",
-                             json.dumps(record.get("args") if kind.endswith("start") else record.get("result"), ensure_ascii=False),
-                             tool=record.get("toolName"), tool_call_id=record.get("toolCallId"), is_error=record.get("isError", False))
+        elif kind in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+            starting = kind == "tool_execution_start"
+            result = record.get("partialResult") if kind == "tool_execution_update" else record.get("result")
+            content = (result or {}).get("content", []) if isinstance(result, dict) else []
+            text = "\n".join(part.get("text", "") for part in content if part.get("type") == "text")
+            await self.event("tool_start" if starting else "tool_result",
+                             json.dumps(record.get("args"), ensure_ascii=False) if starting else text,
+                             tool=record.get("toolName"), tool_call_id=record.get("toolCallId"),
+                             is_error=record.get("isError", False), snapshot=kind == "tool_execution_update",
+                             final=kind == "tool_execution_end", native=result)
+        elif kind == "entry_appended" and record.get("entry", {}).get("type") == "usage":
+            entry = record["entry"]
+            await self.auxiliary_usage(entry.get("usage", {}), entry.get("id") or uuid.uuid4().hex, entry.get("kind", "auxiliary"))
+        elif kind in {"compaction_end", "auto_compaction_end"}:
+            await self.read_metadata()
+            await self.auxiliary_usage((record.get("result") or {}).get("usage", {}), uuid.uuid4().hex, "compaction")
+            await self.event("status", "Compaction finished", native=record)
         elif kind == "agent_settled":
             if self.finished is not None and not self.finished.done():
                 self.finished.set_result(None)
-        elif kind in {"auto_retry_start", "auto_retry_end", "auto_compaction_start", "auto_compaction_end", "agent_start"}:
+        elif kind in {"auto_retry_start", "auto_retry_end", "auto_compaction_start", "compaction_start", "agent_start",
+                      "summarization_retry_scheduled", "summarization_retry_attempt_start", "summarization_retry_finished"}:
             await self.event("status", kind.replace("_", " "), native=record)
+
+    async def auxiliary_usage(self, usage: dict[str, Any], identifier: str, source: str) -> None:
+        """Count native summarization and other auxiliary model requests separately.
+
+        Args:
+            usage: Native aggregate token counts for the auxiliary operation.
+            identifier: Stable native entry ID, when available.
+            source: Native purpose of the additional model usage.
+        """
+        if not usage:
+            return
+        await self.event("usage", request_id=f"{source}:{identifier}", source=source,
+                         input_tokens=usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
+                         output_tokens=usage.get("output", 0), cache_read_tokens=usage.get("cacheRead") or None,
+                         cache_write_tokens=usage.get("cacheWrite") or None, reasoning_tokens=usage.get("reasoning"))

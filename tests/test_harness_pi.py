@@ -11,10 +11,13 @@ from open_trading_agents.harnesses.process import HarnessError
 
 
 @pytest.mark.asyncio
-async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path) -> None:
+@pytest.mark.parametrize("allow_execution", [False, True])
+async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path, allow_execution: bool) -> None:
     """Exercise native subprocess framing, session continuation, and authoritative usage."""
     script = tmp_path / "fake_pi.py"
     script.write_text('''import json,os,sys,time
+native_allowed='--tools' in sys.argv and 'bash' in sys.argv[sys.argv.index('--tools')+1].split(',')
+assert native_allowed==(os.environ['ALLOW_EXECUTION']=='True')
 metadata=os.environ['OTA_METADATA_FILE']
 with open(metadata,'a') as handle:handle.write(json.dumps({'type':'ota_ready','tools':[]})+'\\n')
 count=0
@@ -52,8 +55,8 @@ for line in sys.stdin:
         if event.data.get("prompt_accepted"):
             accepted.set()
 
-    spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions")
-    session = await open_session(HarnessConfig(command=(sys.executable, str(script)), environment={"ACCEPTANCE_GATE": str(gate)}), spec, emit)
+    spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions", allow_execution=allow_execution)
+    session = await open_session(HarnessConfig(command=(sys.executable, str(script)), environment={"ACCEPTANCE_GATE": str(gate), "ALLOW_EXECUTION": str(allow_execution)}), spec, emit)
     try:
         task = asyncio.create_task(session.prompt("first"))
         await asyncio.wait_for(accepted.wait(), 2)
@@ -88,3 +91,22 @@ async def test_process_exit_does_not_leave_prompt_waiting(tmp_path: Path) -> Non
     spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions")
     with pytest.raises(HarnessError, match="exited"):
         await open_session(HarnessConfig(command=(sys.executable, "-c", "raise SystemExit(1)")), spec, emit)
+
+
+@pytest.mark.asyncio
+async def test_pi_auxiliary_compaction_usage_counts_cached_input(tmp_path: Path) -> None:
+    """Include native compaction costs without counting cached input twice."""
+    from open_trading_agents.harnesses.pi import PiSession
+
+    events: list[AgentEvent] = []
+
+    async def emit(event: AgentEvent) -> None:
+        """Collect normalized usage."""
+        events.append(event)
+
+    session = PiSession(HarnessConfig(), AgentSpec("a", "analysis", "", tmp_path, tmp_path), emit)
+    await session.auxiliary_usage({"input": 20, "cacheRead": 30, "cacheWrite": 0, "output": 5}, "native-entry", "compaction")
+    assert events[0].data == {
+        "request_id": "compaction:native-entry", "source": "compaction", "input_tokens": 50, "output_tokens": 5,
+        "cache_read_tokens": 30, "cache_write_tokens": None, "reasoning_tokens": None,
+    }

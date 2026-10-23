@@ -16,12 +16,13 @@ export default async function tradingTools(pi) {
     if (usage) publish("ota_provider_usage", { usage });
   });
   const command = JSON.parse(process.env.OTA_TOOL_COMMAND || "[]");
-  if (!command.length) { publish("ota_ready", { tools: [] }); return; }
   const environment = JSON.parse(process.env.OTA_TOOL_ENV || "{}");
   const allowed = new Set(JSON.parse(process.env.OTA_TOOLS || "[]"));
+  const nativeTools = JSON.parse(process.env.OTA_NATIVE_TOOLS || "[]");
+  const activeTools = [...nativeTools, ...allowed];
   const maximumRounds = Number(process.env.OTA_MAX_TOOL_ROUNDS || 20);
   let rounds = 0;
-  pi.on("input", () => { rounds = 0; pi.setActiveTools([...allowed]); return { action: "continue" }; });
+  pi.on("input", () => { rounds = 0; pi.setActiveTools(activeTools); return { action: "continue" }; });
   pi.on("turn_end", (event) => {
     if (!event.toolResults?.length) return;
     rounds += 1;
@@ -31,6 +32,7 @@ export default async function tradingTools(pi) {
       publish("ota_budget", { rounds, maximumRounds });
     }
   });
+  if (!command.length) { publish("ota_ready", { tools: nativeTools }); return; }
   const child = spawn(command[0], command.slice(1), { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...environment } });
   let sequence = 0;
   const waiting = new Map();
@@ -41,6 +43,7 @@ export default async function tradingTools(pi) {
     waiting.clear();
   };
   child.on("error", fail);
+  child.stdin.on("error", fail);
   child.on("exit", (code) => fail(new Error(`Financial tool server exited (${code}): ${diagnostic}`)));
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => {
@@ -58,12 +61,16 @@ export default async function tradingTools(pi) {
   });
   const request = (method, params, signal) => new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Financial tool ${method} timed out`)); }, 120000);
-    waiting.set(id, { resolve, reject, timer });
+    let timer;
+    const finish = (callback, value) => {
+      clearTimeout(timer); waiting.delete(id); signal?.removeEventListener("abort", cancel); callback(value);
+    };
     const cancel = () => {
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } }) + "\n");
-      clearTimeout(timer); waiting.delete(id); reject(new Error("Tool execution cancelled"));
+      finish(reject, new Error("Tool execution cancelled"));
     };
+    timer = setTimeout(() => finish(reject, new Error(`Financial tool ${method} timed out`)), 120000);
+    waiting.set(id, { resolve: (value) => finish(resolve, value), reject: (error) => finish(reject, error), timer });
     if (signal?.aborted) { cancel(); return; }
     signal?.addEventListener("abort", cancel, { once: true });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
@@ -92,5 +99,5 @@ export default async function tradingTools(pi) {
   } while (cursor);
   const missing = [...allowed].filter((name) => !registered.has(name));
   if (missing.length) { child.kill(); throw new Error(`Financial tools missing from MCP server: ${missing.join(", ")}`); }
-  publish("ota_ready", { tools: [...registered] });
+  publish("ota_ready", { tools: [...nativeTools, ...registered] });
 }
