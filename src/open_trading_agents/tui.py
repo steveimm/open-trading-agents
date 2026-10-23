@@ -7,9 +7,11 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from itertools import pairwise
 from pathlib import Path
 
-from rich.cells import cell_len, chop_cells
+from rich._wrap import divide_line
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -154,11 +156,11 @@ class TranscriptView(ScrollView):
         Returns:
             Cell offsets of the line's wrapped rows.
         """
-        starts, offset = [], 0
-        for chunk in chop_cells(text, width):
-            starts.append(offset)
-            offset += cell_len(chunk)
-        return starts or [0]
+        boundaries = [0, *divide_line(text, width, fold=True)]
+        starts = [0]
+        for left, right in pairwise(boundaries):
+            starts.append(starts[-1] + cell_len(text[left:right]))
+        return starts
 
     def render_line(self, y: int) -> Strip:
         width = max(1, self.scrollable_content_region.width)
@@ -167,14 +169,16 @@ class TranscriptView(ScrollView):
         if index < 0 or index >= len(self._wrap_starts):
             return Strip.blank(width, self.rich_style)
         if index not in self._cache:
-            self._cache[index] = Strip(self.document.lines[index].render(self.app.console))
+            line = self.document.lines[index]
+            self._cache[index] = Strip(line.render(self.app.console)).apply_style(self.app.console.get_style(line.style))
             if len(self._cache) > 256:
                 self._cache.popitem(last=False)
         strip = self._cache[index]
         self._cache.move_to_end(index)
         local_row = row - self._offsets[index]
         offset = self._wrap_starts[index][local_row] if local_row < len(self._wrap_starts[index]) else 0
-        return strip.crop_extend(offset, offset + width, self.rich_style).apply_style(self.rich_style)
+        stop = self._wrap_starts[index][local_row + 1] if local_row + 1 < len(self._wrap_starts[index]) else strip.cell_length
+        return strip.crop(offset, min(stop, offset + width)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
 
     def on_resize(self, event: events.Resize) -> None:
         """Reindex line widths when the terminal or pane changes size.
@@ -218,6 +222,7 @@ class Activity:
     round: int | None = None
     turn: int | None = None
     total_rounds: int | None = None
+    previous_seconds: float = 0
 
     def elapsed(self, now: float) -> float:
         """Calculate elapsed duration independently of incoming model events.
@@ -228,7 +233,8 @@ class Activity:
         Returns:
             Seconds spent between start and completion or now.
         """
-        return max(0, (self.finished or now) - self.started) if self.started is not None else 0
+        current = max(0, (self.finished or now) - self.started) if self.started is not None else 0
+        return self.previous_seconds + current
 
 
 def duration(seconds: float) -> str:
@@ -318,6 +324,9 @@ class TradingApp(App[None]):
     .full-grid { grid-size: 1 1 !important; }
     .hidden { display: none; }
     #details { height: auto; max-height: 12; padding: 0; border: none; }
+    #memory-details { height: auto; max-height: 12; padding: 0; border: none; }
+    #memory-transcript { height: 7; }
+    #memory-status { height: 2; }
     #raw-events { height: 8; }
     #usage { height: 2; padding: 0 1; background: #1a2635; }
     #shortcuts { height: 1; padding: 0 1; color: #8799af; }
@@ -340,6 +349,7 @@ class TradingApp(App[None]):
         Binding("enter,f", "fullscreen", "Expand", priority=True),
         Binding("escape", "restore", "Restore", priority=True),
         Binding("d", "details", "Payloads", priority=True),
+        Binding("m", "memory", "Memory", priority=True),
         Binding("ctrl+c,q", "stop", "Quit", priority=True),
     ]
 
@@ -372,6 +382,7 @@ class TradingApp(App[None]):
         self.agent_documents: dict[str, Transcript] = {}
         self.stage_documents = {stage: Transcript() for stage, _ in STAGES}
         self.raw_document = Transcript()
+        self.memory_document = Transcript()
         self.agents: dict[str, Activity] = {}
         self.stages = {stage: Activity() for stage, _ in STAGES}
         self.usage: dict[tuple[str, str], Usage] = {}
@@ -383,10 +394,13 @@ class TradingApp(App[None]):
         self._finished: float | None = None
         self._run_task: asyncio.Task[None] | None = None
         self._failure: str | None = None
-        self._streamed: set[tuple[str, str, str]] = set()
+        self._message_parts: dict[tuple[str, str, str], list[str]] = {}
         self._turn_streamed: set[str] = set()
         self._status_widgets: dict[str, Static] = {}
-        self._agent_stages: dict[str, str] = {}
+        self._stage_agents: dict[str, list[str]] = {stage: [] for stage, _ in STAGES}
+        self._memory_agents: list[str] = []
+        self._tool_names: dict[tuple[str, str], str] = {}
+        self._reports: dict[str, str] = {}
         for key in selected_analysts:
             name = ANALYSTS.get(key, key)
             self.agent_documents[name] = Transcript()
@@ -436,6 +450,9 @@ class TradingApp(App[None]):
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
                         yield self._view(self.stage_documents[stage], f"transcript-{stage}")
+        with Collapsible(title="Memory reflections", collapsed=True, id="memory-details", classes="hidden"):
+            yield Static(id="memory-status")
+            yield self._view(self.memory_document, "memory-transcript")
         with Collapsible(title="Raw event payloads", collapsed=True, id="details"):
             yield self._view(self.raw_document, "raw-events")
         yield Static(id="usage")
@@ -502,7 +519,7 @@ class TradingApp(App[None]):
         Args:
             event: Deduplicated run event.
         """
-        now = time.monotonic()
+        now = time.monotonic() - max(0, time.time() - event.timestamp)
         kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(
             event.kind, event.kind
         )
@@ -510,16 +527,27 @@ class TradingApp(App[None]):
         agent = event.agent or "Workflow"
         document = self.agent_documents.setdefault(agent, Transcript())
         activity = self.agents.setdefault(agent, Activity())
-        self._agent_stages[agent] = stage
+        if agent != "Workflow" and agent not in self._stage_agents[stage]:
+            self._stage_agents[stage].append(agent)
+        memory = agent == "Memory" or agent.startswith("Reflection ")
+        stage_document = self.memory_document if memory else self.stage_documents[stage]
+        if memory and agent not in self._memory_agents:
+            self._memory_agents.append(agent)
+            self.query_one("#memory-details", Collapsible).set_class(self.active_stage != "analysis", "hidden")
         activity.last_event = now
         self.raw_document.append(json.dumps(asdict(event), ensure_ascii=False, default=str) + "\n", "#899bb3")
+        if kind == "system" and event.data.get("source") == "native_request":
+            return
         if kind == "stage_start":
+            self._finished = None
             self.stages[stage] = Activity(started=now, status="running")
         elif kind == "stage_end":
             self.stages[stage].finished = now
             self.stages[stage].status = "complete"
         elif kind == "agent_start":
-            activity.started = activity.started or now
+            if activity.finished is not None:
+                activity.previous_seconds = activity.elapsed(now)
+            activity.started = now
             activity.status = "running"
             activity.finished = None
             self._turn_streamed.discard(agent)
@@ -528,7 +556,7 @@ class TradingApp(App[None]):
             activity.status = "complete"
             output = event.data.get("output", "")
             if output and agent not in self._turn_streamed:
-                self._append_event(document, self.stage_documents[stage], agent, "text", str(output))
+                self._append_event(document, stage_document, agent, "text", str(output))
         elif kind == "turn_start":
             activity.round = event.data.get("round")
             activity.turn = event.data.get("turn")
@@ -557,28 +585,55 @@ class TradingApp(App[None]):
             if kind in {"text", "reasoning"}:
                 message_id = str(event.data.get("message_id", ""))
                 key = agent, message_id, kind
-                if event.data.get("final") and key in self._streamed:
-                    return
-                self._streamed.add(key)
+                if event.data.get("final"):
+                    previous = "".join(self._message_parts.get(key, []))
+                    if text.startswith(previous):
+                        text = text[len(previous) :]
+                    elif previous:
+                        document.heading(f"{agent} · Final response")
+                        stage_document.heading(f"{agent} · Final response")
+                    self._message_parts[key] = [event.text]
+                    if not text:
+                        return
+                else:
+                    self._message_parts.setdefault(key, []).append(text)
                 if kind == "text":
                     self._turn_streamed.add(agent)
             if kind in {"tool_start", "tool_result"}:
-                name = event.data.get("name") or event.data.get("tool_name") or "tool"
+                tool_id = str(event.data.get("tool_call_id") or event.event_id)
+                tool_key = agent, tool_id
+                name = (
+                    event.data.get("tool")
+                    or event.data.get("name")
+                    or event.data.get("tool_name")
+                    or self._tool_names.get(tool_key, "tool")
+                )
                 payload = event.data.get("arguments") if kind == "tool_start" else event.data.get("result")
                 if not text and payload is not None:
                     text = json.dumps(payload, ensure_ascii=False, default=str)
-                text = f"\n{name}{' result' if kind == 'tool_result' else ''}\n{text}\n"
+                if kind == "tool_result":
+                    result_label = " result (error)" if event.data.get("is_error") else " result"
+                    text = f"\n{name}{result_label}\n{text}\n"
+                elif tool_key not in self._tool_names:
+                    text = f"\n{name}\n{'' if text.strip() == '{}' else text}"
+                self._tool_names[tool_key] = name
                 activity.status = "using tool" if kind == "tool_start" else "running"
             if kind == "error":
                 activity.status = "error"
                 activity.finished = now
             if kind == "report":
+                if self._reports.get(agent) == text:
+                    return
+                self._reports[agent] = text
                 self.stage_documents["reports"].heading(agent)
                 self.stage_documents["reports"].append(text + "\n", CHANNEL_COLORS[kind])
+                if stage != "reports":
+                    self.stage_documents[stage].heading(f"{agent} · Final report")
+                    self.stage_documents[stage].append(text + "\n", CHANNEL_COLORS[kind])
                 return
             if stage in DEBATE_STAGES and kind in {"text", "reasoning", "prompt"}:
                 self._speaker(stage, agent)
-            self._append_event(document, self.stage_documents[stage], agent, kind, text)
+            self._append_event(document, stage_document, agent, kind, text)
 
     def _speaker(self, stage: str, agent: str) -> None:
         """Point a debate side pane at the current speaker's complete transcript.
@@ -624,7 +679,7 @@ class TradingApp(App[None]):
         self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}{separator}{status} · Total {elapsed}")
         stage = self.stages[self.active_stage]
         stage_text = f"{STAGES[self.stage_index][1]} · {stage.status} · {duration(stage.elapsed(now))}"
-        participants = [name for name, key in self._agent_stages.items() if key == self.active_stage]
+        participants = self._stage_agents[self.active_stage]
         if self.active_stage not in {"analysis", "reports", *DEBATE_STAGES} and participants:
             name = participants[-1]
             activity = self.agents[name]
@@ -647,6 +702,13 @@ class TradingApp(App[None]):
             self._status_widgets[f"speaker-{debate}"].update(
                 f"{name} · {activity.status} · {duration(activity.elapsed(now))}\nRound {activity.round or 1}/{activity.total_rounds or '?'} · Turn {activity.turn or 1}\n{usage_label(values)}"
             )
+        if self._memory_agents:
+            name = self._memory_agents[-1]
+            activity = self.agents[name]
+            values = [value for (agent, _), value in self.usage.items() if agent in self._memory_agents]
+            self._status_widgets["memory-status"].update(
+                f"{name} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}"
+            )
         explanation = "" if compact else "\nInput includes cached tokens · — unavailable · +? incomplete cache reporting"
         self._status_widgets["usage"].update(usage_label(list(self.usage.values()), compact=compact) + explanation)
 
@@ -656,11 +718,16 @@ class TradingApp(App[None]):
         Args:
             event: New terminal dimensions.
         """
-        self._adapt_layout()
+        self._adapt_layout(event.size)
 
-    def _adapt_layout(self) -> None:
-        """Adjust status density without replacing transcript widgets."""
-        compact = self.size.height < 32 or self.size.width < 110
+    def _adapt_layout(self, size: Size | None = None) -> None:
+        """Adjust status density without replacing transcript widgets.
+
+        Args:
+            size: Newly reported terminal size, or the mounted app size.
+        """
+        size = size or self.size
+        compact = size.height < 32 or size.width < 110
         self.screen.set_class(compact, "compact")
         if "shortcuts" in self._status_widgets:
             shortcuts = "Tab stage · Arrows pane/scroll · f expand · Esc grid · End live · d payloads · q quit"
@@ -678,6 +745,7 @@ class TradingApp(App[None]):
             return
         self.stage_index = [key for key, _ in STAGES].index(stage)
         self.query_one("#stages", ContentSwitcher).current = f"stage-{stage}"
+        self.query_one("#memory-details", Collapsible).set_class(stage != "analysis" or not self._memory_agents, "hidden")
         self.call_after_refresh(self.flush_events)
         self.refresh_clocks()
 
@@ -705,7 +773,7 @@ class TradingApp(App[None]):
             direction: Keyboard navigation direction.
         """
         focused = self.focused
-        if isinstance(focused, TranscriptView) and focused.id in {"raw-events", f"current-{self.active_stage}"}:
+        if isinstance(focused, TranscriptView) and focused.id in {"raw-events", "memory-transcript", f"current-{self.active_stage}"}:
             if direction not in {"left", "right"}:
                 focused.navigate(direction)
             return
@@ -761,7 +829,19 @@ class TradingApp(App[None]):
         details = self.query_one("#details", Collapsible)
         details.collapsed = not details.collapsed
         if not details.collapsed:
+            self.query_one("#memory-details", Collapsible).collapsed = True
             self.query_one("#raw-events", TranscriptView).focus()
+        self.call_after_refresh(self.flush_events)
+
+    def action_memory(self) -> None:
+        """Expand memory reflections without adding a fifth analyst pane."""
+        if self.active_stage != "analysis" or not self._memory_agents:
+            return
+        details = self.query_one("#memory-details", Collapsible)
+        details.collapsed = not details.collapsed
+        if not details.collapsed:
+            self.query_one("#details", Collapsible).collapsed = True
+            self.query_one("#memory-transcript", TranscriptView).focus()
         self.call_after_refresh(self.flush_events)
 
     async def action_stop(self) -> None:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
+from rich.color import Color
 from textual.containers import Vertical
 from textual.strip import Strip
 from textual.widgets import Collapsible, ContentSwitcher, Static
@@ -95,9 +97,13 @@ async def test_tabs_selection_fullscreen_scrolling_and_resize() -> None:
         assert view.scroll_y == top
         await pilot.resize_terminal(100, 36)
         await pilot.pause()
+        assert app.screen.has_class("compact")
         assert not view.following
         assert "0000 한국어 日本語" in view.document.plain()
         assert len(view._cache) <= 256
+        await pilot.resize_terminal(140, 42)
+        await pilot.pause()
+        assert not app.screen.has_class("compact")
         await pilot.press("end")
         assert view.following
         await pilot.press("escape", "tab")
@@ -241,3 +247,73 @@ async def test_compact_panes_preserve_wide_characters_and_readable_viewports() -
         assert app.screen.has_class("compact")
         rendered = "".join("".join(segment.text for segment in view.render_line(row)).rstrip() for row in range(view.virtual_size.height))
         assert rendered == source
+        document.append("\nFinal colored line", "green")
+        view.sync()
+        last = view.render_line(view.virtual_size.height - 1)
+        colors = [segment.style.color for segment in last if segment.text.strip() and segment.style]
+        assert colors and all(color == Color.parse("green") for color in colors)
+
+
+@pytest.mark.asyncio
+async def test_native_payloads_tool_deltas_memory_and_replayed_timings() -> None:
+    """Preserve all inputs without duplicating native payloads or tool headings."""
+    app = TradingApp()
+    base = time.time() - 100
+    async with app.run_test(size=(140, 42)) as pilot:
+        agent = "Reflection 42"
+        events = [
+            AgentEvent("agent_start", agent, "analysis", timestamp=base),
+            AgentEvent("system", agent, "analysis", "Application system instructions"),
+            AgentEvent("system", agent, "analysis", '{"messages": ["raw native input"]}', {"source": "native_request"}),
+            AgentEvent("prompt", agent, "analysis", "Review the resolved decision."),
+            AgentEvent("reasoning", agent, "analysis", "Consider the measured outcome.", {"message_id": "one"}),
+            AgentEvent("text", agent, "analysis", "First lesson.", {"message_id": "one", "final": True}),
+            AgentEvent("agent_end", agent, "analysis", data={"output": "First lesson."}, timestamp=base + 5),
+            AgentEvent("agent_start", agent, "analysis", timestamp=base + 60),
+            AgentEvent("tool_start", agent, "analysis", "{}", {"tool": "get_stock_data", "tool_call_id": "tool-1"}),
+            AgentEvent("tool_start", agent, "analysis", '{"ticker":', {"tool_call_id": "tool-1", "delta": True}),
+            AgentEvent("tool_start", agent, "analysis", '"NVDA"}', {"tool_call_id": "tool-1", "delta": True}),
+            AgentEvent("tool_result", agent, "analysis", "Verified rows", {"tool_call_id": "tool-1"}),
+            AgentEvent("agent_end", agent, "analysis", data={"output": "Second lesson."}, timestamp=base + 68),
+        ]
+        for event in events:
+            await app.receive(event)
+        app.flush_events()
+        await pilot.pause()
+        assert app.agents[agent].elapsed(time.monotonic()) == pytest.approx(13, abs=0.1)
+        transcript = app.memory_document.plain()
+        assert "Application system instructions" in transcript
+        assert "raw native input" not in transcript
+        assert "raw native input" in app.raw_document.plain()
+        assert transcript.count("First lesson.") == 1
+        assert '{"ticker":"NVDA"}' in transcript
+        assert transcript.count("get_stock_data") == 2
+        assert "Second lesson." in transcript
+        panel = app.query_one("#memory-details", Collapsible)
+        assert not panel.has_class("hidden")
+        assert panel.collapsed
+        await pilot.press("m")
+        assert not panel.collapsed
+        await pilot.press("tab")
+        assert panel.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_final_snapshots_complete_partial_streams_and_report_duplicates() -> None:
+    """Keep authoritative final text when a provider's last snapshot adds content."""
+    app = TradingApp(selected_analysts=("market",))
+    async with app.run_test(size=(100, 35)) as pilot:
+        agent = "Market Analyst"
+        for event in (
+            AgentEvent("text", agent, "analysis", "Partial ", {"message_id": "one"}),
+            AgentEvent("text", agent, "analysis", "Partial completed response", {"message_id": "one", "final": True}),
+            AgentEvent("report", agent, "analysis", "Rendered final report"),
+            AgentEvent("report", agent, "reports", "Rendered final report"),
+        ):
+            await app.receive(event)
+        app.flush_events()
+        await pilot.pause()
+        transcript = app.agent_documents[agent].plain()
+        assert transcript.count("Partial completed response") == 1
+        assert app.stage_documents["reports"].plain().count("Rendered final report") == 1
+        assert app.query_one("#analyst-0", TranscriptView).size.width > 90
