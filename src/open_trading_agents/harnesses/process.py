@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -42,7 +43,7 @@ class JsonProcess:
         await self.emit(AgentEvent(kind, self.spec.agent, self.spec.stage, text, data))
 
     async def start_process(self, arguments: list[str], environment: dict[str, str] | None = None) -> None:
-        """Start an isolated native CLI with line-delimited protocol pipes.
+        """Start a native CLI with protocol pipes and an owned process group on POSIX.
 
         Args:
             arguments: Executable and command-line arguments.
@@ -55,6 +56,7 @@ class JsonProcess:
             self.process = await asyncio.create_subprocess_exec(
                 *arguments, cwd=self.spec.workspace, env=env, stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024,
+                start_new_session=os.name == "posix",
             )
         except FileNotFoundError as error:
             raise HarnessError(f"Harness executable not found: {arguments[0]}") from error
@@ -142,32 +144,53 @@ class JsonProcess:
         """
         raise NotImplementedError
 
+    def stop_process_group(self, force: bool) -> None:
+        """Signal only this harness and its POSIX process group during forced shutdown.
+
+        Args:
+            force: Kill remaining processes after graceful termination has failed.
+        """
+        process = self.process
+        if process is None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+            elif process.returncode is None:
+                if force:
+                    process.kill()
+                else:
+                    process.terminate()
+
     async def close(self) -> None:
-        """Release the process while preserving native session files."""
+        """Close native input first, then bound forced cleanup of the owned process group."""
         self.closing = True
         if self.finished is not None and not self.finished.done():
             self.finished.cancel()
         process = self.process
-        if process is not None and process.returncode is None:
-            if process.stdin is not None:
-                process.stdin.close()
-            try:
-                await asyncio.wait_for(process.wait(), 3)
-            except TimeoutError:
-                process.terminate()
+        try:
+            if process is not None and process.returncode is None:
+                if process.stdin is not None:
+                    process.stdin.close()
                 try:
                     await asyncio.wait_for(process.wait(), 3)
                 except TimeoutError:
-                    process.kill()
-                    await process.wait()
-        for task in (self.reader, self.stderr_reader):
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-        for future in self.pending.values():
-            if not future.done():
-                future.cancel()
+                    self.stop_process_group(force=False)
+                    try:
+                        await asyncio.wait_for(process.wait(), 3)
+                    except TimeoutError:
+                        pass
+                    self.stop_process_group(force=True)
+                    await asyncio.wait_for(process.wait(), 3)
+        finally:
+            for task in (self.reader, self.stderr_reader):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+            for future in self.pending.values():
+                if not future.done():
+                    future.cancel()
 
 
 async def start_checked(session: JsonProcess, start: Callable[[], Awaitable[None]]) -> None:
