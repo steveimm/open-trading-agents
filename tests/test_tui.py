@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 
 import pytest
 from rich.color import Color
@@ -11,6 +12,9 @@ from textual.strip import Strip
 from textual.widgets import Collapsible, ContentSwitcher, Static
 
 from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
+from open_trading_agents.events import EventRecorder
+from open_trading_agents.reporting import write_transcript
+from open_trading_agents.storage import RunStore
 from open_trading_agents.tui import TradingApp, Transcript, TranscriptView, usage_label
 
 
@@ -439,6 +443,8 @@ async def test_optional_screening_failure_remains_visible_without_stopping_analy
         assert app.agents["Market Analyst"].finished is None
         assert app._failure is None
         assert not app.query_one("#memory-details", Collapsible).has_class("hidden")
+
+
 async def test_prefetch_time_remains_part_of_agent_wall_time() -> None:
     """Source collection starts the role clock and model startup does not reset it."""
     import time
@@ -446,8 +452,72 @@ async def test_prefetch_time_remains_part_of_agent_wall_time() -> None:
     app = TradingApp()
     async with app.run_test(size=(100, 35)):
         started = time.time() - 10
-        await app.receive(AgentEvent("tool_start", "Sentiment Analyst", "analysis", timestamp=started,
-                                     data={"tool": "get_social_sentiment", "tool_call_id": "prefetch"}))
+        await app.receive(
+            AgentEvent(
+                "tool_start",
+                "Sentiment Analyst",
+                "analysis",
+                timestamp=started,
+                data={"tool": "get_social_sentiment", "tool_call_id": "prefetch"},
+            )
+        )
         await app.receive(AgentEvent("agent_start", "Sentiment Analyst", "analysis", timestamp=started + 9))
         app.flush_events()
         assert app.agents["Sentiment Analyst"].elapsed(time.monotonic()) >= 9
+
+
+@pytest.mark.asyncio
+async def test_megabyte_tool_previews_preserve_exact_events_and_ordinary_transcripts(tmp_path: Path) -> None:
+    """Bound large displayed payloads while real persistence retains every original character."""
+    agent = "Market Analyst"
+    complete = "HEAD-分析-" + "data123 " * 131_072 + "TAIL-日本語"
+    final = complete + " final stderr tail"
+    native = json.dumps({"messages": [{"role": "system", "content": "Financial evidence\\n" * 60_000}]})
+    prompt = "Ordinary input: " + "P" * 25_000
+    output = "Ordinary output: " + "O" * 25_000
+    events = [
+        AgentEvent("system", agent, "analysis", native, {"source": "native_request"}),
+        AgentEvent("prompt", agent, "analysis", prompt),
+        AgentEvent("tool_start", agent, "analysis", "python calculation.py", {"tool": "Bash", "tool_call_id": "large"}),
+        AgentEvent("tool_result", agent, "analysis", complete[:600_000], {"tool_call_id": "large", "snapshot": True}),
+        AgentEvent("tool_result", agent, "analysis", complete[600_000:], {"tool_call_id": "large", "delta": True}),
+        AgentEvent("tool_result", agent, "analysis", final, {"tool_call_id": "large", "final": True}),
+        AgentEvent("text", agent, "analysis", output, {"message_id": "answer"}),
+        AgentEvent("text", agent, "analysis", output, {"message_id": "answer", "final": True}),
+    ]
+    assert len(final.encode()) > 1_000_000 and len(native.encode()) > 1_000_000
+    recorder = EventRecorder(tmp_path)
+    app = TradingApp(selected_analysts=("market",), run_dir=tmp_path)
+    try:
+        async with app.run_test(size=(150, 44)) as pilot:
+            for event in events:
+                recorder.append(event)
+                await app.receive(event)
+            app.flush_events()
+            await pilot.pause()
+            transcript = app.agent_documents[agent].plain()
+            marker = f"...[omitted {len(final) - 8_000} chars]..."
+            assert final[:6_000] in transcript and final[-2_000:] in transcript
+            assert transcript.count(marker) == 1
+            assert final not in transcript
+            assert app._tool_outputs[agent, "large"] == final
+            assert prompt in transcript and output in transcript
+            assert len(app.raw_document.plain()) < 40_000
+            assert str(tmp_path / "transcript.jsonl") in str(app.query_one("#transcript-hint", Static).render())
+            await pilot.press("d", "home", "pagedown", "end", "d")
+            view = app.query_one("#analyst-0", TranscriptView)
+            assert len(view._cache) <= 256
+            assert all(strip.cell_length <= view.size.width for strip in view._cache.values())
+    finally:
+        await asyncio.to_thread(recorder.close)
+    store = RunStore(tmp_path)
+    try:
+        saved = store.events()
+    finally:
+        store.close()
+    assert saved == events
+    write_transcript(tmp_path / "transcript.jsonl", saved)
+    exported = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    assert exported[0]["text"] == native
+    assert exported[5]["text"] == final
+    assert events[5].text == final

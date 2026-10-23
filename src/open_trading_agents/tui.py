@@ -7,12 +7,10 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from itertools import pairwise
 from pathlib import Path
 
 from rich._wrap import divide_line
-from rich.cells import cell_len
-from rich.text import Text
+from rich.text import Span, Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -38,6 +36,9 @@ CHANNEL_COLORS = {
 DEBATE_STAGES = {"research", "risk"}
 CONTROL_ESCAPES = {code: f"\\x{code:02x}" for code in (*range(32), *range(127, 160)) if code not in (9, 10)}
 CONTROL_ESCAPES[13] = "\\r"
+TOOL_PREVIEW_LIMIT = 10_000
+TOOL_PREVIEW_PREFIX = 6_000
+TOOL_PREVIEW_SUFFIX = 2_000
 
 
 @dataclass
@@ -92,6 +93,21 @@ def tool_text(event: AgentEvent) -> str:
             parts.append(f"{key}:{separator}{rendered}")
         return "\n".join(parts)
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def tool_preview(text: str) -> str:
+    """Shorten large tool results for display while keeping exact head and tail text.
+
+    Args:
+        text: Complete decoded tool output retained independently of this preview.
+
+    Returns:
+        Original text or a preview naming the exact omitted character count.
+    """
+    if len(text) <= TOOL_PREVIEW_LIMIT:
+        return text
+    omitted = len(text) - TOOL_PREVIEW_PREFIX - TOOL_PREVIEW_SUFFIX
+    return f"{text[:TOOL_PREVIEW_PREFIX]}\n...[omitted {omitted} chars]...\n{text[-TOOL_PREVIEW_SUFFIX:]}"
 
 
 class Transcript:
@@ -209,7 +225,7 @@ class TranscriptView(ScrollView):
         self._revision = -1
         self._offsets = [0]
         self._wrap_starts: list[list[int]] = []
-        self._cache: OrderedDict[int, Strip] = OrderedDict()
+        self._cache: OrderedDict[tuple[int, int], Strip] = OrderedDict()
 
     def set_document(self, document: Transcript) -> None:
         """Switch the current speaker without replacing the widget.
@@ -230,6 +246,8 @@ class TranscriptView(ScrollView):
 
     def sync(self) -> None:
         """Update line indexes after content or width changes, preserving scrollback."""
+        if not self.is_on_screen:
+            return
         width = max(1, self.scrollable_content_region.width)
         if width == self._width and self._revision == self.document.revision:
             return
@@ -241,9 +259,9 @@ class TranscriptView(ScrollView):
         if resized:
             self._cache.clear()
         else:
-            for index in list(self._cache):
-                if index >= start:
-                    del self._cache[index]
+            for key in list(self._cache):
+                if key[0] >= start:
+                    del self._cache[key]
         self._wrap_starts[start:] = [self._line_starts(line.plain, width) for line in self.document.lines[start:]]
         self._offsets = self._offsets[: start + 1]
         for starts in self._wrap_starts[start:]:
@@ -267,16 +285,12 @@ class TranscriptView(ScrollView):
             width: Viewport width in terminal cells.
 
         Returns:
-            Cell offsets of the line's wrapped rows.
+            Character offsets of the line's wrapped rows.
         """
-        boundaries = [0, *divide_line(text, width, fold=True)]
-        starts = [0]
-        for left, right in pairwise(boundaries):
-            starts.append(starts[-1] + cell_len(text[left:right]))
-        return starts
+        return [0, *divide_line(text, width, fold=True)]
 
     def render_line(self, y: int) -> Strip:
-        """Render one visible row from the bounded logical-line cache.
+        """Render one visible row without constructing a strip for an entire logical line.
 
         Args:
             y: Row offset within the viewport.
@@ -289,17 +303,25 @@ class TranscriptView(ScrollView):
         index = bisect.bisect_right(self._offsets, row) - 1
         if index < 0 or index >= len(self._wrap_starts):
             return Strip.blank(width, self.rich_style)
-        if index not in self._cache:
+        local_row = row - self._offsets[index]
+        key = index, local_row
+        if key not in self._cache:
             line = self.document.lines[index]
-            self._cache[index] = Strip(line.render(self.app.console)).apply_style(self.app.console.get_style(line.style))
+            starts = self._wrap_starts[index]
+            start = starts[local_row]
+            stop = starts[local_row + 1] if local_row + 1 < len(starts) else len(line)
+            visible = Text(line.plain[start:stop], style=line.style)
+            visible.spans = [
+                Span(max(0, span.start - start), min(stop, span.end) - start, span.style)
+                for span in line.spans
+                if span.end > start and span.start < stop
+            ]
+            self._cache[key] = Strip(visible.render(self.app.console)).apply_style(self.app.console.get_style(visible.style))
             if len(self._cache) > 256:
                 self._cache.popitem(last=False)
-        strip = self._cache[index]
-        self._cache.move_to_end(index)
-        local_row = row - self._offsets[index]
-        offset = self._wrap_starts[index][local_row] if local_row < len(self._wrap_starts[index]) else 0
-        stop = self._wrap_starts[index][local_row + 1] if local_row + 1 < len(self._wrap_starts[index]) else strip.cell_length
-        return strip.crop(offset, min(stop, offset + width)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
+        strip = self._cache[key]
+        self._cache.move_to_end(key)
+        return strip.adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
 
     def on_resize(self, event: events.Resize) -> None:
         """Reindex line widths when the terminal or pane changes size.
@@ -449,8 +471,11 @@ class TradingApp(App[None]):
     #memory-transcript { height: 7; }
     #memory-status { height: 2; }
     #raw-events { height: 8; }
+    #payload-hint { height: 2; color: #9fb2ca; }
     #usage { height: 2; padding: 0 1; background: #1a2635; }
     #shortcuts { height: 1; padding: 0 1; color: #8799af; }
+    #transcript-hint { display: none; height: auto; max-height: 3; padding: 0 1; color: #b7c2d4; }
+    Screen.has-previews #transcript-hint { display: block; }
     Screen.compact #run-status, Screen.compact #stage-status, Screen.compact #usage { height: 1; }
     Screen.compact #stage-tabs { height: 2; }
     Screen.compact .agent-status { height: 2; }
@@ -576,9 +601,15 @@ class TradingApp(App[None]):
         with Collapsible(title="Supporting analysis · m", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status")
             yield self._view(self.memory_document, "memory-transcript")
-        with Collapsible(title="Raw event payloads", collapsed=True, id="details"):
+        with Collapsible(title="Request and tool payloads · d", collapsed=True, id="details"):
+            yield Static(
+                "Payload previews. Text/reasoning deltas remain in agent panes.\nExact event JSON is preserved in transcript.jsonl.",
+                id="payload-hint",
+                markup=False,
+            )
             yield self._view(self.raw_document, "raw-events")
         yield Static(id="usage")
+        yield Static(id="transcript-hint", markup=False)
         yield Static(
             "Tab/Shift+Tab stage · Arrows select/scroll · Enter/f expand · Esc restore · End live · d payloads · q quit", id="shortcuts"
         )
@@ -662,7 +693,7 @@ class TradingApp(App[None]):
         activity.last_event = now
         if activity.started is None and agent != "Workflow" and kind in {"system", "prompt", "tool_start", "text", "reasoning"}:
             activity.started = now
-        self.raw_document.append(json.dumps(asdict(event), ensure_ascii=False, default=str) + "\n", "#899bb3")
+        self._record_payload(event, kind)
         if kind == "system" and event.data.get("source") == "native_request":
             return
         if kind == "stage_start":
@@ -778,15 +809,45 @@ class TradingApp(App[None]):
         text = tool_text(event)
         complete = self._tool_outputs.get(key, "") + text if event.data.get("delta") else text
         self._tool_outputs[key] = complete
+        preview = tool_preview(complete)
+        if preview != complete:
+            self._show_preview_notice()
         color = CHANNEL_COLORS["error" if event.data.get("is_error") else "tool_result"]
         if key not in self._tool_regions:
             name = event.data.get("tool") or event.data.get("name") or self._tool_names.get(key, "tool")
             label = " result (error)" if event.data.get("is_error") else " result"
             self._append_event(document, stage, event.agent, "tool_result", f"\n{name}{label}\n")
-            self._tool_regions[key] = [(target, target.append_block(complete, color)) for target in (document, stage)]
+            self._tool_regions[key] = [(target, target.append_block(preview, color)) for target in (document, stage)]
         else:
             for target, region in self._tool_regions[key]:
-                target.replace_block(region, complete, color)
+                target.replace_block(region, preview, color)
+
+    def _record_payload(self, event: AgentEvent, kind: str) -> None:
+        """Keep useful payload previews without duplicating every streamed token.
+
+        Args:
+            event: Original event, never modified by display shortening.
+            kind: Normalized display event category.
+        """
+        if kind in {"text", "reasoning"} and not event.data.get("final"):
+            return
+        if event.data.get("delta") or event.data.get("snapshot"):
+            return
+        payload = json.dumps(asdict(event), ensure_ascii=False, default=str)
+        preview = tool_preview(payload)
+        if preview != payload:
+            self._show_preview_notice()
+        self.raw_document.append(preview + "\n", "#899bb3")
+
+    def _show_preview_notice(self) -> None:
+        """Point readers from shortened displays to the exact saved event stream."""
+        if self.screen.has_class("has-previews"):
+            return
+        self.screen.add_class("has-previews")
+        location = str(self.run_dir / "transcript.jsonl") if self.run_dir else "the run's transcript.jsonl"
+        self._status_widgets["transcript-hint"].update(
+            f"Long tool/payload previews shown. Full text: {location} (exported when the run closes)."
+        )
 
     def _speaker(self, stage: str, agent: str) -> None:
         """Point a debate side pane at the current speaker's complete transcript.
