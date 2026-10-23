@@ -402,7 +402,18 @@ class MemoryLog:
                 if raw is None or alpha is None or days is None or resolved is None:
                     self._release(identifier, token)
                     continue
-                measured = {**entry, "raw_return": raw, "alpha_return": alpha, "holding_days": days, "resolution_date": resolved}
+                measured = {
+                    "id": entry["id"],
+                    "ticker": entry["ticker"],
+                    "date": entry["trade_date"],
+                    "decision": entry["decision"],
+                    "rating": entry["rating"],
+                    "benchmark": entry["benchmark"],
+                    "raw_return": raw,
+                    "alpha_return": alpha,
+                    "holding_days": days,
+                    "resolution_date": resolved,
+                }
                 reflection = await reflect(measured)
                 if not isinstance(reflection, str) or not reflection.strip():
                     raise ValueError("reflection returned no text")
