@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from open_trading_agents.cli import HarnessName, app, configured
-from open_trading_agents.config import Portfolio, Position
+from open_trading_agents.config import Portfolio, Position, Settings
 
 runner = CliRunner()
 
@@ -64,3 +64,14 @@ def test_switching_harness_discards_old_backend_specific_configuration(tmp_path:
     assert settings.harness.provider is None
     assert settings.harness.command == ()
     assert settings.harness.extra_args == ()
+
+
+def test_partial_tier_inherits_harness_and_survives_saved_run_roundtrip(tmp_path: Path) -> None:
+    """Selecting only a deep model does not silently switch its CLI back to pi."""
+    config = tmp_path / "settings.toml"
+    config.write_text('[harness]\nkind="claude"\nmodel="working-model"\n[deep]\nmodel="manager-model"\n')
+    settings = configured(config, None, None, None)
+    assert settings.model_settings(True).kind == "claude"
+    assert settings.model_settings(True).model == "manager-model"
+    restored = Settings.model_validate(settings.model_dump(mode="json"))
+    assert restored.model_settings(True) == settings.model_settings(True)

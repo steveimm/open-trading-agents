@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from open_trading_agents.dataflows.symbols import normalize_symbol
 from open_trading_agents.domain import HarnessConfig
@@ -95,6 +95,23 @@ class Settings(BaseModel):
     web_research: bool = True
     social_screening: bool = False
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def resolve_model_tiers(self) -> Settings:
+        """Resolve partial tier selections against the shared harness configuration.
+
+        Returns:
+            Settings with stable, fully resolved tiers for persistence and resume.
+        """
+        for name in ("quick", "deep"):
+            tier = getattr(self, name)
+            if tier is None:
+                continue
+            selected = tier.model_dump(exclude_unset=True)
+            kind = selected.get("kind", self.harness.kind)
+            base = self.harness if kind == self.harness.kind else HarnessSettings(kind=kind)
+            setattr(self, name, HarnessSettings.model_validate({**base.model_dump(), **selected}))
+        return self
 
     @field_validator("analysts")
     @classmethod
