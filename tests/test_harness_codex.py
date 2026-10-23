@@ -50,6 +50,7 @@ for line in sys.stdin:
         assert (await session.prompt("second")).text == "2"
     finally:
         await session.close()
+    assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
     usage = [event.data for event in events if event.kind == "usage"]
     assert len(usage) == 2
     assert [row["input_tokens"] for row in usage] == [100, 100]

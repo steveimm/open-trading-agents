@@ -82,6 +82,7 @@ class PiSession(JsonProcess):
             response = await self.request({"type": "prompt", "message": text})
             if response.get("data", {}).get("disposition") == "handled":
                 raise HarnessError("Pi handled the input as a command instead of starting an agent rollout")
+            await self.event("status", "Prompt accepted by pi", prompt_accepted=True)
             try:
                 await self.finished
             except asyncio.CancelledError:

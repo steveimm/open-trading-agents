@@ -23,6 +23,7 @@ class ClaudeSession(JsonProcess):
         self.counted: set[str] = set()
         self.block_tools: dict[int, dict[str, Any]] = {}
         self.turn_number = 0
+        self.pending_prompt_id: str | None = None
         self.turn_usage_count = 0
         self.tool_messages: set[str] = set()
         self.previous_cumulative: dict[str, int] = {}
@@ -70,6 +71,7 @@ class ClaudeSession(JsonProcess):
             self.tool_messages.clear()
             self.finished = asyncio.get_running_loop().create_future()
             identifier = str(uuid.uuid4())
+            self.pending_prompt_id = identifier
             await self.event("prompt", text, message_id=identifier)
             await self.send({"type": "user", "uuid": identifier, "session_id": self.session_id,
                              "message": {"role": "user", "content": text}, "parent_tool_use_id": None})
@@ -198,6 +200,9 @@ class ClaudeSession(JsonProcess):
             if record.get("error"):
                 await self.event("error", str(record["error"]))
         elif kind == "user":
+            if self.pending_prompt_id and record.get("uuid") == self.pending_prompt_id:
+                await self.event("status", "Prompt accepted by Claude", prompt_accepted=True, prompt_id=self.pending_prompt_id)
+                self.pending_prompt_id = None
             for block in record.get("message", {}).get("content", []) if isinstance(record.get("message", {}).get("content"), list) else []:
                 if block.get("type") == "tool_result":
                     content = block.get("content", "")

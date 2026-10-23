@@ -90,6 +90,7 @@ class CodexSession(JsonProcess):
                 "threadId": self.session_id, "input": [{"type": "text", "text": text}], "environments": [],
             }})
             self.turn_id = response["result"]["turn"]["id"]
+            await self.event("status", "Prompt accepted by Codex", prompt_accepted=True, turn_id=self.turn_id)
             try:
                 await self.finished
             except asyncio.CancelledError:

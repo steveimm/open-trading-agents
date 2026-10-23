@@ -17,7 +17,7 @@ for line in sys.stdin:
  r=json.loads(line)
  if r['type']!='user':continue
  n+=1;mid=f'message{n}'
- events=[{'type':'system','subtype':'init','session_id':r['session_id']},
+ events=[{'type':'user','uuid':r['uuid'],'message':r['message']},{'type':'system','subtype':'init','session_id':r['session_id']},
   {'type':'stream_event','event':{'type':'message_start','message':{'id':mid,'usage':{'input_tokens':70,'output_tokens':0,'cache_read_input_tokens':30}}}},
   {'type':'stream_event','event':{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'hello'}}},
   {'type':'stream_event','event':{'type':'message_delta','usage':{'output_tokens':10}}},
@@ -39,6 +39,7 @@ for line in sys.stdin:
         assert (await session.prompt("second")).text == "2"
     finally:
         await session.close()
+    assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
     usage = [event.data for event in events if event.kind == "usage"]
     assert len(usage) == 2
     assert [row["input_tokens"] for row in usage] == [100, 100]

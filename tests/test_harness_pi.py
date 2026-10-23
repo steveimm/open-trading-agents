@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from open_trading_agents.harnesses.process import HarnessError
 async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path) -> None:
     """Exercise native subprocess framing, session continuation, and authoritative usage."""
     script = tmp_path / "fake_pi.py"
-    script.write_text('''import json,os,sys
+    script.write_text('''import json,os,sys,time
 metadata=os.environ['OTA_METADATA_FILE']
 with open(metadata,'a') as handle:handle.write(json.dumps({'type':'ota_ready','tools':[]})+'\\n')
 count=0
@@ -25,6 +26,7 @@ for line in sys.stdin:
  elif kind=='prompt':
   count+=1
   print(json.dumps({'id':command['id'],'type':'response','success':True}),flush=True)
+  while not os.path.exists(os.environ['ACCEPTANCE_GATE']):time.sleep(0.01)
   events=[{'type':'ota_provider_request','payload':{'messages':[{'content':command['message']}] }},
    {'type':'ota_provider_usage','usage':{'prompt_tokens':100,'completion_tokens':5}},
    {'type':'message_start','message':{'role':'assistant'}},
@@ -41,19 +43,28 @@ for line in sys.stdin:
    else:print(json.dumps(event),flush=True)
 ''')
     events: list[AgentEvent] = []
+    accepted = asyncio.Event()
+    gate = tmp_path / "finish_allowed"
 
     async def emit(event: AgentEvent) -> None:
         """Collect normalized events from the adapter."""
         events.append(event)
+        if event.data.get("prompt_accepted"):
+            accepted.set()
 
     spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions")
-    session = await open_session(HarnessConfig(command=(sys.executable, str(script))), spec, emit)
+    session = await open_session(HarnessConfig(command=(sys.executable, str(script)), environment={"ACCEPTANCE_GATE": str(gate)}), spec, emit)
     try:
-        assert (await session.prompt("first")).text == "1"
+        task = asyncio.create_task(session.prompt("first"))
+        await asyncio.wait_for(accepted.wait(), 2)
+        assert not task.done()
+        gate.touch()
+        assert (await task).text == "1"
         assert (await session.prompt("second")).text == "2"
         assert session.session_id == "persisted-session.jsonl"
     finally:
         await session.close()
+    assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
     usage = [event for event in events if event.kind == "usage"]
     assert len(usage) == 2
     assert usage[0].data["input_tokens"] == 100
