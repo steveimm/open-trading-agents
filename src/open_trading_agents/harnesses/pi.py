@@ -36,6 +36,7 @@ class PiSession(JsonProcess):
         self.message_id = ""
         self.output = ""
         self.stop_reason = "stop"
+        self.budget_error = ""
         self.raw_usage: dict[str, Any] = {}
         self.request_number = 0
         await self.start_process(args, {
@@ -79,7 +80,7 @@ class PiSession(JsonProcess):
             The final assistant output and persisted session locator.
         """
         async with self.prompt_lock:
-            self.output, self.stop_reason = "", "stop"
+            self.output, self.stop_reason, self.budget_error = "", "stop", ""
             self.finished = asyncio.get_running_loop().create_future()
             await self.event("prompt", text, message_id=uuid.uuid4().hex)
             response = await self.request({"type": "prompt", "message": text})
@@ -93,6 +94,8 @@ class PiSession(JsonProcess):
                 raise
             state = await self.request({"type": "get_state"})
             await self.save_session(state.get("data", {}))
+            if self.budget_error:
+                raise HarnessError(self.budget_error)
             if self.stop_reason in {"error", "aborted", "length"}:
                 raise HarnessError(f"Pi stopped without a complete response: {self.stop_reason}")
             return AgentResult(self.output, self.session_id or "", self.stop_reason)
@@ -116,6 +119,9 @@ class PiSession(JsonProcess):
                 self.ready.set_result(None)
         elif kind == "ota_budget":
             await self.event("status", "Tool-round budget exhausted; writing final report", native=record)
+        elif kind == "ota_budget_exceeded":
+            self.budget_error = f"Pi exceeded {record['maximumRounds']} tool rounds after its final-report opportunity"
+            await self.event("error", self.budget_error, source="tool_budget", native=record)
         elif kind == "ota_provider_request":
             self.raw_usage = {}
             self.request_number += 1
@@ -178,6 +184,8 @@ class PiSession(JsonProcess):
             await self.auxiliary_usage((record.get("result") or {}).get("usage", {}), uuid.uuid4().hex, "compaction")
             await self.event("status", "Compaction finished", native=record)
         elif kind == "agent_settled":
+            if record.get("aborted"):
+                self.stop_reason = "aborted"
             if self.finished is not None and not self.finished.done():
                 self.finished.set_result(None)
         elif kind in {"auto_retry_start", "auto_retry_end", "auto_compaction_start", "compaction_start", "agent_start",

@@ -43,6 +43,14 @@ assert.equal(result.content[0].text, "123.45");
 handlers.get("turn_end")({ toolResults: [result] });
 assert.deepEqual(active, []);
 assert.match(messages[0].content, /budget is exhausted/);
+let aborted = false;
+const boundary = handlers.get("turn_end")({ toolResults: [{ isError: true }] }, { abort: () => { aborted = true; } });
+assert.equal(aborted, true);
+assert.equal(boundary.continue, false);
+assert.equal(messages.length, 1);
+handlers.get("input")();
+assert.deepEqual(active, ["price"]);
+handlers.get("turn_end")({ toolResults: [] }, { abort: () => { throw new Error("Completed report was aborted"); } });
 const payload = { messages: [{ role: "assistant", reasoning: "retained", tool_calls: [{ id: "original" }] }] };
 assert.equal(handlers.get("before_provider_request")({ payload }), payload);
 assert.equal(handlers.get("cache_warming_decision")().action, "stop");
@@ -59,5 +67,6 @@ handlers.get("session_shutdown")();
     assert stdout == b""
     records = [json.loads(line) for line in metadata.read_text().splitlines()]
     assert records[0] == {"type": "ota_ready", "tools": ["price"]}
-    assert any(record["type"] == "ota_budget" for record in records)
+    assert sum(record["type"] == "ota_budget" for record in records) == 1
+    assert sum(record["type"] == "ota_budget_exceeded" for record in records) == 1
     assert records[-1]["payload"]["messages"][0]["reasoning"] == "retained"

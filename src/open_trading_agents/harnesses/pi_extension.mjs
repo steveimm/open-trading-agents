@@ -23,10 +23,15 @@ export default async function tradingTools(pi) {
   const maximumRounds = Number(process.env.OTA_MAX_TOOL_ROUNDS || 20);
   let rounds = 0;
   pi.on("input", () => { rounds = 0; pi.setActiveTools(activeTools); return { action: "continue" }; });
-  pi.on("turn_end", (event) => {
+  pi.on("turn_end", (event, ctx) => {
     if (!event.toolResults?.length) return;
     rounds += 1;
-    if (rounds >= maximumRounds) {
+    if (rounds > maximumRounds) {
+      publish("ota_budget_exceeded", { rounds, maximumRounds });
+      ctx.abort();
+      return { continue: false };
+    }
+    if (rounds === maximumRounds) {
       pi.setActiveTools([]);
       pi.sendMessage({ customType: "tool_budget", content: "The tool-round budget is exhausted. Write your final report using the evidence already collected, identifying missing evidence.", display: true });
       publish("ota_budget", { rounds, maximumRounds });

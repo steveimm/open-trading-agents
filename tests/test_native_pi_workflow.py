@@ -3,6 +3,7 @@ import json
 import re
 import shutil
 import socket
+import sys
 import threading
 from collections import Counter
 from collections.abc import Iterator
@@ -14,7 +15,9 @@ from typing import Any
 import pytest
 
 from open_trading_agents.config import HarnessSettings, Settings
-from open_trading_agents.domain import AgentEvent
+from open_trading_agents.domain import AgentEvent, AgentSpec, HarnessConfig
+from open_trading_agents.harnesses import open_session
+from open_trading_agents.harnesses.process import HarnessError
 from open_trading_agents.memory import MemoryLog, Returns
 from open_trading_agents.prompts import ROLES
 from open_trading_agents.storage import RunStore
@@ -111,13 +114,16 @@ class NativeResponses:
 
 
 @contextmanager
-def native_model_server() -> Iterator[tuple[str, NativeResponses]]:
+def native_model_server(responses: NativeResponses | None = None) -> Iterator[tuple[str, NativeResponses]]:
     """Serve synthetic OpenAI SSE responses on loopback without outgoing network calls.
+
+    Args:
+        responses: Optional specialized native-response fixture.
 
     Yields:
         The local API base URL and captured native request state.
     """
-    state = NativeResponses()
+    state = responses or NativeResponses()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -288,3 +294,71 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
     assert usage["totals"]["reasoning_tokens"] == 120
     assert usage["totals"]["cache_read_tokens_complete"] is True
     assert len(usage["agents"]) == 13
+
+
+class RepeatingToolResponses(NativeResponses):
+    def reply(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Keep returning tool calls even after native tool declarations disappear.
+
+        Args:
+            payload: Actual request from the installed pi agent loop.
+
+        Returns:
+            A valid calculator call followed by an invalid disabled-tool call.
+        """
+        self.requests.append({"payload": payload})
+        number = len(self.requests)
+        if number == 1:
+            assert "calculate" in {tool["function"]["name"] for tool in payload["tools"]}
+        else:
+            assert not payload.get("tools"), "Wrap-up request still advertises tools"
+        name = "calculate" if number == 1 else "unavailable_after_budget"
+        arguments = json.dumps({"expression": "1+1"}) if number == 1 else "{}"
+        return [
+            {"id": f"repeat-{number}", "object": "chat.completion.chunk", "created": 1, "model": "fixture-model",
+             "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0,
+                          "id": f"call_repeat_{number}", "type": "function", "function": {"name": name, "arguments": arguments}}]},
+                          "finish_reason": None}]},
+            {"id": f"repeat-{number}", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+            {"id": f"repeat-{number}", "choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_native_pi_aborts_tool_calls_after_one_wrap_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop a noncompliant native model after the single tool-free report opportunity."""
+    executable = shutil.which("pi")
+    if executable is None:
+        pytest.skip("The optional native integration test requires an installed pi CLI")
+    context = tmp_path / "context.json"
+    context.write_text(json.dumps({"ticker": "NVDA", "trade_date": "2026-01-12", "config": {}}))
+    events: list[AgentEvent] = []
+
+    async def observe(event: AgentEvent) -> None:
+        """Capture tool rejection, native abort, and the explicit budget failure."""
+        events.append(event)
+
+    with native_model_server(RepeatingToolResponses()) as (base_url, state):
+        pi_directory = tmp_path / "pi-config"
+        configure_pi(pi_directory, base_url)
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_directory))
+        monkeypatch.setenv("PI_OFFLINE", "1")
+        monkeypatch.setenv("PI_TELEMETRY", "0")
+        spec = AgentSpec("Budget Probe", "analysis", "Use calculate once, then write a final report.", tmp_path / "workspace",
+                         tmp_path / "sessions", tools=("calculate",), max_tool_rounds=1, allow_execution=False,
+                         tool_server_command=(sys.executable, "-m", "open_trading_agents.tools", "--context", str(context),
+                                              "--tools", "calculate"))
+        session = await open_session(HarnessConfig(kind="pi", command=(executable,), model="fixture-model", provider="fixture"),
+                                     spec, observe)
+        try:
+            with pytest.raises(HarnessError, match="exceeded 1 tool rounds after its final-report opportunity"):
+                await asyncio.wait_for(session.prompt("Calculate 1+1 and report the result."), 30)
+        finally:
+            await session.close()
+        assert state.failures == []
+        assert len(state.requests) == 2
+
+    completed = [event for event in events if event.kind == "tool_result" and event.data.get("final")]
+    assert sum(event.data.get("tool") == "calculate" and not event.data.get("is_error") for event in completed) == 1
+    assert any(event.data.get("tool") == "unavailable_after_budget" and event.data.get("is_error") for event in completed)
+    assert sum(event.kind == "error" and event.data.get("source") == "tool_budget" for event in events) == 1
