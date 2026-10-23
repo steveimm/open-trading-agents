@@ -12,8 +12,9 @@ export default async function tradingTools(pi) {
   });
   pi.on("provider_stream_event", (event) => {
     const data = event.data;
-    const usage = data?.usage ?? data?.response?.usage ?? data?.message?.usage;
-    if (usage) publish("ota_provider_usage", { usage });
+    const usage = data?.usage ?? data?.response?.usage ?? data?.message?.usage
+      ?? data?.usageMetadata ?? data?.response?.usageMetadata ?? data?.metadata?.usage;
+    if (usage && typeof usage === "object" && !Array.isArray(usage)) publish("ota_provider_usage", { usage });
   });
   const command = JSON.parse(process.env.OTA_TOOL_COMMAND || "[]");
   const environment = JSON.parse(process.env.OTA_TOOL_ENV || "{}");

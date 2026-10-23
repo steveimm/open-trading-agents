@@ -9,6 +9,47 @@ from typing import Any
 from open_trading_agents.domain import AgentResult
 from open_trading_agents.harnesses.process import HarnessError, JsonProcess
 
+_BREAKDOWN_PATHS = {
+    "cacheRead": (("prompt_tokens_details", "cached_tokens"), ("input_tokens_details", "cached_tokens"),
+                  ("cache_read_input_tokens",), ("prompt_cache_hit_tokens",), ("cached_tokens",),
+                  ("cachedContentTokenCount",), ("cacheReadInputTokens",)),
+    "cacheWrite": (("prompt_tokens_details", "cache_write_tokens"), ("input_tokens_details", "cache_write_tokens"),
+                   ("cache_creation_input_tokens",), ("cacheWriteInputTokens",)),
+    "reasoning": (("completion_tokens_details", "reasoning_tokens"), ("output_tokens_details", "reasoning_tokens"),
+                  ("thoughtsTokenCount",), ("reasoning_tokens",)),
+}
+
+
+def usage_counts(usage: dict[str, Any], raw: dict[str, Any] | None = None) -> dict[str, int | None]:
+    """Normalize native counts while distinguishing observed zero from missing metadata.
+
+    Args:
+        usage: Pi's normalized usage, whose input excludes cache reads and writes.
+        raw: Optional provider-reported usage, used to establish breakdown availability.
+
+    Returns:
+        Input inclusive of cache, output inclusive of reasoning, and known optional counts.
+    """
+    result = {
+        "input_tokens": usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
+        "output_tokens": usage.get("output", 0),
+    }
+    for target, source in (("cache_read_tokens", "cacheRead"), ("cache_write_tokens", "cacheWrite"),
+                           ("reasoning_tokens", "reasoning")):
+        count = None
+        for path in _BREAKDOWN_PATHS[source]:
+            value: Any = raw or {}
+            for key in path:
+                value = value.get(key) if isinstance(value, dict) else None
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                count = value
+                break
+        fallback = usage.get(source)
+        if count is None and isinstance(fallback, int) and not isinstance(fallback, bool) and fallback > 0:
+            count = fallback
+        result[target] = count
+    return result
+
 
 class PiSession(JsonProcess):
     async def start(self) -> None:
@@ -145,25 +186,7 @@ class PiSession(JsonProcess):
                 await self.event("text", text, message_id=self.message_id, final=True)
             usage = message.get("usage", {})
             if usage:
-                raw = self.raw_usage
-                details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
-                cache_read = next((details[key] for key in ("cached_tokens",) if key in details), None)
-                for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"):
-                    if key in raw:
-                        cache_read = raw[key]
-                cache_read = raw.get("cachedContentTokenCount", cache_read)
-                cache_write = raw.get("cache_creation_input_tokens", details.get("cache_write_tokens"))
-                if cache_read is None and usage.get("cacheRead", 0) > 0:
-                    cache_read = usage["cacheRead"]
-                if cache_write is None and usage.get("cacheWrite", 0) > 0:
-                    cache_write = usage["cacheWrite"]
-                reasoning = (raw.get("completion_tokens_details") or raw.get("output_tokens_details") or {}).get("reasoning_tokens")
-                if reasoning is None and usage.get("reasoning", 0) > 0:
-                    reasoning = usage["reasoning"]
-                await self.event("usage", request_id=self.message_id,
-                                 input_tokens=usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
-                                 output_tokens=usage.get("output", 0), cache_read_tokens=cache_read,
-                                 cache_write_tokens=cache_write, reasoning_tokens=reasoning)
+                await self.event("usage", request_id=self.message_id, **usage_counts(usage, self.raw_usage))
             if message.get("errorMessage"):
                 await self.event("error", message["errorMessage"], message_id=self.message_id)
         elif kind in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
@@ -202,7 +225,4 @@ class PiSession(JsonProcess):
         """
         if not usage:
             return
-        await self.event("usage", request_id=f"{source}:{identifier}", source=source,
-                         input_tokens=usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
-                         output_tokens=usage.get("output", 0), cache_read_tokens=usage.get("cacheRead") or None,
-                         cache_write_tokens=usage.get("cacheWrite") or None, reasoning_tokens=usage.get("reasoning"))
+        await self.event("usage", request_id=f"{source}:{identifier}", source=source, **usage_counts(usage))

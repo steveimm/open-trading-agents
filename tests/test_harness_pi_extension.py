@@ -54,6 +54,10 @@ handlers.get("turn_end")({ toolResults: [] }, { abort: () => { throw new Error("
 const payload = { messages: [{ role: "assistant", reasoning: "retained", tool_calls: [{ id: "original" }] }] };
 assert.equal(handlers.get("before_provider_request")({ payload }), payload);
 assert.equal(handlers.get("cache_warming_decision")().action, "stop");
+handlers.get("provider_stream_event")({ data: { usageMetadata: { promptTokenCount: 100, cachedContentTokenCount: 0, thoughtsTokenCount: 0 } } });
+handlers.get("provider_stream_event")({ data: { response: { usageMetadata: { promptTokenCount: 100, cachedContentTokenCount: 30 } } } });
+handlers.get("provider_stream_event")({ data: { metadata: { usage: { inputTokens: 70, cacheReadInputTokens: 20, cacheWriteInputTokens: 10 } } } });
+handlers.get("provider_stream_event")({ data: { choices: [] } });
 handlers.get("session_shutdown")();
 ''')
     metadata = tmp_path / "metadata.jsonl"
@@ -69,4 +73,11 @@ handlers.get("session_shutdown")();
     assert records[0] == {"type": "ota_ready", "tools": ["price"]}
     assert sum(record["type"] == "ota_budget" for record in records) == 1
     assert sum(record["type"] == "ota_budget_exceeded" for record in records) == 1
-    assert records[-1]["payload"]["messages"][0]["reasoning"] == "retained"
+    requests = [record for record in records if record["type"] == "ota_provider_request"]
+    assert requests[0]["payload"]["messages"][0]["reasoning"] == "retained"
+    usages = [record["usage"] for record in records if record["type"] == "ota_provider_usage"]
+    assert usages == [
+        {"promptTokenCount": 100, "cachedContentTokenCount": 0, "thoughtsTokenCount": 0},
+        {"promptTokenCount": 100, "cachedContentTokenCount": 30},
+        {"inputTokens": 70, "cacheReadInputTokens": 20, "cacheWriteInputTokens": 10},
+    ]
