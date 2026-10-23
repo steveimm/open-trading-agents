@@ -12,22 +12,24 @@ from open_trading_agents import memory
 from open_trading_agents.backtest import iter_grid, run_backtest, summarize
 from open_trading_agents.config import Portfolio, Settings
 from open_trading_agents.dataflows.files import locked
-from open_trading_agents.domain import AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
+from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.memory import MemoryLog
 
 
 class FixtureSession:
-    def __init__(self, spec: AgentSpec, calls: list[tuple[str, str, str]], fail_once: list[bool]) -> None:
+    def __init__(self, spec: AgentSpec, calls: list[tuple[str, str, str]], fail_once: list[bool], emit: EventSink) -> None:
         """Record offline model tasks and optionally interrupt one trader turn.
 
         Args:
             spec: Real workflow agent specification.
             calls: Shared observed requests.
             fail_once: Mutable flag controlling one simulated interruption.
+            emit: Observer receiving the native prompt acknowledgement.
         """
         self.spec = spec
         self.calls = calls
         self.fail_once = fail_once
+        self.emit = emit
         self.session_id = spec.session_id or f"fixture:{spec.workspace}"
 
     async def prompt(self, text: str) -> AgentResult:
@@ -40,6 +42,7 @@ class FixtureSession:
             A completed synthetic role response.
         """
         self.calls.append((self.spec.agent, text, self.session_id))
+        await self.emit(AgentEvent("status", self.spec.agent, self.spec.stage, data={"prompt_accepted": True}))
         if self.spec.agent == "Trader" and self.fail_once[0]:
             self.fail_once[0] = False
             raise RuntimeError("simulated mid-stream interruption")
@@ -56,9 +59,7 @@ class FixtureSession:
                 "investment_thesis": "Synthetic evidence",
             },
         }
-        output = (
-            json.dumps(outputs[self.spec.agent]) if self.spec.agent in outputs else "Synthetic evidence and a bounded conclusion."
-        )
+        output = json.dumps(outputs[self.spec.agent]) if self.spec.agent in outputs else "Synthetic evidence and a bounded conclusion."
         return AgentResult(output, self.session_id)
 
     async def cancel(self) -> None:
@@ -82,7 +83,7 @@ def _factory(calls: list[tuple[str, str, str]], fail_once: list[bool] | None = N
 
     async def create(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> HarnessSession:
         """Construct one synthetic session for the exact real workflow role."""
-        return FixtureSession(spec, calls, state)
+        return FixtureSession(spec, calls, state, emit)
 
     return create
 
@@ -101,9 +102,7 @@ def test_grid_uses_calendar_spacing_and_caps_future_end() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_workflow_sweep_is_isolated_and_completed_cells_are_skipped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_full_workflow_sweep_is_isolated_and_completed_cells_are_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Run two real pipelines and their harness reflections without touching live state."""
     live = MemoryLog(tmp_path / "memory.sqlite")
     live.record("MSFT", "2024-03-01", "Sell", "Live decision must remain untouched", "live")
@@ -114,9 +113,7 @@ async def test_full_workflow_sweep_is_isolated_and_completed_cells_are_skipped(
     fetch = Mock(return_value=(0.10, 0.03, 5, "2024-04-01"))
     monkeypatch.setattr(memory, "fetch_returns", fetch)
     calls: list[tuple[str, str, str]] = []
-    result = await run_backtest(
-        ["nvda", "NVDA", "AAPL"], ["2024-03-15"], settings, run_id="sweep", session_factory=_factory(calls)
-    )
+    result = await run_backtest(["nvda", "NVDA", "AAPL"], ["2024-03-15"], settings, run_id="sweep", session_factory=_factory(calls))
     assert result.cells_run == 2 and result.skipped == 0 and result.failures == []
     assert result.summary.resolved == 2 and result.summary.pending == 0
     assert result.summary.by_rating["Buy"].hit_rate == 1
@@ -129,9 +126,7 @@ async def test_full_workflow_sweep_is_isolated_and_completed_cells_are_skipped(
         config = json.loads(context_file.read_text())["config"]
         assert Path(config["data_cache_dir"]).is_relative_to(result.directory)
     before = len(calls)
-    resumed = await run_backtest(
-        ["nvda", "NVDA", "AAPL"], ["2024-03-15"], settings, run_id="sweep", session_factory=_factory(calls)
-    )
+    resumed = await run_backtest(["nvda", "NVDA", "AAPL"], ["2024-03-15"], settings, run_id="sweep", session_factory=_factory(calls))
     assert resumed.cells_run == 0 and resumed.skipped == 2 and len(calls) == before
     assert (result.directory / "summary.json").is_file() and (result.directory / "summary.md").is_file()
 
@@ -199,9 +194,7 @@ def test_summary_distinguishes_directional_hits_hold_review_and_pending(tmp_path
         identifier = log.record("NVDA", "2024-03-15", rating, "Synthetic report", str(index))
         token = log._claim(identifier, 120)
         assert token is not None
-        log._complete(
-            {"id": identifier, "raw_return": alpha, "alpha_return": alpha, "resolution_date": "2024-03-25"}, token, "Lesson"
-        )
+        log._complete({"id": identifier, "raw_return": alpha, "alpha_return": alpha, "resolution_date": "2024-03-25"}, token, "Lesson")
     log.record("AAPL", "2024-03-15", "Buy", "Pending report", "pending")
     result = summarize(log)
     assert result.resolved == 5 and result.pending == 1 and result.unscored == 1 and result.review == 1

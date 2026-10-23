@@ -50,9 +50,7 @@ class BacktestSummary:
         Returns:
             A concise report that distinguishes pending, REVIEW, and scored outcomes.
         """
-        lines = [
-            f"Resolved: {self.resolved} | Pending: {self.pending} | REVIEW: {self.review} | Resolved but unscored: {self.unscored}"
-        ]
+        lines = [f"Resolved: {self.resolved} | Pending: {self.pending} | REVIEW: {self.review} | Resolved but unscored: {self.unscored}"]
         for rating, score in self.by_rating.items():
             accuracy = f"direction hit rate {score.hit_rate:.1%}" if score.hit_rate is not None else "no direction claimed"
             lines.append(f"{rating}: n={score.count}, {accuracy}, mean alpha {score.mean_alpha:+.2%}")
@@ -117,9 +115,7 @@ def summarize(log: MemoryLog, notes: tuple[str, ...] = ()) -> BacktestSummary:
     scored = [
         entry
         for entry in resolved
-        if entry["rating"] in DIRECTIONS
-        and isinstance(entry["alpha_return"], (float, int))
-        and math.isfinite(entry["alpha_return"])
+        if entry["rating"] in DIRECTIONS and isinstance(entry["alpha_return"], (float, int)) and math.isfinite(entry["alpha_return"])
     ]
     ratings = {}
     for rating, direction in DIRECTIONS.items():
@@ -179,9 +175,7 @@ def _save_manifest(path: Path, value: dict[str, Any]) -> None:
     if path.exists():
         saved = json.loads(path.read_text(encoding="utf-8"))
         if saved != value:
-            raise ValueError(
-                "backtest inputs differ from the saved manifest; resume with the original grid, settings, and portfolio"
-            )
+            raise ValueError("backtest inputs differ from the saved manifest; resume with the original grid, settings, and portfolio")
         return
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -235,6 +229,7 @@ async def run_backtest(
     Returns:
         Sweep identity, newly completed and skipped cells, failures, and outcome scores.
     """
+    settings = settings.model_copy(update={"state_dir": settings.state_dir.expanduser().resolve()})
     tickers = list(dict.fromkeys(safe_ticker_component(normalize_symbol(ticker)) for ticker in tickers))
     dates = list(dict.fromkeys(validate_date(value) for value in dates))
     if not tickers or not dates:
