@@ -660,6 +660,8 @@ class TradingApp(App[None]):
             self._memory_agents.append(agent)
             self.query_one("#memory-details", Collapsible).set_class(self.active_stage != "analysis", "hidden")
         activity.last_event = now
+        if activity.started is None and agent != "Workflow" and kind in {"system", "prompt", "tool_start", "text", "reasoning"}:
+            activity.started = now
         self.raw_document.append(json.dumps(asdict(event), ensure_ascii=False, default=str) + "\n", "#899bb3")
         if kind == "system" and event.data.get("source") == "native_request":
             return
@@ -673,7 +675,9 @@ class TradingApp(App[None]):
         elif kind == "agent_start":
             if activity.finished is not None:
                 activity.previous_seconds = activity.elapsed(now)
-            activity.started = now
+                activity.started = now
+            elif activity.started is None:
+                activity.started = now
             activity.status = "running"
             activity.finished = None
             self._turn_streamed.discard(agent)

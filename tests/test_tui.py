@@ -439,3 +439,15 @@ async def test_optional_screening_failure_remains_visible_without_stopping_analy
         assert app.agents["Market Analyst"].finished is None
         assert app._failure is None
         assert not app.query_one("#memory-details", Collapsible).has_class("hidden")
+async def test_prefetch_time_remains_part_of_agent_wall_time() -> None:
+    """Source collection starts the role clock and model startup does not reset it."""
+    import time
+
+    app = TradingApp()
+    async with app.run_test(size=(100, 35)):
+        started = time.time() - 10
+        await app.receive(AgentEvent("tool_start", "Sentiment Analyst", "analysis", timestamp=started,
+                                     data={"tool": "get_social_sentiment", "tool_call_id": "prefetch"}))
+        await app.receive(AgentEvent("agent_start", "Sentiment Analyst", "analysis", timestamp=started + 9))
+        app.flush_events()
+        assert app.agents["Sentiment Analyst"].elapsed(time.monotonic()) >= 9
