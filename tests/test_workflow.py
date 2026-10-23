@@ -1,10 +1,14 @@
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from open_trading_agents.config import Settings
+from open_trading_agents.dataflows.files import locked
 from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.events import EventRecorder
+from open_trading_agents.storage import RunStore
 from open_trading_agents.workflow import Workflow
 
 
@@ -18,6 +22,7 @@ class FakeHarness:
         """Return role-appropriate fixtures after yielding to concurrent analysts."""
         self.calls.append((self.spec.agent, text))
         await self.emit(AgentEvent("prompt", self.spec.agent, self.spec.stage, text))
+        await self.emit(AgentEvent("status", self.spec.agent, self.spec.stage, data={"prompt_accepted": True}))
         await asyncio.sleep(0)
         if self.failure and self.failure[0] == self.spec.agent:
             self.failure.pop()
@@ -82,3 +87,78 @@ async def test_resume_keeps_finished_work_and_continues_pending_native_session(t
     assert result.rating == "Overweight"
     assert [name for name, _ in calls[first_calls:]] == ["Neutral Analyst", "Portfolio Manager"]
     assert calls[first_calls][1].startswith("Continue the unfinished task")
+
+
+def test_rejected_resume_does_not_mutate_saved_tool_context(tmp_path: Path) -> None:
+    """Protect instrument bindings when a caller attempts an incompatible resume."""
+    settings = Settings(state_dir=tmp_path, memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, run_id="fixed")
+    original = workflow.context_file.read_bytes()
+    workflow.store.close()
+    with pytest.raises(ValueError, match="inputs differ"):
+        Workflow("AAPL", "2026-01-02", settings, run_id="fixed")
+    assert workflow.context_file.read_bytes() == original
+
+
+async def test_unacknowledged_pending_task_keeps_original_input(tmp_path: Path) -> None:
+    """A crash before native acceptance must not replace the task with an empty continuation."""
+    calls = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Create a new synthetic native session."""
+        return FakeHarness(spec, emit, calls, [])
+
+    settings = Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    workflow.store.begin_step("analyst:market", "Market Analyst", "Original pending input with essential evidence")
+    workflow.store.close()
+    resumed = Workflow.resume(workflow.directory, session_factory=factory)
+    await resumed.run()
+    assert calls[0][1] == "Original pending input with essential evidence"
+
+
+async def test_same_run_cannot_be_driven_twice(tmp_path: Path) -> None:
+    """Reject a second runner before it opens or submits to a native session."""
+    settings = Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings)
+    with locked(workflow.directory / "execution", wait=False) as acquired:
+        assert acquired
+        with pytest.raises(RuntimeError, match="already active"):
+            await workflow.run()
+
+
+def test_relative_storage_produces_absolute_subprocess_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve paths before harnesses change into their isolated workspaces."""
+    monkeypatch.chdir(tmp_path)
+    workflow = Workflow("NVDA", "2026-01-02", Settings(state_dir=Path("relative"), memory_enabled=False))
+    assert workflow.directory.is_absolute()
+    assert workflow.context_file.is_absolute()
+    workflow.store.close()
+
+
+async def test_persistence_failure_never_reports_success_and_closes_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed transcript flush cannot leave completed status or a live database handle."""
+    calls = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Supply complete role outputs before the simulated disk failure."""
+        return FakeHarness(spec, emit, calls, [])
+
+    close = EventRecorder.close
+
+    def fail_close(recorder: EventRecorder) -> None:
+        """Drain the real writer before simulating a failed persistence operation."""
+        close(recorder)
+        raise RuntimeError("simulated flush failure")
+
+    monkeypatch.setattr(EventRecorder, "close", fail_close)
+    workflow = Workflow("NVDA", "2026-01-02", Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False),
+                        session_factory=factory)
+    with pytest.raises(RuntimeError, match="flush failure"):
+        await workflow.run()
+    with pytest.raises(sqlite3.ProgrammingError):
+        workflow.store.db.execute("SELECT 1")
+    saved = RunStore(workflow.directory)
+    assert saved.metadata("status") == "failed"
+    assert not any(event.kind == "run_end" for event in saved.events())
+    saved.close()

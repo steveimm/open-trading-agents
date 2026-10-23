@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import html
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from markdown_it import MarkdownIt
 
 from open_trading_agents.domain import AgentEvent
+
+
+def write_transcript(path: Path, events: list[AgentEvent], append: bool = False) -> None:
+    """Export ordered events as JSON lines.
+
+    Args:
+        path: Local transcript path.
+        events: Ordered event batch.
+        append: Whether to append final lifecycle events after report export.
+    """
+    with path.open("a" if append else "w", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
 
 
 def write_reports(directory: Path, ticker: str, trade_date: str, outputs: dict[str, str], rating: str,
@@ -38,11 +52,7 @@ def write_reports(directory: Path, ticker: str, trade_date: str, outputs: dict[s
     target = report_dir / "complete_report.md"
     target.write_text(combined, encoding="utf-8")
     (report_dir / "settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    from dataclasses import asdict
-
-    with (directory / "transcript.jsonl").open("w", encoding="utf-8") as handle:
-        for event in events:
-            handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+    write_transcript(directory / "transcript.jsonl", events)
     if include_html:
         renderer = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
         body = renderer.render(combined)

@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from open_trading_agents.dataflows.symbols import normalize_symbol
 from open_trading_agents.domain import HarnessConfig
 
 
@@ -34,6 +35,19 @@ class Position(BaseModel):
     quantity: float
     average_price: float | None = Field(default=None, ge=0)
 
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        """Normalize holdings using the same instrument aliases as an analysis.
+
+        Args:
+            value: User-supplied holding symbol.
+
+        Returns:
+            The canonical instrument symbol.
+        """
+        return normalize_symbol(value)
+
 
 class Portfolio(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -50,7 +64,8 @@ class Portfolio(BaseModel):
         Returns:
             A portfolio evidence block for decision agents.
         """
-        held = [p for p in self.positions if p.ticker.upper() == ticker.upper()]
+        ticker = normalize_symbol(ticker)
+        held = [p for p in self.positions if p.ticker == ticker]
         lines = [f"Portfolio supplied by the user, currency: {self.currency or 'unspecified' }."]
         if not held:
             lines.append(f"No current position in {ticker}.")
@@ -76,6 +91,9 @@ class Settings(BaseModel):
     holding_period_days: int = Field(default=5, ge=1)
     benchmark_ticker: str | None = None
     memory_enabled: bool = True
+    allow_execution: bool = True
+    web_research: bool = True
+    social_screening: bool = False
     data: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("analysts")

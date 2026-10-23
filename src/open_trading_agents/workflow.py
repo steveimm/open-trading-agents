@@ -4,7 +4,8 @@ import asyncio
 import json
 import sys
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,13 +13,14 @@ from typing import Any
 
 from open_trading_agents.config import Portfolio, Settings, validate_date
 from open_trading_agents.dataflows.config import default_data_config
+from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
 from open_trading_agents.decisions import SCHEMAS, parse_decision, render_decision
 from open_trading_agents.domain import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.events import EventRecorder
 from open_trading_agents.harnesses import open_session
 from open_trading_agents.prompts import ROLES, system_prompt
-from open_trading_agents.reporting import write_reports
+from open_trading_agents.reporting import write_reports, write_transcript
 from open_trading_agents.storage import RunStore
 from open_trading_agents.tools import FinancialTools, ToolContext
 
@@ -48,6 +50,7 @@ class Workflow:
         """
         self.ticker = safe_ticker_component(normalize_symbol(ticker))
         self.trade_date = validate_date(trade_date)
+        settings = settings.model_copy(update={"state_dir": settings.state_dir.expanduser().resolve()})
         self.settings, self.portfolio = settings, portfolio
         self.asset_type = "crypto" if crypto_base(self.ticker) else "stock"
         self.run_id = run_id or f"{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
@@ -60,6 +63,7 @@ class Workflow:
         self.rating = "REVIEW"
         self.recorder: EventRecorder | None = None
         self.sink: EventSink | None = None
+        self.active_steps: dict[str, str] = {}
         self.data_config = default_data_config()
         self.data_config["data_cache_dir"] = str(settings.state_dir / "cache")
         for key, value in settings.data.items():
@@ -69,14 +73,33 @@ class Workflow:
                 self.data_config[key] = value
         self.tool_context = ToolContext(self.ticker, self.trade_date, self.asset_type, self.data_config)
         self.context_file = self.directory / "tool-context.json"
-        self.context_file.write_text(json.dumps({"ticker": self.ticker, "trade_date": self.trade_date,
-                                                "asset_type": self.asset_type, "config": self.data_config}))
         identity = {"ticker": self.ticker, "trade_date": self.trade_date, "settings": settings.model_dump(mode="json"),
                     "portfolio": portfolio.model_dump() if portfolio is not None else None}
         previous = self.store.metadata("input")
         if previous and previous != identity:
+            self.store.close()
             raise ValueError("run inputs differ from the saved run; resume its original configuration or start a new run")
+        if not self.context_file.exists():
+            context_json = json.dumps({"ticker": self.ticker, "trade_date": self.trade_date,
+                                       "asset_type": self.asset_type, "config": self.data_config})
+            replace_file(self.context_file, lambda temporary: Path(temporary).write_text(context_json))
         self.store.set_metadata("input", identity)
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """Allow only one process to drive this run's native sessions.
+
+        Yields:
+            Control while holding the run's exclusive writer lock.
+
+        Raises:
+            RuntimeError: Another process is already running this workflow.
+        """
+        with locked(self.directory / "execution", wait=False) as acquired:
+            if not acquired:
+                self.store.close()
+                raise RuntimeError(f"run {self.run_id} is already active in another process")
+            yield
 
     @classmethod
     def resume(cls, directory: Path, session_factory: SessionFactory = open_session) -> Workflow:
@@ -108,6 +131,8 @@ class Workflow:
         """
         if event.kind == "session" and event.data.get("session_id"):
             self.store.save_session(event.agent, event.data["session_id"])
+        if event.data.get("prompt_accepted") and event.agent in self.active_steps:
+            self.store.set_metadata(f"delivered:{self.active_steps[event.agent]}", True)
         if self.recorder:
             self.recorder.append(event)
         if self.sink:
@@ -142,23 +167,31 @@ class Workflow:
             return saved["output"]
         role = ROLES[role_key]
         name = session_name or role.name
+        prior_session = self.store.session(name)
         await self._event("agent_start", role.stage, name)
         if name not in self.sessions:
             workspace = self.directory / "agents" / "".join(c if c.isalnum() else "_" for c in name)
+            tools = role.tools
+            if role.stage == "analysis" and role_key != "reflection" and self.settings.web_research:
+                tools = (*tools, "search_web", "fetch_webpage")
             spec = AgentSpec(name, role.stage, system_prompt(role, self.settings.output_language), workspace,
-                             workspace / "sessions", self.store.session(name), role.tools,
+                             workspace / "sessions", self.store.session(name), tools,
                              (sys.executable, "-m", "open_trading_agents.tools", "--context", str(self.context_file),
-                              "--tools", ",".join(role.tools)) if role.tools else (),
-                             max_tool_rounds=self.settings.max_tool_rounds)
+                              "--tools", ",".join(tools)) if tools else (),
+                             max_tool_rounds=self.settings.max_tool_rounds, allow_execution=self.settings.allow_execution)
             self.sessions[name] = await self.session_factory(self.settings.model_settings(role.deep).runtime(), spec, self.emit)
             if self.sessions[name].session_id:
                 self.store.save_session(name, self.sessions[name].session_id)
-        if saved and self.store.session(name):
+        if saved and prior_session and self.store.metadata(f"delivered:{key}", False):
             supplied = "Continue the unfinished task in this conversation. Reuse completed tool evidence and return its requested final output."
         else:
-            supplied = prompt
+            supplied = saved["prompt"] if saved else prompt
         self.store.begin_step(key, name, prompt)
-        result = await self.sessions[name].prompt(supplied)
+        self.active_steps[name] = key
+        try:
+            result = await self.sessions[name].prompt(supplied)
+        finally:
+            self.active_steps.pop(name, None)
         if result.stop_reason not in ("stop", "end_turn", "completed") or not result.text.strip():
             raise RuntimeError(f"{name} did not produce a complete response ({result.stop_reason})")
         self.store.save_session(name, result.session_id)
@@ -172,7 +205,7 @@ class Workflow:
         Returns:
             A common input block for new role sessions.
         """
-        return f"Instrument: {self.ticker}\nAsset type: {self.asset_type}\nAnalysis date: {self.trade_date}\nOnly assert a company identity supported by the evidence."
+        return f"Instrument: {self.ticker}\nAsset type: {self.asset_type}\nAnalysis date: {self.trade_date}\nPython for calculation scripts: {sys.executable}\nOnly assert a company identity supported by the evidence."
 
     async def _analyst(self, key: str, semaphore: asyncio.Semaphore) -> None:
         """Run one initial analyst with an isolated session and assigned tools.
@@ -223,6 +256,7 @@ class Workflow:
                 text = await self._call(f"{stage}:{round_number}:{key}", key, prompt)
                 discussion.append(f"### Round {round_number}: {role.name}\n\n{text}")
                 seen[key] = len(discussion)
+                self.outputs["Research Debate" if stage == "research" else "Risk Debate"] = "\n\n".join(discussion)
         await self._event("stage_end", stage)
         return "\n\n".join(discussion)
 
@@ -304,6 +338,18 @@ class Workflow:
         Returns:
             Failure notices for outcomes left pending.
         """
+        with self._exclusive():
+            return await self._settle_pending(emit)
+
+    async def _settle_pending(self, emit: EventSink | None) -> list[str]:
+        """Settle decisions while the caller holds the run lock.
+
+        Args:
+            emit: Optional live event observer.
+
+        Returns:
+            Notices for unresolved decisions.
+        """
         self.sink = emit
         self.recorder = EventRecorder(self.directory)
         self.store.set_metadata("kind", "settlement")
@@ -313,8 +359,13 @@ class Workflow:
             return notes
         finally:
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
-            await asyncio.to_thread(self.recorder.close)
-            self.store.close()
+            try:
+                await asyncio.to_thread(self.recorder.close)
+            except Exception:
+                self.store.set_metadata("status", "failed")
+                raise
+            finally:
+                self.store.close()
 
     async def run(self, emit: EventSink | None = None) -> RunResult:
         """Execute all required stages, preserving completed steps on cancellation or failure.
@@ -324,6 +375,18 @@ class Workflow:
 
         Returns:
             The final rating and saved artifact location.
+        """
+        with self._exclusive():
+            return await self._run(emit)
+
+    async def _run(self, emit: EventSink | None) -> RunResult:
+        """Execute the staged pipeline under the run's exclusive lock.
+
+        Args:
+            emit: Optional live event observer.
+
+        Returns:
+            The completed run result.
         """
         self.sink = emit
         if emit:
@@ -367,15 +430,12 @@ class Workflow:
             await self._event("report", "reports", "Portfolio Manager", final)
             self.store.set_metadata("rating", self.rating)
             self.store.set_metadata("outputs", self.outputs)
-            await self._event("stage_end", "reports")
-            await self._event("run_end", "reports", rating=self.rating, directory=str(self.directory))
         except BaseException as exc:
             self.store.set_metadata("status", "interrupted" if isinstance(exc, asyncio.CancelledError) else "failed")
             await self._event("error", "reports", text=f"{type(exc).__name__}: {exc}")
             raise
         finally:
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
-            await asyncio.to_thread(self.recorder.close)
             report_settings = {
                 "harness": self.settings.harness.kind, "quick_model": self.settings.model_settings().model,
                 "deep_model": self.settings.model_settings(True).model, "analysts": self.settings.analysts,
@@ -383,10 +443,19 @@ class Workflow:
                 "data_vendors": self.data_config["data_vendors"],
             }
             try:
+                await asyncio.to_thread(self.recorder.close)
                 await asyncio.to_thread(write_reports, self.directory, self.ticker, self.trade_date,
                                         self.outputs, self.rating, report_settings, self.store.events())
                 if self.store.metadata("status") == "running":
+                    completed = [AgentEvent("stage_end", "Workflow", "reports"),
+                                 AgentEvent("run_end", "Workflow", "reports", data={"rating": self.rating,
+                                                                                   "directory": str(self.directory)})]
+                    self.store.append(completed)
+                    await asyncio.to_thread(write_transcript, self.directory / "transcript.jsonl", completed, True)
                     self.store.set_metadata("status", "complete")
+                    if self.sink:
+                        for event in completed:
+                            await self.sink(event)
             except Exception:
                 self.store.set_metadata("status", "failed")
                 raise

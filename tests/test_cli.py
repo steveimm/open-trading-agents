@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from open_trading_agents.cli import app, configured
+from open_trading_agents.cli import HarnessName, app, configured
+from open_trading_agents.config import Portfolio, Position
 
 runner = CliRunner()
 
@@ -32,3 +33,22 @@ def test_unknown_harness_is_rejected_by_cli() -> None:
     result = runner.invoke(app, ["analyze", "NVDA", "--harness", "wrong", "--headless"])
     assert result.exit_code == 2
     assert "wrong" in result.output
+
+
+def test_explicit_model_selection_overrides_configured_tiers(tmp_path: Path) -> None:
+    """An explicit CLI backend choice applies to manager and working-agent tiers."""
+    config = tmp_path / "settings.toml"
+    config.write_text('[quick]\nkind="pi"\nmodel="old-quick"\nprovider="old-provider"\n[deep]\nkind="pi"\nmodel="old-deep"\n')
+    settings = configured(config, HarnessName.codex, "new-model", None)
+    for deep in (False, True):
+        assert settings.model_settings(deep).kind == "codex"
+        assert settings.model_settings(deep).model == "new-model"
+        assert settings.model_settings(deep).provider is None
+
+
+def test_portfolio_alias_is_not_mistaken_for_an_absent_position() -> None:
+    """Recognize existing holdings after instrument normalization."""
+    portfolio = Portfolio(positions=[Position(ticker="BTCUSD", quantity=2)])
+    rendered = portfolio.render("BTC-USD")
+    assert "No current position" not in rendered
+    assert "BTC-USD: 2 units" in rendered
