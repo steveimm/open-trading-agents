@@ -57,6 +57,8 @@ The seven stages are Analysis, Research debate, Research decision, Trader, Risk 
 
 Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Pi additionally exposes locally captured native request bodies. Other harness event streams do not promise visibility into every internal HTTP field.
 
+Tool results longer than 10,000 characters show the first 6,000 and last 2,000 characters with an exact omitted-character count. Large payload previews behave similarly. The original events remain in SQLite and the live `transcript.jsonl` file. Ordinary prompts and model output are not shortened by this display rule.
+
 Elapsed clocks update independently of model responses. Usage shows total input, output, cache reads, and cache writes. Cache counts are subsets of input, not additional input. An em dash means unavailable and `+?` means only part of the usage has cache detail. Reported reasoning tokens are already included in output.
 
 ## Calculations and sources
@@ -73,7 +75,7 @@ Most default sources need no API key. Optional FRED and Alpha Vantage sources us
 
 ## Saved runs and unattended use
 
-The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, local JSONL events, and individual plus combined Markdown/HTML reports. Reports and transcripts remain available after an interrupted run.
+The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a `reports/usage.json` summary with per-agent token/cache counts. Reports and transcripts remain available after an interrupted run.
 
 ```sh
 uv run open-trading-agents analyze NVDA --headless
