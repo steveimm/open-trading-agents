@@ -45,13 +45,13 @@ def configured(path: Path | None, harness: HarnessName | None, model: str | None
     settings = load_settings(path)
     overrides = {key: value for key, value in {"kind": harness, "model": model, "provider": provider}.items() if value is not None}
     if overrides:
-        settings.harness = HarnessSettings.model_validate({**settings.harness.model_dump(), **overrides})
-        for tier in ("quick", "deep"):
+        for tier in ("harness", "quick", "deep"):
             configured_tier = getattr(settings, tier)
             if configured_tier:
-                updated = {**configured_tier.model_dump(), **overrides}
-                if harness is not None and configured_tier.kind != harness and provider is None:
-                    updated["provider"] = None
+                updated = configured_tier.model_dump()
+                if harness is not None and configured_tier.kind != harness:
+                    updated.update(model=None, provider=None, command=(), extra_args=())
+                updated.update(overrides)
                 setattr(settings, tier, HarnessSettings.model_validate(updated))
     return settings
 
