@@ -8,6 +8,8 @@ Authors: Tauric Research and TradingAgents contributors
 The financial-data modules under src/open_trading_agents/dataflows and the
 financial-tool behavior in src/open_trading_agents/tools.py, and benchmark/return
 window semantics in src/open_trading_agents/memory.py are adapted from
-TradingAgents. Modifications include independent configuration, package imports,
+TradingAgents. Financial role instructions in src/open_trading_agents/prompts.py
+and decision field behavior also derive from the reference project.
+Modifications include independent configuration, package imports,
 typing, documentation, local MCP tool exposure, and removal of graph-framework
 coupling. No upstream telemetry, update checks, or direct model clients are included.

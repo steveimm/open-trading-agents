@@ -4,7 +4,117 @@ A Python application for financial research with independently managed agent ses
 
 The application coordinates analysis, research debate, a research decision, a trader proposal, risk debate, a portfolio decision, and reports. Pi, Codex, and Claude Code CLI adapters own their model connections, authentication, conversation history, and tool loops.
 
-Development is in progress. The project is managed with uv.
+The project is managed with uv. The native harnesses remain responsible for provider authentication, request construction, reasoning history, retries, and context compaction. The application supplies new task messages and records explicit session IDs.
+
+## Run
+
+Install Python dependencies and check which harnesses are available:
+
+```sh
+uv sync
+uv run open-trading-agents doctor
+```
+
+Configure your chosen harness through its normal CLI first. Then start a run:
+
+```sh
+uv run open-trading-agents analyze NVDA
+uv run open-trading-agents analyze BTC-USD --harness claude
+uv run open-trading-agents analyze NVDA --harness codex --date 2026-01-02
+```
+
+Omitting the ticker opens a short ticker/date prompt in an interactive terminal. Model and provider selectors are optional. When omitted, the harness uses its own configuration. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
+
+For application settings, copy `tradingagents.example.toml` to `tradingagents.toml`, or use `--config PATH`. The `[harness]` section sets the default. Optional `[quick]` and `[deep]` sections select different harnesses or models for working agents and decision managers. Explicit CLI harness/model/provider options override both tiers.
+
+```toml
+[harness]
+kind = "pi"
+provider = "my-local-provider"
+model = "my-configured-model"
+
+[deep]
+kind = "codex"
+```
+
+The application does not set temperature, top-p, or thinking effort. A harness may apply its own defaults, so configure those in the harness's model profile when the server must retain particular defaults.
+
+## Interface
+
+The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
+
+| Key | Action |
+| --- | --- |
+| Tab / Shift+Tab | Next / previous stage |
+| Arrow keys | Select an analysis pane, or scroll the expanded transcript |
+| Enter / f | Expand or restore a pane |
+| Escape | Return to the stage layout |
+| Page Up / Page Down | Scroll a page |
+| Home / End | Beginning / follow live output |
+| d | Show raw event payloads |
+| m | Show supporting memory and screening work |
+| q | Exit, cancelling active work while retaining saved progress |
+
+Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Pi additionally exposes locally captured native request bodies. Other harness event streams do not promise visibility into every internal HTTP field.
+
+Elapsed clocks update independently of model responses. Usage shows total input, output, cache reads, and cache writes. Cache counts are subsets of input, not additional input. An em dash means unavailable and `+?` means only part of the usage has cache detail. Reported reasoning tokens are already included in output.
+
+## Calculations and sources
+
+Agents can use native execution tools to write and run calculation scripts in their own workspaces. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
+
+Financial tools retain Yahoo, SEC EDGAR, Alpha Vantage, FRED, Polymarket, Reddit, and StockTwits integrations. Tools bind the ticker and information cutoff outside the model's arguments. Technical reports have a shared verified price/indicator snapshot. Missing or unavailable data is reported explicitly.
+
+`search_web` and `fetch_webpage` provide additional cited evidence. Search uses the explicitly configured backend (`data.web_search_backend`, default `yahoo`). Page retrieval limits redirects and response size, rejects private network destinations, and extracts inert text. A live page is not an archived historical snapshot. Set `web_research = false` to omit these tools.
+
+Optional social screening (`social_screening = true`) uses a separate native harness session to assess relevance and stance. Failed screening preserves the original posts. No model is called directly from the financial adapters.
+
+Most default sources need no API key. Optional FRED and Alpha Vantage sources use `FRED_API_KEY` and `ALPHA_VANTAGE_API_KEY`. `SEC_EDGAR_USER_AGENT` can identify SEC requests. A `.env` in the current directory is loaded without replacing exported environment values. Provider authentication stays in the harness.
+
+## Saved runs and unattended use
+
+The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, local JSONL events, and individual plus combined Markdown/HTML reports. Reports and transcripts remain available after an interrupted run.
+
+```sh
+uv run open-trading-agents analyze NVDA --headless
+uv run open-trading-agents analyze NVDA --events > run-events.jsonl
+uv run open-trading-agents resume /path/to/state/runs/RUN_ID
+uv run open-trading-agents replay /path/to/state/runs/RUN_ID
+```
+
+Resume retains completed steps and the original inputs. An acknowledged unfinished task continues its native session. If delivery was never acknowledged, the stored task is submitted again, so that narrow crash window provides at-least-once delivery. Only one process can drive a saved run at a time.
+
+Use `--portfolio portfolio.json` to supply known holdings and cash:
+
+```json
+{"cash": 10000, "currency": "USD", "positions": [{"ticker": "NVDA", "quantity": 10, "average_price": 120}]}
+```
+
+An omitted portfolio means unknown holdings. An empty portfolio means a known flat account. No broker connection or order placement is implemented.
+
+## Memory and backtesting
+
+Completed recommendations are stored in SQLite. Later runs settle eligible outcomes using the first close after the analysis date and the configured holding window, five instrument trading sessions by default. Returns are compared with a regional benchmark. Reflections use the configured harness, and historical analysis receives only lessons whose outcomes were known by its cutoff.
+
+```sh
+uv run open-trading-agents backtest NVDA,AAPL --start 2024-03-01 --end 2024-03-15 --every 7 --run-id march-evaluation
+```
+
+Repeat the same command to resume a sweep. A changed configuration, grid, or portfolio is rejected for an existing sweep identifier. Sweep runs, memory and cache are isolated from live analysis. Results score independent ratings against realized alpha. They do not simulate fills, transaction costs, or evolving holdings. Historical news/social coverage is incomplete and model sampling varies, so these evaluations are not exact historical replay.
+
+## Validation
+
+```sh
+uv run pytest -q
+uv run ruff check src tests
+uv build
+```
+
+Tests use offline fixtures and subprocess protocol doubles. Live validation is performed separately with explicitly selected harness configurations. The implementation has been tested with pi 1.3.0, Codex 0.164.0, and Claude Code 2.1.294. Native execution can still be blocked by the harness's own permissions or the host's sandbox support. Such failures stay visible, and the arithmetic tool remains available.
+
+There is no application telemetry, update polling, announcement service, or remote tracing. Dependency and native-harness telemetry are outside this project's scope. Local transcript persistence is part of the requested interface and resume behavior.
+
+See `THIRD_PARTY_NOTICES` and `LICENSE` for the adapted reference components.
 
 ## Agreed requirements
 
