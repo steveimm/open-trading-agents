@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import bisect
 import json
-import math
 import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from rich.cells import cell_len, chop_cells
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -40,7 +40,6 @@ class Transcript:
         """Keep complete logical lines independently of terminal rendering."""
         self.lines = [Text()]
         self.revision = 0
-        self.changed_from = 0
         self.last_channel = ""
         self.last_agent = ""
 
@@ -53,7 +52,6 @@ class Transcript:
         """
         if not text:
             return
-        self.changed_from = len(self.lines) - 1
         pieces = text.replace("\r\n", "\n").replace("\r", "").expandtabs(4).split("\n")
         self.lines[-1].append(pieces[0], style)
         self.lines.extend(Text(piece, style=style) for piece in pieces[1:])
@@ -97,9 +95,8 @@ class TranscriptView(ScrollView):
         self._width = 0
         self._revision = -1
         self._offsets = [0]
-        self._lengths: list[int] = []
+        self._wrap_starts: list[list[int]] = []
         self._cache: OrderedDict[int, Strip] = OrderedDict()
-        self.rendered_lines = 0
 
     def set_document(self, document: Transcript) -> None:
         """Switch the current speaker without replacing the widget.
@@ -113,7 +110,7 @@ class TranscriptView(ScrollView):
         self._revision = -1
         self._width = 0
         self._offsets = [0]
-        self._lengths.clear()
+        self._wrap_starts.clear()
         self._cache.clear()
         self.following = True
         self.sync()
@@ -125,17 +122,17 @@ class TranscriptView(ScrollView):
             return
         old_source = bisect.bisect_right(self._offsets, int(self.scroll_y)) - 1
         resized = width != self._width
-        start = 0 if resized or self._revision < 0 else max(0, len(self._lengths) - 1)
+        start = 0 if resized or self._revision < 0 else max(0, len(self._wrap_starts) - 1)
         if resized:
             self._cache.clear()
         else:
             for index in list(self._cache):
                 if index >= start:
                     del self._cache[index]
-        self._lengths[start:] = [line.cell_len for line in self.document.lines[start:]]
+        self._wrap_starts[start:] = [self._line_starts(line.plain, width) for line in self.document.lines[start:]]
         self._offsets = self._offsets[: start + 1]
-        for length in self._lengths[start:]:
-            self._offsets.append(self._offsets[-1] + max(1, math.ceil(length / width)))
+        for starts in self._wrap_starts[start:]:
+            self._offsets.append(self._offsets[-1] + len(starts))
         self._width = width
         self._revision = self.document.revision
         self.virtual_size = Size(width, self._offsets[-1])
@@ -146,12 +143,28 @@ class TranscriptView(ScrollView):
             self.scroll_to(y=anchor, animate=False, immediate=True)
         self.refresh()
 
+    @staticmethod
+    def _line_starts(text: str, width: int) -> list[int]:
+        """Find soft-wrap offsets without splitting wide Unicode graphemes.
+
+        Args:
+            text: One logical line of plain text.
+            width: Viewport width in terminal cells.
+
+        Returns:
+            Cell offsets of the line's wrapped rows.
+        """
+        starts, offset = [], 0
+        for chunk in chop_cells(text, width):
+            starts.append(offset)
+            offset += cell_len(chunk)
+        return starts or [0]
+
     def render_line(self, y: int) -> Strip:
-        self.rendered_lines += 1
         width = max(1, self.scrollable_content_region.width)
         row = int(self.scroll_y) + y
         index = bisect.bisect_right(self._offsets, row) - 1
-        if index < 0 or index >= len(self.document.lines):
+        if index < 0 or index >= len(self._wrap_starts):
             return Strip.blank(width, self.rich_style)
         if index not in self._cache:
             self._cache[index] = Strip(self.document.lines[index].render(self.app.console))
@@ -159,7 +172,8 @@ class TranscriptView(ScrollView):
                 self._cache.popitem(last=False)
         strip = self._cache[index]
         self._cache.move_to_end(index)
-        offset = (row - self._offsets[index]) * width
+        local_row = row - self._offsets[index]
+        offset = self._wrap_starts[index][local_row] if local_row < len(self._wrap_starts[index]) else 0
         return strip.crop_extend(offset, offset + width, self.rich_style).apply_style(self.rich_style)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -232,25 +246,58 @@ def duration(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{second:02}" if hours else f"{minutes:02}:{second:02}"
 
 
-def usage_label(usages: list[Usage]) -> str:
+def usage_label(usages: list[Usage], compact: bool = False) -> str:
     """Format input totals and cache subsets without counting cached input twice.
 
     Args:
         usages: Authoritative per-request usage records.
+        compact: Use shorter counters in narrow panes.
 
     Returns:
         Compact usage description with unknown cache counts shown explicitly.
     """
     if not usages:
-        return "In 0 · Out 0 · Cache read — · write —"
-    read = sum(value.cache_read_tokens or 0 for value in usages)
-    write = sum(value.cache_write_tokens or 0 for value in usages)
-    read_text = f"{read:,}" if all(value.cache_read_tokens is not None for value in usages) else f"{read:,}+?" if read else "—"
-    write_text = f"{write:,}" if all(value.cache_write_tokens is not None for value in usages) else f"{write:,}+?" if write else "—"
-    return f"In {sum(value.input_tokens for value in usages):,} · Out {sum(value.output_tokens for value in usages):,} · Cache read {read_text} · write {write_text}"
+        return "In 0 Out 0 Cache R— W—" if compact else "In 0 · Out 0 · Cache read — · write —"
+    read_text = _cache_count([value.cache_read_tokens for value in usages], compact)
+    write_text = _cache_count([value.cache_write_tokens for value in usages], compact)
+    inputs = sum(value.input_tokens for value in usages)
+    outputs = sum(value.output_tokens for value in usages)
+    if compact:
+        return f"In {_short(inputs)} Out {_short(outputs)} Cache R{read_text} W{write_text}"
+    return f"In {inputs:,} · Out {outputs:,} · Cache read {read_text} · write {write_text}"
+
+
+def _cache_count(values: list[int | None], compact: bool) -> str:
+    """Distinguish incomplete provider counts from reported cache misses.
+
+    Args:
+        values: Cache counts for each completed request.
+        compact: Abbreviate known totals for narrow panes.
+
+    Returns:
+        Known count, partial count, or an unavailable marker.
+    """
+    total = sum(value or 0 for value in values)
+    count = _short(total) if compact else f"{total:,}"
+    if all(value is not None for value in values):
+        return count
+    return f"{count}+?" if total else "—"
+
+
+def _short(value: int) -> str:
+    """Abbreviate a token count for narrow status panes.
+
+    Args:
+        value: Exact token count retained in the run state.
+
+    Returns:
+        Compact display value.
+    """
+    return f"{value / 1_000_000:.1f}m" if value >= 1_000_000 else f"{value / 1000:.1f}k" if value >= 1000 else str(value)
 
 
 class TradingApp(App[None]):
+    TITLE = "Open Trading Agents"
     CSS = """
     Screen { background: #0d131c; color: #d9e2ef; }
     #run-status { height: 2; padding: 0 1; background: #1a2635; }
@@ -259,6 +306,8 @@ class TradingApp(App[None]):
     #stages { height: 1fr; }
     .stage { height: 1fr; }
     #stage-analysis { grid-size: 2 2; grid-gutter: 1; padding: 0 1; }
+    #stage-analysis.one-agent { grid-size: 1 1; }
+    #stage-analysis.two-agents { grid-size: 2 1; }
     .agent-pane { border: round #34475e; height: 1fr; }
     .agent-pane.selected { border: round #bd9bfa; }
     .agent-status { height: 3; padding: 0 1; color: #9fb2ca; }
@@ -272,6 +321,10 @@ class TradingApp(App[None]):
     #raw-events { height: 8; }
     #usage { height: 2; padding: 0 1; background: #1a2635; }
     #shortcuts { height: 1; padding: 0 1; color: #8799af; }
+    Screen.compact #run-status, Screen.compact #stage-status, Screen.compact #usage { height: 1; }
+    Screen.compact #stage-tabs { height: 2; }
+    Screen.compact .agent-status { height: 2; }
+    Screen.compact #stage-analysis { grid-gutter: 0; }
     """
     BINDINGS = [
         Binding("tab", "next_stage", "Next stage", priority=True),
@@ -311,6 +364,8 @@ class TradingApp(App[None]):
         self.selected_analysts = selected_analysts
         self.ticker = ticker
         self.run_dir = run_dir
+        self.error: Exception | None = None
+        self.result: object | None = None
         self.stage_index = 0
         self.selected_agent = 0
         self.fullscreen = False
@@ -331,6 +386,7 @@ class TradingApp(App[None]):
         self._streamed: set[tuple[str, str, str]] = set()
         self._turn_streamed: set[str] = set()
         self._status_widgets: dict[str, Static] = {}
+        self._agent_stages: dict[str, str] = {}
         for key in selected_analysts:
             name = ANALYSTS.get(key, key)
             self.agent_documents[name] = Transcript()
@@ -360,7 +416,10 @@ class TradingApp(App[None]):
         yield Tabs(*(Tab(label, id=f"tab-{stage}") for stage, label in STAGES), id="stage-tabs")
         yield Static(id="stage-status")
         with ContentSwitcher(initial="stage-analysis", id="stages"):
-            with Grid(id="stage-analysis", classes="stage"):
+            with Grid(
+                id="stage-analysis",
+                classes=f"stage {'one-agent' if len(self.selected_analysts) == 1 else 'two-agents' if len(self.selected_analysts) == 2 else ''}",
+            ):
                 for index, key in enumerate(self.selected_analysts):
                     name = ANALYSTS.get(key, key)
                     with Vertical(id=f"pane-{index}", classes="agent-pane selected" if index == 0 else "agent-pane"):
@@ -380,11 +439,14 @@ class TradingApp(App[None]):
         with Collapsible(title="Raw event payloads", collapsed=True, id="details"):
             yield self._view(self.raw_document, "raw-events")
         yield Static(id="usage")
-        yield Static("Tab/Shift+Tab stage · Arrows select/scroll · Enter/f expand · Esc restore · End live · d payloads · q quit", id="shortcuts")
+        yield Static(
+            "Tab/Shift+Tab stage · Arrows select/scroll · Enter/f expand · Esc restore · End live · d payloads · q quit", id="shortcuts"
+        )
 
     def on_mount(self) -> None:
         """Start independent display timers and launch the supplied workflow."""
         self._status_widgets = {widget.id: widget for widget in self.query(Static) if widget.id}
+        self._adapt_layout()
         self.set_interval(0.04, self.flush_events)
         self.set_interval(0.1, self.refresh_clocks)
         self.refresh_clocks()
@@ -395,10 +457,11 @@ class TradingApp(App[None]):
         """Run the workflow without blocking terminal event processing."""
         try:
             assert self.run_callback is not None
-            await self.run_callback(self.receive)
+            self.result = await self.run_callback(self.receive)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            self.error = exc
             self._failure = str(exc)
             await self.receive(AgentEvent("error", "Workflow", self.active_stage, str(exc)))
         finally:
@@ -440,11 +503,14 @@ class TradingApp(App[None]):
             event: Deduplicated run event.
         """
         now = time.monotonic()
-        kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(event.kind, event.kind)
+        kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(
+            event.kind, event.kind
+        )
         stage = event.stage if event.stage in self.stage_documents else self.active_stage
         agent = event.agent or "Workflow"
         document = self.agent_documents.setdefault(agent, Transcript())
         activity = self.agents.setdefault(agent, Activity())
+        self._agent_stages[agent] = stage
         activity.last_event = now
         self.raw_document.append(json.dumps(asdict(event), ensure_ascii=False, default=str) + "\n", "#899bb3")
         if kind == "stage_start":
@@ -470,7 +536,9 @@ class TradingApp(App[None]):
             activity.status = "running"
             self._turn_streamed.discard(agent)
             self._speaker(stage, agent)
-            self.stage_documents[stage].heading(f"{agent} · Round {activity.round or 1}/{activity.total_rounds or '?'} · Turn {activity.turn or 1}")
+            self.stage_documents[stage].heading(
+                f"{agent} · Round {activity.round or 1}/{activity.total_rounds or '?'} · Turn {activity.turn or 1}"
+            )
             self.stage_documents[stage].last_agent = agent
         elif kind == "usage":
             raw = event.data.get("usage", event.data)
@@ -551,19 +619,53 @@ class TradingApp(App[None]):
         now = time.monotonic()
         elapsed = duration((self._finished or now) - self._started)
         status = "Failed" if self._failure else "Complete" if self._finished else "Running"
-        self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}\n{status} · Total {elapsed}")
+        compact = self.screen.has_class("compact")
+        separator = " · " if compact else "\n"
+        self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}{separator}{status} · Total {elapsed}")
         stage = self.stages[self.active_stage]
-        self._status_widgets["stage-status"].update(f"{STAGES[self.stage_index][1]} · {stage.status} · {duration(stage.elapsed(now))}")
+        stage_text = f"{STAGES[self.stage_index][1]} · {stage.status} · {duration(stage.elapsed(now))}"
+        participants = [name for name, key in self._agent_stages.items() if key == self.active_stage]
+        if self.active_stage not in {"analysis", "reports", *DEBATE_STAGES} and participants:
+            name = participants[-1]
+            activity = self.agents[name]
+            values = [value for (agent, _), value in self.usage.items() if agent == name]
+            stage_text += f" · {name} {duration(activity.elapsed(now))}"
+            if not compact:
+                stage_text += "\n" + usage_label(values)
+        self._status_widgets["stage-status"].update(stage_text)
         for index, key in enumerate(self.selected_analysts):
             name = ANALYSTS.get(key, key)
             activity = self.agents[name]
             values = [value for (agent, _), value in self.usage.items() if agent == name]
-            self._status_widgets[f"agent-status-{index}"].update(f"{name} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values)}")
+            label = name.removesuffix(" Analyst") if compact else name
+            self._status_widgets[f"agent-status-{index}"].update(
+                f"{label} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}"
+            )
         for debate, name in self.current_speakers.items():
             activity = self.agents[name]
             values = [value for (agent, _), value in self.usage.items() if agent == name]
-            self._status_widgets[f"speaker-{debate}"].update(f"{name} · {activity.status} · {duration(activity.elapsed(now))}\nRound {activity.round or 1}/{activity.total_rounds or '?'} · Turn {activity.turn or 1}\n{usage_label(values)}")
-        self._status_widgets["usage"].update(usage_label(list(self.usage.values())) + "\nInput includes cached tokens · — unavailable · +? incomplete cache reporting")
+            self._status_widgets[f"speaker-{debate}"].update(
+                f"{name} · {activity.status} · {duration(activity.elapsed(now))}\nRound {activity.round or 1}/{activity.total_rounds or '?'} · Turn {activity.turn or 1}\n{usage_label(values)}"
+            )
+        explanation = "" if compact else "\nInput includes cached tokens · — unavailable · +? incomplete cache reporting"
+        self._status_widgets["usage"].update(usage_label(list(self.usage.values()), compact=compact) + explanation)
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep usable transcript space in shorter terminals.
+
+        Args:
+            event: New terminal dimensions.
+        """
+        self._adapt_layout()
+
+    def _adapt_layout(self) -> None:
+        """Adjust status density without replacing transcript widgets."""
+        compact = self.size.height < 32 or self.size.width < 110
+        self.screen.set_class(compact, "compact")
+        if "shortcuts" in self._status_widgets:
+            shortcuts = "Tab stage · Arrows pane/scroll · f expand · Esc grid · End live · d payloads · q quit"
+            self._status_widgets["shortcuts"].update(shortcuts)
+        self.refresh_clocks()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Change stage content when a tab is selected.
@@ -602,6 +704,11 @@ class TradingApp(App[None]):
         Args:
             direction: Keyboard navigation direction.
         """
+        focused = self.focused
+        if isinstance(focused, TranscriptView) and focused.id in {"raw-events", f"current-{self.active_stage}"}:
+            if direction not in {"left", "right"}:
+                focused.navigate(direction)
+            return
         if self.active_stage == "analysis" and not self.fullscreen and direction in {"left", "right", "up", "down"}:
             if not self.selected_analysts:
                 return
@@ -624,6 +731,19 @@ class TradingApp(App[None]):
         if self.selected_analysts:
             self.query_one(f"#analyst-{self.selected_agent}", TranscriptView).focus()
 
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Select an analyst pane when its transcript receives mouse focus.
+
+        Args:
+            event: Focused descendant widget.
+        """
+        identifier = event.widget.id or ""
+        if identifier.startswith("analyst-"):
+            index = int(identifier.removeprefix("analyst-"))
+            if index != self.selected_agent:
+                self.selected_agent = index
+                self._update_selection()
+
     def action_fullscreen(self) -> None:
         """Expand the selected analyst pane while other agents keep running."""
         if self.active_stage == "analysis":
@@ -640,6 +760,8 @@ class TradingApp(App[None]):
         """Toggle the complete local raw-event transcript."""
         details = self.query_one("#details", Collapsible)
         details.collapsed = not details.collapsed
+        if not details.collapsed:
+            self.query_one("#raw-events", TranscriptView).focus()
         self.call_after_refresh(self.flush_events)
 
     async def action_stop(self) -> None:
