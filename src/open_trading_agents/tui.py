@@ -35,6 +35,60 @@ CHANNEL_COLORS = {
     "report": "#b5e3c8",
 }
 DEBATE_STAGES = {"research", "risk"}
+CONTROL_ESCAPES = {code: f"\\x{code:02x}" for code in (*range(32), *range(127, 160)) if code not in (9, 10)}
+CONTROL_ESCAPES[13] = "\\r"
+
+
+@dataclass
+class TranscriptBlock:
+    start: int
+    end: int
+    text: str
+
+
+def literal_text(text: str) -> str:
+    """Render terminal control sequences as visible characters.
+
+    Args:
+        text: Untrusted model or tool output.
+
+    Returns:
+        Display text with newline and tab layout preserved, and controls escaped.
+    """
+    return text.replace("\r\n", "\n").translate(CONTROL_ESCAPES).expandtabs(4)
+
+
+def tool_text(event: AgentEvent) -> str:
+    """Extract readable script arguments and tool text without losing raw event data.
+
+    Args:
+        event: Native tool input, output delta, or result snapshot.
+
+    Returns:
+        Plain text suitable for the transcript, retaining multiline source code.
+    """
+    text = event.text
+    payload = event.data.get("arguments") if event.kind == "tool_start" else event.data.get("result")
+    if event.data.get("delta"):
+        return text
+    if payload is None and text.lstrip().startswith(("{", "[")):
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            return text
+    if payload is None:
+        return text
+    if isinstance(payload, dict) and isinstance(payload.get("content"), list):
+        blocks = payload["content"]
+        return "\n".join(str(block.get("text", f"<{block.get('type', 'content')} content>")) for block in blocks if isinstance(block, dict))
+    if isinstance(payload, dict):
+        parts = []
+        for key, value in payload.items():
+            rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+            separator = "\n" if "\n" in rendered else " "
+            parts.append(f"{key}:{separator}{rendered}")
+        return "\n".join(parts)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 class Transcript:
@@ -44,6 +98,10 @@ class Transcript:
         self.revision = 0
         self.last_channel = ""
         self.last_agent = ""
+        self.length = 0
+        self.blocks: list[TranscriptBlock] = []
+        self.rewrite_revision = -1
+        self.rewrite_line = 0
 
     def append(self, text: str, style: str = "") -> None:
         """Append styled text without reprocessing earlier lines.
@@ -54,10 +112,60 @@ class Transcript:
         """
         if not text:
             return
-        pieces = text.replace("\r\n", "\n").replace("\r", "").expandtabs(4).split("\n")
+        text = literal_text(text)
+        pieces = text.split("\n")
         self.lines[-1].append(pieces[0], style)
         self.lines.extend(Text(piece, style=style) for piece in pieces[1:])
+        self.length += len(text)
         self.revision += 1
+
+    def append_block(self, text: str, style: str) -> TranscriptBlock:
+        """Append one tool result whose later snapshots may replace its content.
+
+        Args:
+            text: Initial tool output.
+            style: Output color.
+
+        Returns:
+            A tracked region that remains valid when other tools stream.
+        """
+        start = self.length
+        self.append(text, style)
+        block = TranscriptBlock(start, self.length, literal_text(text))
+        self.blocks.append(block)
+        return block
+
+    def replace_block(self, block: TranscriptBlock, text: str, style: str) -> None:
+        """Reconcile cumulative tool output without repeating earlier content.
+
+        Args:
+            block: Region created for this tool invocation.
+            text: Complete current snapshot.
+            style: Output color.
+        """
+        text = literal_text(text)
+        if text == block.text:
+            return
+        if block.end == self.length and text.startswith(block.text):
+            self.append(text[len(block.text) :], style)
+            block.end, block.text = self.length, text
+            return
+        complete = Text("\n").join(self.lines)
+        replacement = complete[: block.start]
+        replacement.append(text, style)
+        replacement.append_text(complete[block.end :])
+        start_line = complete.plain[: block.start].count("\n")
+        difference = len(text) - (block.end - block.start)
+        for other in self.blocks:
+            if other is not block and other.start >= block.end:
+                other.start += difference
+                other.end += difference
+        self.lines = list(replacement.split("\n", allow_blank=True)) or [Text()]
+        self.length += difference
+        block.end, block.text = block.start + len(text), text
+        self.revision += 1
+        self.rewrite_line = min(self.rewrite_line, start_line) if self.rewrite_revision >= 0 else start_line
+        self.rewrite_revision = self.revision
 
     def heading(self, title: str) -> None:
         """Separate a new agent turn or input block with one visible heading.
@@ -125,6 +233,8 @@ class TranscriptView(ScrollView):
         old_source = bisect.bisect_right(self._offsets, int(self.scroll_y)) - 1
         resized = width != self._width
         start = 0 if resized or self._revision < 0 else max(0, len(self._wrap_starts) - 1)
+        if self._revision < self.document.rewrite_revision:
+            start = min(start, self.document.rewrite_line)
         if resized:
             self._cache.clear()
         else:
@@ -400,6 +510,8 @@ class TradingApp(App[None]):
         self._stage_agents: dict[str, list[str]] = {stage: [] for stage, _ in STAGES}
         self._memory_agents: list[str] = []
         self._tool_names: dict[tuple[str, str], str] = {}
+        self._tool_outputs: dict[tuple[str, str], str] = {}
+        self._tool_regions: dict[tuple[str, str], list[tuple[Transcript, TranscriptBlock]]] = {}
         self._reports: dict[str, str] = {}
         for key in selected_analysts:
             name = ANALYSTS.get(key, key)
@@ -480,7 +592,8 @@ class TradingApp(App[None]):
         except Exception as exc:
             self.error = exc
             self._failure = str(exc)
-            await self.receive(AgentEvent("error", "Workflow", self.active_stage, str(exc)))
+            if not any(event.kind == "error" and event.agent == "Workflow" for event in self._pending):
+                await self.receive(AgentEvent("error", "Workflow", self.active_stage, str(exc)))
         finally:
             self._finished = time.monotonic()
             self.flush_events()
@@ -540,6 +653,7 @@ class TradingApp(App[None]):
             return
         if kind == "stage_start":
             self._finished = None
+            self._failure = None
             self.stages[stage] = Activity(started=now, status="running")
         elif kind == "stage_end":
             self.stages[stage].finished = now
@@ -580,6 +694,9 @@ class TradingApp(App[None]):
             activity.status = event.text or str(event.data.get("status", "running"))
         elif kind == "run_end":
             self._finished = now
+        elif kind == "tool_result":
+            self._tool_result(event, document, stage_document)
+            activity.status = "using tool" if event.data.get("delta") or event.data.get("snapshot") else "running"
         elif kind in CHANNEL_COLORS:
             text = event.text
             if kind in {"text", "reasoning"}:
@@ -599,7 +716,7 @@ class TradingApp(App[None]):
                     self._message_parts.setdefault(key, []).append(text)
                 if kind == "text":
                     self._turn_streamed.add(agent)
-            if kind in {"tool_start", "tool_result"}:
+            if kind == "tool_start":
                 tool_id = str(event.data.get("tool_call_id") or event.event_id)
                 tool_key = agent, tool_id
                 name = (
@@ -608,19 +725,22 @@ class TradingApp(App[None]):
                     or event.data.get("tool_name")
                     or self._tool_names.get(tool_key, "tool")
                 )
-                payload = event.data.get("arguments") if kind == "tool_start" else event.data.get("result")
-                if not text and payload is not None:
-                    text = json.dumps(payload, ensure_ascii=False, default=str)
-                if kind == "tool_result":
-                    result_label = " result (error)" if event.data.get("is_error") else " result"
-                    text = f"\n{name}{result_label}\n{text}\n"
-                elif tool_key not in self._tool_names:
-                    text = f"\n{name}\n{'' if text.strip() == '{}' else text}"
+                text = tool_text(event)
+                if tool_key not in self._tool_names:
+                    text = f"\n{name}\n{text}"
                 self._tool_names[tool_key] = name
-                activity.status = "using tool" if kind == "tool_start" else "running"
+                activity.status = "using tool"
             if kind == "error":
                 activity.status = "error"
                 activity.finished = now
+                if agent == "Workflow":
+                    self._failure, self._finished = text, now
+                    for entry in self.agents.values():
+                        if entry.started is not None and entry.finished is None:
+                            entry.status, entry.finished = "stopped", now
+                    for entry in self.stages.values():
+                        if entry.status == "running":
+                            entry.status, entry.finished = "failed", now
             if kind == "report":
                 if self._reports.get(agent) == text:
                     return
@@ -634,6 +754,28 @@ class TradingApp(App[None]):
             if stage in DEBATE_STAGES and kind in {"text", "reasoning", "prompt"}:
                 self._speaker(stage, agent)
             self._append_event(document, stage_document, agent, kind, text)
+
+    def _tool_result(self, event: AgentEvent, document: Transcript, stage: Transcript) -> None:
+        """Group native stdout, stderr, and cumulative snapshots by tool invocation.
+
+        Args:
+            event: Tool output delta, snapshot, or final result.
+            document: Agent transcript.
+            stage: Shared stage transcript.
+        """
+        key = event.agent, str(event.data.get("tool_call_id") or event.event_id)
+        text = tool_text(event)
+        complete = self._tool_outputs.get(key, "") + text if event.data.get("delta") else text
+        self._tool_outputs[key] = complete
+        color = CHANNEL_COLORS["error" if event.data.get("is_error") else "tool_result"]
+        if key not in self._tool_regions:
+            name = event.data.get("tool") or event.data.get("name") or self._tool_names.get(key, "tool")
+            label = " result (error)" if event.data.get("is_error") else " result"
+            self._append_event(document, stage, event.agent, "tool_result", f"\n{name}{label}\n")
+            self._tool_regions[key] = [(target, target.append_block(complete, color)) for target in (document, stage)]
+        else:
+            for target, region in self._tool_regions[key]:
+                target.replace_block(region, complete, color)
 
     def _speaker(self, stage: str, agent: str) -> None:
         """Point a debate side pane at the current speaker's complete transcript.

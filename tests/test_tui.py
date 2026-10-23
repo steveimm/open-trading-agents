@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -317,3 +318,96 @@ async def test_final_snapshots_complete_partial_streams_and_report_duplicates() 
         assert transcript.count("Partial completed response") == 1
         assert app.stage_documents["reports"].plain().count("Rendered final report") == 1
         assert app.query_one("#analyst-0", TranscriptView).size.width > 90
+
+
+@pytest.mark.asyncio
+async def test_script_arguments_output_deltas_and_replaced_snapshots() -> None:
+    """Keep native code readable and reconcile streamed output without duplicate results."""
+    app = TradingApp()
+    command = "python - <<'PY'\nimport math\nprint(math.sqrt(2))\nPY"
+    async with app.run_test(size=(140, 42)) as pilot:
+        agent = "Market Analyst"
+        events = [
+            AgentEvent("tool_start", agent, "analysis", json.dumps({"command": command}), {"tool": "Bash", "tool_call_id": "code"}),
+            AgentEvent("tool_result", agent, "analysis", "1.414", {"tool_call_id": "code", "delta": True}),
+            AgentEvent("tool_result", agent, "analysis", "21356\n", {"tool_call_id": "code", "delta": True}),
+            AgentEvent("tool_result", agent, "analysis", "1.41421356\n", {"tool_call_id": "code", "final": True}),
+            AgentEvent(
+                "tool_result",
+                agent,
+                "analysis",
+                '{"content":[{"text":"preliminary output\\n"}]}',
+                {"tool": "Python", "tool_call_id": "snapshot", "snapshot": True},
+            ),
+            AgentEvent(
+                "tool_result",
+                "News Analyst",
+                "analysis",
+                "Independent search result",
+                {"tool": "web_search", "tool_call_id": "search", "final": True},
+            ),
+            AgentEvent(
+                "tool_result",
+                agent,
+                "analysis",
+                '{"content":[{"text":"corrected output\\nnext line\\n"}]}',
+                {"tool_call_id": "snapshot", "snapshot": True},
+            ),
+            AgentEvent(
+                "tool_result",
+                agent,
+                "analysis",
+                '{"content":[{"text":"corrected output\\nnext line\\n"}]}',
+                {"tool_call_id": "snapshot", "final": True},
+            ),
+            AgentEvent(
+                "tool_result",
+                agent,
+                "analysis",
+                "stdout\n\x1b]0;changed title\x07\rstderr\x00",
+                {"tool": "Bash", "tool_call_id": "controls", "final": True},
+            ),
+        ]
+        for event in events:
+            await app.receive(event)
+        app.flush_events()
+        await pilot.pause()
+        transcript = app.agent_documents[agent].plain()
+        shared = app.stage_documents["analysis"].plain()
+        assert command in transcript
+        assert transcript.count("1.41421356") == 1
+        assert "preliminary output" not in transcript
+        assert transcript.count("corrected output") == 1
+        assert "corrected output\nnext line\n" in transcript
+        assert "Independent search result" in shared
+        assert "preliminary output" not in shared
+        assert "\x1b" not in transcript and "\x00" not in transcript
+        assert "\\x1b]0;changed title\\x07\\rstderr\\x00" in transcript
+        view = app.query_one("#analyst-0", TranscriptView)
+        await pilot.press("f", "home", "pagedown", "end")
+        assert view.following
+
+
+@pytest.mark.asyncio
+async def test_terminal_workflow_error_stops_unfinished_agent_clocks() -> None:
+    """Make failed replays visibly terminal while preserving completed analyst status."""
+    app = TradingApp()
+    timestamp = time.time() - 30
+    async with app.run_test() as pilot:
+        for event in (
+            AgentEvent("stage_start", "Workflow", "analysis", timestamp=timestamp),
+            AgentEvent("agent_start", "Market Analyst", "analysis", timestamp=timestamp),
+            AgentEvent("agent_start", "News Analyst", "analysis", timestamp=timestamp),
+            AgentEvent("agent_end", "News Analyst", "analysis", timestamp=timestamp + 2),
+            AgentEvent("error", "Workflow", "reports", "Provider output limit reached", timestamp=timestamp + 5),
+        ):
+            await app.receive(event)
+        app.flush_events()
+        await pilot.pause(0.15)
+        assert "Failed" in str(app.query_one("#run-status", Static).render())
+        assert app.agents["Market Analyst"].status == "stopped"
+        assert app.agents["News Analyst"].status == "complete"
+        assert app.stages["analysis"].status == "failed"
+        assert app.agents["Market Analyst"].elapsed(time.monotonic()) == pytest.approx(5, abs=0.1)
+        await pilot.pause(0.15)
+        assert app.agents["Market Analyst"].elapsed(time.monotonic()) == pytest.approx(5, abs=0.1)
