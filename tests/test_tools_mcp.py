@@ -126,3 +126,20 @@ async def test_real_stdio_mcp_process_lists_and_calls_historical_tool(tmp_path: 
             assert not result.is_error
             text = "\n".join(block.text for block in result.content if hasattr(block, "text"))
             assert "2024-03-15" in text and "withheld" in text.lower()
+
+
+def test_social_screening_uses_only_the_explicit_constructor_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send source bodies through the caller's harness callback without exposing it to model arguments."""
+    monkeypatch.setattr(module, "route_to_vendor", Mock(return_value="Dated news"))
+    stocktwits = Mock(return_value="Screened StockTwits")
+    reddit = Mock(return_value="Screened Reddit")
+    monkeypatch.setattr(module, "fetch_stocktwits_messages", stocktwits)
+    monkeypatch.setattr(module, "fetch_reddit_posts", reddit)
+    screen = Mock(return_value=([True, False], "One relevant bullish post"))
+    api = FinancialTools(ToolContext("NVDA", "2024-03-15"), screen=screen)
+    result = api.get_social_sentiment()
+    assert "Screened StockTwits" in result and "Screened Reddit" in result
+    assert stocktwits.call_args.kwargs["screen"] is screen
+    assert reddit.call_args.kwargs["screen"] is screen
+    schemas = asyncio.run(create_server(api.context, ("get_social_sentiment",)).list_tools())
+    assert "screen" not in schemas[0].input_schema.get("properties", {})
