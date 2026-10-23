@@ -356,7 +356,7 @@ def duration(seconds: float) -> str:
     Returns:
         Minutes and seconds, or hours, minutes, and seconds for long runs.
     """
-    value = int(seconds)
+    value = max(0, int(seconds))
     hours, remainder = divmod(value, 3600)
     minutes, second = divmod(remainder, 60)
     return f"{hours:02}:{minutes:02}:{second:02}" if hours else f"{minutes:02}:{second:02}"
@@ -431,7 +431,7 @@ class TradingApp(App[None]):
     .debate-speaker { width: 1fr; border: round #75559d; }
     .speaker-status { height: 3; padding: 0 1; }
     .single-stage { border: round #34475e; margin: 0 1; }
-    .full-grid { grid-size: 1 1 !important; }
+    #stage-analysis.full-grid { grid-size: 1 1; }
     .hidden { display: none; }
     #details { height: auto; max-height: 12; padding: 0; border: none; }
     #memory-details { height: auto; max-height: 12; padding: 0; border: none; }
@@ -633,6 +633,7 @@ class TradingApp(App[None]):
             event: Deduplicated run event.
         """
         now = time.monotonic() - max(0, time.time() - event.timestamp)
+        self._started = min(self._started, now)
         kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(
             event.kind, event.kind
         )

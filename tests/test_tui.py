@@ -89,6 +89,8 @@ async def test_tabs_selection_fullscreen_scrolling_and_resize() -> None:
         assert app.fullscreen
         assert app.query_one("#pane-0").has_class("hidden")
         view = app.query_one("#analyst-1", TranscriptView)
+        assert view.size.width > 130
+        assert view.size.height > 20
         await pilot.press("home", "pagedown")
         assert not view.following
         top = view.scroll_y
@@ -405,6 +407,7 @@ async def test_terminal_workflow_error_stops_unfinished_agent_clocks() -> None:
         app.flush_events()
         await pilot.pause(0.15)
         assert "Failed" in str(app.query_one("#run-status", Static).render())
+        assert "00:05" in str(app.query_one("#run-status", Static).render())
         assert app.agents["Market Analyst"].status == "stopped"
         assert app.agents["News Analyst"].status == "complete"
         assert app.stages["analysis"].status == "failed"
