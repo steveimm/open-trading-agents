@@ -414,3 +414,28 @@ async def test_terminal_workflow_error_stops_unfinished_agent_clocks() -> None:
         assert app.agents["Market Analyst"].elapsed(time.monotonic()) == pytest.approx(5, abs=0.1)
         await pilot.pause(0.15)
         assert app.agents["Market Analyst"].elapsed(time.monotonic()) == pytest.approx(5, abs=0.1)
+
+
+@pytest.mark.asyncio
+async def test_optional_screening_failure_remains_visible_without_stopping_analysis() -> None:
+    """Expose supporting rollouts and stop their clocks when optional work fails."""
+    app = TradingApp()
+    base = time.time() - 20
+    async with app.run_test() as pilot:
+        name = "Sentiment Screening abc123"
+        for event in (
+            AgentEvent("agent_start", "Market Analyst", "analysis", timestamp=base),
+            AgentEvent("agent_start", name, "analysis", timestamp=base),
+            AgentEvent("prompt", name, "analysis", "Screen the fetched source posts."),
+            AgentEvent("error", name, "analysis", "Provider unavailable", timestamp=base + 4),
+        ):
+            await app.receive(event)
+        app.flush_events()
+        await pilot.pause()
+        assert "Screen the fetched source posts." in app.memory_document.plain()
+        assert "Provider unavailable" in app.memory_document.plain()
+        assert app.agents[name].status == "error"
+        assert app.agents[name].elapsed(time.monotonic()) == pytest.approx(4, abs=0.1)
+        assert app.agents["Market Analyst"].finished is None
+        assert app._failure is None
+        assert not app.query_one("#memory-details", Collapsible).has_class("hidden")

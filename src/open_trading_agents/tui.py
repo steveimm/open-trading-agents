@@ -81,6 +81,8 @@ def tool_text(event: AgentEvent) -> str:
     if isinstance(payload, dict) and isinstance(payload.get("content"), list):
         blocks = payload["content"]
         return "\n".join(str(block.get("text", f"<{block.get('type', 'content')} content>")) for block in blocks if isinstance(block, dict))
+    if event.kind == "tool_result" and not (isinstance(payload, dict) and {"stdout", "stderr"}.intersection(payload)):
+        return text or json.dumps(payload, ensure_ascii=False, indent=2)
     if isinstance(payload, dict):
         parts = []
         for key, value in payload.items():
@@ -562,7 +564,7 @@ class TradingApp(App[None]):
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
                         yield self._view(self.stage_documents[stage], f"transcript-{stage}")
-        with Collapsible(title="Memory reflections", collapsed=True, id="memory-details", classes="hidden"):
+        with Collapsible(title="Supporting analysis · m", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status")
             yield self._view(self.memory_document, "memory-transcript")
         with Collapsible(title="Raw event payloads", collapsed=True, id="details"):
@@ -643,7 +645,7 @@ class TradingApp(App[None]):
         activity = self.agents.setdefault(agent, Activity())
         if agent != "Workflow" and agent not in self._stage_agents[stage]:
             self._stage_agents[stage].append(agent)
-        memory = agent == "Memory" or agent.startswith("Reflection ")
+        memory = agent == "Memory" or agent.startswith(("Reflection ", "Sentiment Screening "))
         stage_document = self.memory_document if memory else self.stage_documents[stage]
         if memory and agent not in self._memory_agents:
             self._memory_agents.append(agent)
@@ -977,7 +979,7 @@ class TradingApp(App[None]):
         self.call_after_refresh(self.flush_events)
 
     def action_memory(self) -> None:
-        """Expand memory reflections without adding a fifth analyst pane."""
+        """Expand reflection and screening transcripts without adding an analyst pane."""
         if self.active_stage != "analysis" or not self._memory_agents:
             return
         details = self.query_one("#memory-details", Collapsible)
