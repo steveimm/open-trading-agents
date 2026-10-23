@@ -106,11 +106,12 @@ Repeat the same command to resume a sweep. A changed configuration, grid, or por
 
 ```sh
 uv run pytest -q
+uv run pytest -q -m native
 uv run ruff check src tests
 uv build
 ```
 
-Tests use offline fixtures and subprocess protocol doubles. Live validation is performed separately with explicitly selected harness configurations. The implementation has been tested with pi 1.3.0, Codex 0.164.0, and Claude Code 2.1.294. Native execution can still be blocked by the harness's own permissions or the host's sandbox support. Such failures stay visible, and the arithmetic tool remains available.
+Default tests use offline fixtures and subprocess protocol doubles. The optional `native` tests use an installed CLI and a local fixture server, without external model requests. Live validation is performed separately with explicitly selected harness configurations. The implementation has been tested with pi 1.3.0, Codex 0.164.0, and Claude Code 2.1.294. Native execution can still be blocked by the harness's own permissions or the host's sandbox support. Such failures stay visible, and the arithmetic tool remains available.
 
 There is no application telemetry, update polling, announcement service, or remote tracing. Dependency and native-harness telemetry are outside this project's scope. Local transcript persistence is part of the requested interface and resume behavior.
 

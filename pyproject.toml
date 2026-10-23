@@ -50,3 +50,5 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-m 'not native'"
+markers = ["native: installed CLI integration against a local fixture server, with no external model requests"]
