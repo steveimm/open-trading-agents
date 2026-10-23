@@ -7,7 +7,18 @@ authors = [
     { name = "SteveImmanuel", email = "steveandreasimanuel@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "markdown-it-py>=4.2.0",
+    "mcp>=2.3.0",
+    "pandas>=3.1.0",
+    "pydantic>=2.14.1",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "stockstats>=0.6.9",
+    "textual>=8.2.8",
+    "typer>=0.27.3",
+    "yfinance>=1.7.0",
+]
 
 [project.scripts]
 open-trading-agents = "open_trading_agents:main"
@@ -15,3 +26,22 @@ open-trading-agents = "open_trading_agents:main"
 [build-system]
 requires = ["uv_build>=0.9.20,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
