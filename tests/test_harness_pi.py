@@ -13,7 +13,9 @@ from open_trading_agents.harnesses.process import HarnessError
 async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path) -> None:
     """Exercise native subprocess framing, session continuation, and authoritative usage."""
     script = tmp_path / "fake_pi.py"
-    script.write_text('''import json,sys
+    script.write_text('''import json,os,sys
+metadata=os.environ['OTA_METADATA_FILE']
+with open(metadata,'a') as handle:handle.write(json.dumps({'type':'ota_ready','tools':[]})+'\\n')
 count=0
 for line in sys.stdin:
  command=json.loads(line)
@@ -31,9 +33,12 @@ for line in sys.stdin:
    {'type':'tool_execution_start','toolName':'get_news','toolCallId':'t1','args':{'symbol':'NVDA'}},
    {'type':'tool_execution_end','toolName':'get_news','toolCallId':'t1','result':{'content':[]}},
    {'type':'message_end','message':{'role':'assistant','stopReason':'stop','content':[{'type':'text','text':str(count)}],
-      'usage':{'input':80,'output':5,'cacheRead':20,'cacheWrite':0,'reasoning':2}}},
+      'usage':{'input':100,'output':5,'cacheRead':0,'cacheWrite':0,'reasoning':2}}},
    {'type':'agent_end'}, {'type':'auto_retry_start'}, {'type':'auto_retry_end'}, {'type':'agent_settled'}]
-  for event in events: print(json.dumps(event),flush=True)
+  for event in events:
+   if event['type'].startswith('ota_'):
+    with open(metadata,'a') as handle:handle.write(json.dumps(event)+'\\n')
+   else:print(json.dumps(event),flush=True)
 ''')
     events: list[AgentEvent] = []
 

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-const publish = (type, data) => process.stdout.write(JSON.stringify({ type, ...data }) + "\n");
+const publish = (type, data) => appendFileSync(process.env.OTA_METADATA_FILE, JSON.stringify({ type, ...data }) + "\n", { mode: 0o600 });
 
 export default async function tradingTools(pi) {
   pi.on("cache_warming_decision", () => ({ action: "stop" }));
@@ -15,9 +16,21 @@ export default async function tradingTools(pi) {
     if (usage) publish("ota_provider_usage", { usage });
   });
   const command = JSON.parse(process.env.OTA_TOOL_COMMAND || "[]");
-  if (!command.length) return;
+  if (!command.length) { publish("ota_ready", { tools: [] }); return; }
   const environment = JSON.parse(process.env.OTA_TOOL_ENV || "{}");
   const allowed = new Set(JSON.parse(process.env.OTA_TOOLS || "[]"));
+  const maximumRounds = Number(process.env.OTA_MAX_TOOL_ROUNDS || 20);
+  let rounds = 0;
+  pi.on("input", () => { rounds = 0; pi.setActiveTools([...allowed]); return { action: "continue" }; });
+  pi.on("turn_end", (event) => {
+    if (!event.toolResults?.length) return;
+    rounds += 1;
+    if (rounds >= maximumRounds) {
+      pi.setActiveTools([]);
+      pi.sendMessage({ customType: "tool_budget", content: "The tool-round budget is exhausted. Write your final report using the evidence already collected, identifying missing evidence.", display: true });
+      publish("ota_budget", { rounds, maximumRounds });
+    }
+  });
   const child = spawn(command[0], command.slice(1), { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...environment } });
   let sequence = 0;
   const waiting = new Map();
@@ -59,19 +72,25 @@ export default async function tradingTools(pi) {
   process.once("exit", () => child.kill());
   await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "open-trading-agents", version: "0.1.0" } });
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+  const registered = new Set();
   let cursor;
   do {
     const result = await request("tools/list", cursor ? { cursor } : {});
     for (const tool of result.tools) {
       if (!allowed.has(tool.name)) continue;
+      registered.add(tool.name);
       pi.registerTool({
         name: tool.name, label: tool.name, description: tool.description || tool.name, parameters: tool.inputSchema,
         async execute(_id, params, signal) {
           const result = await request("tools/call", { name: tool.name, arguments: params }, signal);
-          return { content: result.content, details: { isError: result.isError === true } };
+          if (result.isError) throw new Error(result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"));
+          return { content: result.content, details: {} };
         },
       });
     }
     cursor = result.nextCursor;
   } while (cursor);
+  const missing = [...allowed].filter((name) => !registered.has(name));
+  if (missing.length) { child.kill(); throw new Error(`Financial tools missing from MCP server: ${missing.join(", ")}`); }
+  publish("ota_ready", { tools: [...registered] });
 }

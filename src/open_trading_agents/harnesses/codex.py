@@ -15,6 +15,9 @@ class CodexSession(JsonProcess):
         self.turn_id: str | None = None
         self.output = ""
         self.turn_status = ""
+        self.generation = 0
+        self.tool_generations: set[int] = set()
+        self.budget_error = ""
         self.usage_path = self.spec.session_dir / "codex_usage.json"
         self.last_usage: dict[str, int] = {}
         if self.session_id and self.usage_path.exists():
@@ -79,7 +82,8 @@ class CodexSession(JsonProcess):
             The completed assistant text and native thread identifier.
         """
         async with self.prompt_lock:
-            self.output, self.turn_status = "", ""
+            self.output, self.turn_status, self.budget_error = "", "", ""
+            self.tool_generations.clear()
             self.finished = asyncio.get_running_loop().create_future()
             await self.event("prompt", text, message_id=uuid.uuid4().hex)
             response = await self.request({"method": "turn/start", "params": {
@@ -91,6 +95,8 @@ class CodexSession(JsonProcess):
             except asyncio.CancelledError:
                 await self.cancel()
                 raise
+            if self.budget_error:
+                raise HarnessError(self.budget_error)
             if self.turn_status != "completed":
                 raise HarnessError(f"Codex turn ended with status {self.turn_status}")
             return AgentResult(self.output, self.session_id or "")
@@ -114,6 +120,7 @@ class CodexSession(JsonProcess):
             previous = {}
         delta = {key: max(0, value - previous.get(key, 0)) for key, value in total.items() if isinstance(value, int)}
         self.last_usage = total
+        self.generation += 1
         self.usage_path.write_text(json.dumps({"session_id": self.session_id, "total": total}))
         await self.event("usage", request_id=f"{self.session_id}:{params.get('turnId')}:{total.get('totalTokens')}",
                          input_tokens=delta.get("inputTokens", 0), output_tokens=delta.get("outputTokens", 0),
@@ -142,6 +149,14 @@ class CodexSession(JsonProcess):
                 self.output = item.get("text", "")
                 await self.event("text", self.output, message_id=item.get("id"), final=True)
             elif kind == "mcpToolCall":
+                if not completed:
+                    self.tool_generations.add(self.generation)
+                    if len(self.tool_generations) > self.spec.max_tool_rounds and not self.budget_error:
+                        self.budget_error = f"Codex exceeded its {self.spec.max_tool_rounds} tool rounds"
+                        await self.event("error", self.budget_error)
+                        await self.send({"id": uuid.uuid4().hex, "method": "turn/interrupt", "params": {
+                            "threadId": self.session_id, "turnId": self.turn_id,
+                        }})
                 await self.event("tool_result" if completed else "tool_start",
                                  json.dumps(item.get("result") or item.get("error") if completed else item.get("arguments"),
                                             ensure_ascii=False),

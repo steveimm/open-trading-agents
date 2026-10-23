@@ -29,6 +29,7 @@ class JsonProcess:
         self.prompt_lock = asyncio.Lock()
         self.stderr_tail = ""
         self.closing = False
+        self.failure: Exception | None = None
 
     async def event(self, kind: str, text: str = "", **data: Any) -> None:
         """Publish one normalized native harness event.
@@ -67,6 +68,8 @@ class JsonProcess:
         Args:
             value: JSON-compatible command or response.
         """
+        if self.failure is not None:
+            raise HarnessError(str(self.failure)) from self.failure
         if self.process is None or self.process.stdin is None or self.process.returncode is not None:
             raise HarnessError("Harness process is not running")
         self.process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
@@ -119,6 +122,7 @@ class JsonProcess:
             failure = error
         finally:
             if failure is not None:
+                self.failure = failure
                 for future in [*self.pending.values(), self.finished]:
                     if future is not None and not future.done():
                         future.set_exception(failure)
@@ -141,6 +145,8 @@ class JsonProcess:
     async def close(self) -> None:
         """Release the process while preserving native session files."""
         self.closing = True
+        if self.finished is not None and not self.finished.done():
+            self.finished.cancel()
         process = self.process
         if process is not None and process.returncode is None:
             if process.stdin is not None:

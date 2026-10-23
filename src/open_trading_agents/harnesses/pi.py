@@ -26,6 +26,11 @@ class PiSession(JsonProcess):
         if self.session_id:
             args.extend(["--session", self.session_id])
         args.extend(self.config.extra_args)
+        self.ready = asyncio.get_running_loop().create_future()
+        self.spec.session_dir.mkdir(parents=True, exist_ok=True)
+        self.metadata_path = self.spec.session_dir / "pi_native_events.jsonl"
+        self.metadata_path.touch(mode=0o600)
+        self.metadata_offset = self.metadata_path.stat().st_size
         self.message_id = ""
         self.output = ""
         self.stop_reason = "stop"
@@ -34,9 +39,21 @@ class PiSession(JsonProcess):
         await self.start_process(args, {
             "PI_OFFLINE": "1", "PI_TELEMETRY": "0", "OTA_TOOL_COMMAND": json.dumps(self.spec.tool_server_command),
             "OTA_TOOL_ENV": json.dumps(self.spec.tool_environment), "OTA_TOOLS": json.dumps(self.spec.tools),
+            "OTA_MAX_TOOL_ROUNDS": str(self.spec.max_tool_rounds), "OTA_METADATA_FILE": str(self.metadata_path),
         })
         response = await self.request({"type": "get_state"})
+        await self.read_metadata()
+        if not self.ready.done():
+            raise HarnessError(f"Pi financial extension did not initialize: {self.stderr_tail[-2000:]}")
         await self.save_session(response.get("data", {}))
+
+    async def read_metadata(self) -> None:
+        """Read native request metadata written before the corresponding RPC events."""
+        with self.metadata_path.open(encoding="utf-8") as source:
+            source.seek(self.metadata_offset)
+            for line in source:
+                await self.handle(json.loads(line))
+            self.metadata_offset = source.tell()
 
     async def save_session(self, state: dict[str, Any]) -> None:
         """Publish the persisted session locator exposed by pi.
@@ -88,7 +105,14 @@ class PiSession(JsonProcess):
             record: Native RPC event or application extension event.
         """
         kind = record.get("type", "")
-        if kind == "ota_provider_request":
+        if kind in {"message_start", "message_end", "agent_settled"}:
+            await self.read_metadata()
+        if kind == "ota_ready":
+            if not self.ready.done():
+                self.ready.set_result(None)
+        elif kind == "ota_budget":
+            await self.event("status", "Tool-round budget exhausted; writing final report", native=record)
+        elif kind == "ota_provider_request":
             self.raw_usage = {}
             self.request_number += 1
             await self.event("system", json.dumps(record["payload"], ensure_ascii=False), source="native_request",
@@ -117,11 +141,19 @@ class PiSession(JsonProcess):
                 for key in ("cache_read_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"):
                     if key in raw:
                         cache_read = raw[key]
+                cache_read = raw.get("cachedContentTokenCount", cache_read)
                 cache_write = raw.get("cache_creation_input_tokens", details.get("cache_write_tokens"))
+                if cache_read is None and usage.get("cacheRead", 0) > 0:
+                    cache_read = usage["cacheRead"]
+                if cache_write is None and usage.get("cacheWrite", 0) > 0:
+                    cache_write = usage["cacheWrite"]
+                reasoning = (raw.get("completion_tokens_details") or raw.get("output_tokens_details") or {}).get("reasoning_tokens")
+                if reasoning is None and usage.get("reasoning", 0) > 0:
+                    reasoning = usage["reasoning"]
                 await self.event("usage", request_id=self.message_id,
                                  input_tokens=usage.get("input", 0) + usage.get("cacheRead", 0) + usage.get("cacheWrite", 0),
                                  output_tokens=usage.get("output", 0), cache_read_tokens=cache_read,
-                                 cache_write_tokens=cache_write, reasoning_tokens=usage.get("reasoning"))
+                                 cache_write_tokens=cache_write, reasoning_tokens=reasoning)
             if message.get("errorMessage"):
                 await self.event("error", message["errorMessage"], message_id=self.message_id)
         elif kind in {"tool_execution_start", "tool_execution_end"}:

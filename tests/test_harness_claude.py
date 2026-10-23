@@ -46,3 +46,26 @@ for line in sys.stdin:
     assert all(row["cache_read_tokens"] == 30 for row in usage)
     assert all(row["cache_write_tokens"] is None for row in usage)
     assert all(event.data.get("message_id") == "message1:0" for event in events if event.kind == "text" and event.text == "1")
+
+
+@pytest.mark.asyncio
+async def test_claude_final_text_keeps_stream_index_after_reasoning(tmp_path: Path) -> None:
+    """Do not duplicate text when native final block messages restart their indexes."""
+    from open_trading_agents.harnesses.claude import ClaudeSession
+
+    events: list[AgentEvent] = []
+
+    async def emit(event: AgentEvent) -> None:
+        """Collect normalized content records."""
+        events.append(event)
+
+    session = ClaudeSession(HarnessConfig(kind="claude"), AgentSpec("a", "analysis", "", tmp_path, tmp_path), emit)
+    session.message_id = "native1"
+    session.message_text = {"native1:1": "Complete answer"}
+    session.stream_blocks = {"native1": {0: "thinking", 1: "text"}}
+    session.final_blocks = set()
+    await session.handle({"type": "assistant", "message": {
+        "id": "native1", "content": [{"type": "text", "text": "Complete answer"}], "usage": {},
+    }})
+    assert events[0].data["message_id"] == "native1:1"
+    assert events[0].data["final"] is True

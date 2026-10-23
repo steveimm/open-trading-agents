@@ -18,10 +18,13 @@ class ClaudeSession(JsonProcess):
         self.message_id = ""
         self.message_usage: dict[str, Any] = {}
         self.message_text: dict[str, str] = {}
+        self.stream_blocks: dict[str, dict[int, str]] = {}
+        self.final_blocks: set[str] = set()
         self.counted: set[str] = set()
         self.block_tools: dict[int, dict[str, Any]] = {}
         self.turn_number = 0
         self.turn_usage_count = 0
+        self.tool_messages: set[str] = set()
         self.previous_cumulative: dict[str, int] = {}
         self.usage_path = self.spec.session_dir / "claude_usage.json"
         if self.spec.session_id and self.usage_path.exists():
@@ -64,6 +67,7 @@ class ClaudeSession(JsonProcess):
             self.output, self.result_error = "", ""
             self.turn_number += 1
             self.turn_usage_count = 0
+            self.tool_messages.clear()
             self.finished = asyncio.get_running_loop().create_future()
             identifier = str(uuid.uuid4())
             await self.event("prompt", text, message_id=identifier)
@@ -110,10 +114,17 @@ class ClaudeSession(JsonProcess):
             message = event.get("message", {})
             self.message_id = message.get("id") or uuid.uuid4().hex
             self.message_usage = dict(message.get("usage") or {})
+            self.stream_blocks[self.message_id] = {}
             self.block_tools = {}
         elif kind == "content_block_start":
             block, index = event.get("content_block", {}), event.get("index", 0)
+            self.stream_blocks.setdefault(self.message_id, {})[index] = block.get("type", "")
             if block.get("type") == "tool_use":
+                self.tool_messages.add(self.message_id)
+                if len(self.tool_messages) > self.spec.max_tool_rounds and not self.result_error:
+                    self.result_error = f"Claude exceeded its {self.spec.max_tool_rounds} tool rounds"
+                    await self.event("error", self.result_error)
+                    await self.cancel()
                 self.block_tools[index] = block
                 await self.event("tool_start", json.dumps(block.get("input", {})), tool=block.get("name"), tool_call_id=block.get("id"))
         elif kind == "content_block_delta":
@@ -134,6 +145,27 @@ class ClaudeSession(JsonProcess):
                 self.result_error = "Claude reached its output token limit before completing"
         elif kind == "message_stop":
             await self.usage(self.message_id, self.message_usage)
+
+    def final_block_id(self, identifier: str, kind: str, text: str, fallback: int) -> str:
+        """Match per-block final records to their original streaming positions.
+
+        Args:
+            identifier: Native assistant-message identifier.
+            kind: Native content block type.
+            text: Final block text supplied by the harness.
+            fallback: Position in a non-streamed message.
+
+        Returns:
+            The stable identifier used by both deltas and their final snapshot.
+        """
+        positions = self.stream_blocks.get(identifier, {})
+        candidates = [index for index, block_kind in positions.items()
+                      if block_kind == kind and f"{identifier}:{index}" not in self.final_blocks]
+        exact = [index for index in candidates if self.message_text.get(f"{identifier}:{index}") == text]
+        index = exact[0] if exact else candidates[0] if candidates else fallback
+        result = f"{identifier}:{index}"
+        self.final_blocks.add(result)
+        return result
 
     async def handle(self, record: dict[str, Any]) -> None:
         """Normalize Claude native records and finish only on its result message.
@@ -156,9 +188,11 @@ class ClaudeSession(JsonProcess):
             for index, block in enumerate(message.get("content", [])):
                 if block.get("type") == "text":
                     self.output = block.get("text", "")
-                    await self.event("text", self.output, message_id=f"{identifier}:{index}", final=True)
+                    await self.event("text", self.output, message_id=self.final_block_id(identifier, "text", self.output, index), final=True)
                 elif block.get("type") == "thinking":
-                    await self.event("reasoning", block.get("thinking", ""), message_id=f"{identifier}:{index}", final=True)
+                    thinking = block.get("thinking", "")
+                    await self.event("reasoning", thinking,
+                                     message_id=self.final_block_id(identifier, "thinking", thinking, index), final=True)
             if identifier != self.message_id:
                 await self.usage(identifier, message.get("usage") or {})
             if record.get("error"):
@@ -179,7 +213,7 @@ class ClaudeSession(JsonProcess):
             self.usage_path.write_text(json.dumps({"session_id": self.session_id, "total": self.previous_cumulative}))
             self.output = record.get("result") or self.output
             if record.get("is_error") or record.get("subtype") != "success":
-                self.result_error = "\n".join(record.get("errors") or []) or f"Claude ended with {record.get('subtype')}"
+                self.result_error = "\n".join(record.get("errors") or []) or record.get("result") or f"Claude ended with {record.get('subtype')}"
             if self.finished is not None and not self.finished.done():
                 self.finished.set_result(None)
         elif kind == "control_request":
