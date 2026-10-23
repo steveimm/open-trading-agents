@@ -133,4 +133,4 @@ See `THIRD_PARTY_NOTICES` and `LICENSE` for the adapted reference components.
 - Preserve native sessions between debate turns. Persist pipeline progress separately so a completed stage need not rerun after interruption.
 - Add meaningful tests during development and commit small, verified increments frequently.
 
-The reference is `/home/steve/Git/TradingAgents`. Its source and development transcript informed this design. The application produces research and recommendations rather than placing orders.
+The reference is [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) at revision `e8f5503e9b86d5c2710b0c76b1f686703968c9df`. Its source and the user's development transcript informed this design. No reference checkout is required at runtime.

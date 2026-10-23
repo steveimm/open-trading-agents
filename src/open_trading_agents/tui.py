@@ -275,6 +275,14 @@ class TranscriptView(ScrollView):
         return starts
 
     def render_line(self, y: int) -> Strip:
+        """Render one visible row from the bounded logical-line cache.
+
+        Args:
+            y: Row offset within the viewport.
+
+        Returns:
+            A terminal-width strip without re-rendering the transcript history.
+        """
         width = max(1, self.scrollable_content_region.width)
         row = int(self.scroll_y) + y
         index = bisect.bisect_right(self._offsets, row) - 1
