@@ -260,10 +260,14 @@ class Workflow:
         await self._event("stage_end", role.stage)
         return rendered
 
-    async def _settle_memory(self) -> None:
-        """Resolve eligible historical outcomes through harness-owned reflection sessions."""
+    async def _settle_memory(self) -> list[str]:
+        """Resolve eligible outcomes through harness-owned reflection sessions.
+
+        Returns:
+            Notices for decisions that could not be settled.
+        """
         if not self.settings.memory_enabled:
-            return
+            return []
         from open_trading_agents.memory import MemoryLog
 
         memory = MemoryLog(self.settings.state_dir / "memory.sqlite")
@@ -285,8 +289,32 @@ class Workflow:
             notes = await memory.settle(self.data_config, reflect)
             for note in notes:
                 await self._event("status", "analysis", "Memory", note)
+            return notes
         except Exception as exc:
-            await self._event("error", "analysis", "Memory", f"Prior outcomes remain pending: {type(exc).__name__}: {exc}")
+            note = f"Prior outcomes remain pending: {type(exc).__name__}: {exc}"
+            await self._event("error", "analysis", "Memory", note)
+            return [note]
+
+    async def settle_pending(self, emit: EventSink | None = None) -> list[str]:
+        """Run a dedicated settlement pass without starting a new investment analysis.
+
+        Args:
+            emit: Optional live event observer.
+
+        Returns:
+            Failure notices for outcomes left pending.
+        """
+        self.sink = emit
+        self.recorder = EventRecorder(self.directory)
+        self.store.set_metadata("kind", "settlement")
+        try:
+            notes = await self._settle_memory()
+            self.store.set_metadata("status", "complete" if not notes else "partial")
+            return notes
+        finally:
+            await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
+            await asyncio.to_thread(self.recorder.close)
+            self.store.close()
 
     async def run(self, emit: EventSink | None = None) -> RunResult:
         """Execute all required stages, preserving completed steps on cancellation or failure.
