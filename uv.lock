@@ -781,9 +781,11 @@ dependencies = [
     { name = "mcp" },
     { name = "pandas" },
     { name = "pydantic" },
+    { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "stockstats" },
+    { name = "tabulate" },
     { name = "textual" },
     { name = "typer" },
     { name = "yfinance" },
@@ -802,9 +804,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "pydantic", specifier = ">=2.14.1" },
+    { name = "python-dateutil", specifier = ">=3.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "stockstats", specifier = ">=0.6.9" },
+    { name = "tabulate", specifier = ">=0.10.0" },
     { name = "textual", specifier = ">=8.2.8" },
     { name = "typer", specifier = ">=0.27.3" },
     { name = "yfinance", specifier = ">=1.7.0" },
@@ -1422,6 +1426,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/51/3b/5b604827d5dacf25b1b8982b6f6fca5d194374a6331797bcb8c72dcb9bba/stockstats-0.6.9.tar.gz", hash = "sha256:790746ccd495f0c17d41d2f2be5ff2fc1a9ce0951bdd03322442fb4341d326cb", size = 198433, upload-time = "2026-09-28T19:19:18.47Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/17/a1e4d0782604b09fa39283fd130cafcd03596932e9dd5f9b5e62c525abfb/stockstats-0.6.9-py3-none-any.whl", hash = "sha256:f5d236d676297f85a18b4437608462206a303e5c0f6c2677fc53271f04d37752", size = 32879, upload-time = "2026-09-28T19:19:17.369Z" },
+]
+
+[[package]]
+name = "tabulate"
+version = "0.10.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/58/8c37dea7bbf769b20d58e7ace7e5edfe65b849442b00ffcdd56be88697c6/tabulate-0.10.0.tar.gz", hash = "sha256:e2cfde8f79420f6deeffdeda9aaec3b6bc5abce947655d17ac662b126e48a60d", size = 91754, upload-time = "2026-03-04T18:55:34.402Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl", hash = "sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3", size = 39814, upload-time = "2026-03-04T18:55:31.284Z" },
 ]
 
 [[package]]
