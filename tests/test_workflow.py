@@ -197,3 +197,25 @@ async def test_large_replay_yields_before_starting_more_model_work(tmp_path: Pat
     finally:
         timer.cancel()
         await asyncio.gather(timer, return_exceptions=True)
+
+
+async def test_finished_stages_release_idle_cli_processes(tmp_path: Path) -> None:
+    """Bound native-process lifetime to its stage while retaining debaters across rounds."""
+    calls = []
+    live = set()
+
+    class CountedHarness(FakeHarness):
+        async def close(self) -> None:
+            """Record release of the synthetic native process."""
+            live.discard(self.spec.agent)
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> CountedHarness:
+        """Assert that completed stages do not accumulate idle native clients."""
+        live.add(spec.agent)
+        assert len(live) <= 3
+        return CountedHarness(spec, emit, calls, [])
+
+    workflow = Workflow("NVDA", "2026-01-02", Settings(state_dir=tmp_path, analysts=("market", "news"),
+                                                       research_rounds=2, memory_enabled=False), session_factory=factory)
+    await workflow.run()
+    assert live == set()

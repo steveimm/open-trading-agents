@@ -205,6 +205,16 @@ class Workflow:
         await self._event("agent_end", role.stage, name, output=result.text)
         return result.text
 
+    async def _release_session(self, name: str) -> None:
+        """Release an idle role process while retaining its native session reference.
+
+        Args:
+            name: Logical role whose stage has finished.
+        """
+        session = self.sessions.pop(name, None)
+        if session is not None:
+            await session.close()
+
     def _instrument(self) -> str:
         """Describe the immutable instrument and information cutoff.
 
@@ -254,6 +264,7 @@ class Workflow:
                                       tool="get_social_sentiment", tool_call_id="prefetch-social")
             text = await self._call(f"analyst:{key}", key, f"{self._instrument()}\n\nProduce your research report.\n\n{evidence}")
             self.outputs[ROLES[key].name] = text
+            await self._release_session(ROLES[key].name)
 
     async def _screen_posts(self, posts: list[str]) -> tuple[list[bool], str]:
         """Screen a source batch through a normal harness session, preserving data on failure.
@@ -268,8 +279,9 @@ class Workflow:
             return [], "No posts available for screening."
         body = json.dumps({"ticker": self.ticker, "posts": posts}, ensure_ascii=False)
         digest = hashlib.sha256(body.encode()).hexdigest()[:16]
+        session_name = f"Sentiment Screening {digest}"
         try:
-            response = await self._call(f"screen:{digest}", "screening", body, f"Sentiment Screening {digest}")
+            response = await self._call(f"screen:{digest}", "screening", body, session_name)
             parsed = parse_decision("screening", response)
             indexes = [item.index for item in parsed.items]
             if sorted(indexes) != list(range(len(posts))):
@@ -282,6 +294,8 @@ class Workflow:
         except Exception as exc:
             await self._event("status", "analysis", "Sentiment Analyst", f"Optional social screening unavailable: {type(exc).__name__}")
             return [True] * len(posts), "Model screening unavailable; all source posts were retained."
+        finally:
+            await self._release_session(session_name)
 
     async def _debate(self, stage: str, keys: tuple[str, ...], rounds: int, evidence: str) -> str:
         """Rotate speakers while appending only new public contributions to each native session.
@@ -310,6 +324,8 @@ class Workflow:
                 discussion.append(f"### Round {round_number}: {role.name}\n\n{text}")
                 seen[key] = len(discussion)
                 self.outputs["Research Debate" if stage == "research" else "Risk Debate"] = "\n\n".join(discussion)
+        for key in keys:
+            await self._release_session(ROLES[key].name)
         await self._event("stage_end", stage)
         return "\n\n".join(discussion)
 
@@ -344,6 +360,7 @@ class Workflow:
             await self._event("error", role.stage, role.name, "Decision requires review because its schema could not be validated.")
         self.outputs[role.name] = rendered
         await self._event("report", role.stage, role.name, rendered)
+        await self._release_session(role.name)
         await self._event("stage_end", role.stage)
         return rendered
 
@@ -369,8 +386,11 @@ class Workflow:
                 The completed reflection text.
             """
             identifier = str(entry["id"])
-            return await self._call(f"reflection:{identifier}", "reflection", json.dumps(entry, ensure_ascii=False),
-                                    f"Reflection {identifier}")
+            name = f"Reflection {identifier}"
+            try:
+                return await self._call(f"reflection:{identifier}", "reflection", json.dumps(entry, ensure_ascii=False), name)
+            finally:
+                await self._release_session(name)
 
         try:
             notes = await memory.settle(self.data_config, reflect)
