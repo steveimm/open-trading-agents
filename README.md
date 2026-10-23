@@ -14,6 +14,7 @@ Development is in progress. The project is managed with uv.
 - Every model operation uses a harness, including reflection. Do not reconstruct provider request payloads in application code.
 - Support pi, Codex, and Claude Code using their structured CLI protocols and explicit session identifiers.
 - Keep model settings and credentials in the harness. Models are configurable, with no dependence on a particular model family.
+- Enable harness-native script execution for numeric verification and assigned web search/page retrieval tools for additional cited sources. Keep code, inputs and tool output visible in the transcript.
 - Include no application telemetry, announcements, update polling, or remote tracing. Dependency telemetry is outside this project's scope.
 - Show stages as tabs, with Tab and Shift+Tab navigation. The analysis stage has up to four selectable panes and fullscreen transcripts. Debate stages show the complete shared discussion and the current speaker's live stream.
 - Show supplied prompts, tool definitions, tool arguments and results, available reasoning, and output with distinct styling. Avoid repeated bracketed channel markers.

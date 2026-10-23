@@ -53,6 +53,7 @@ class AgentSpec:
     tool_server_command: tuple[str, ...] = ()
     tool_environment: dict[str, str] = field(default_factory=dict)
     max_tool_rounds: int = 20
+    allow_execution: bool = True
 
 
 @dataclass(frozen=True)

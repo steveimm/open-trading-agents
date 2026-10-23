@@ -4,6 +4,9 @@ analysts = ["market", "social", "news", "fundamentals"]
 output_language = "English"
 memory_enabled = true
 holding_period_days = 5
+allow_execution = true
+web_research = true
+social_screening = false
 
 [harness]
 kind = "pi"
