@@ -94,6 +94,8 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         result = ui.result
     if not events:
         typer.echo(f"{workflow.ticker}: {result.rating}\nReports: {result.directory / 'reports'}\nRun: {result.run_id}")
+        usage = json.loads((result.directory / "reports" / "usage.json").read_text())["totals"]
+        typer.echo(f"Reported tokens: {usage['input_tokens']:,} input / {usage['output_tokens']:,} output. Cache details: reports/usage.json")
     return result
 
 

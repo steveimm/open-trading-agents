@@ -23,6 +23,7 @@ from textual.strip import Strip
 from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
 from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
+from open_trading_agents.usage import request_usage
 
 CHANNEL_COLORS = {
     "system": "#939caa",
@@ -694,13 +695,8 @@ class TradingApp(App[None]):
             )
             self.stage_documents[stage].last_agent = agent
         elif kind == "usage":
-            raw = event.data.get("usage", event.data)
-            if isinstance(raw, Usage):
-                value = raw
-            else:
-                value = Usage(**{key: raw[key] for key in Usage.__dataclass_fields__ if key in raw})
-            request_id = str(event.data.get("request_id") or event.data.get("message_id") or event.event_id)
-            self.usage[agent, request_id] = value
+            request_key, value = request_usage(event)
+            self.usage[request_key] = value
         elif kind == "status":
             activity.status = event.text or str(event.data.get("status", "running"))
         elif kind == "run_end":

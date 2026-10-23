@@ -9,6 +9,7 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from open_trading_agents.domain import AgentEvent
+from open_trading_agents.usage import summarize_usage
 
 
 def write_transcript(path: Path, events: list[AgentEvent], append: bool = False) -> None:
@@ -44,6 +45,10 @@ def write_reports(directory: Path, ticker: str, trade_date: str, outputs: dict[s
     report_dir = directory / "reports"
     report_dir.mkdir(exist_ok=True)
     parts = [f"# Trading analysis: {ticker}\n\nAnalysis date: {trade_date}\n\nFinal rating: **{rating}**"]
+    usage = summarize_usage(events)
+    totals = usage["totals"]
+    parts.append(f"Reported tokens: **{totals['input_tokens']:,} input**, **{totals['output_tokens']:,} output** across {totals['reported_requests']} requests. Input includes cached tokens. See usage.json for per-agent counts and cache availability.")
+    (report_dir / "usage.json").write_text(json.dumps(usage, indent=2), encoding="utf-8")
     for index, (name, text) in enumerate(outputs.items(), 1):
         slug = "_".join(word.lower() for word in name.split() if word.isalnum())
         (report_dir / f"{index:02}_{slug}.md").write_text(text, encoding="utf-8")
