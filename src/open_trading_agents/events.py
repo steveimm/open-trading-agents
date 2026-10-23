@@ -40,22 +40,28 @@ class EventRecorder:
         store = None
         try:
             store = RunStore(self.directory)
-            done = False
-            while not done:
-                first = self.queue.get()
-                if first is None:
-                    break
-                batch = [first]
-                while len(batch) < 256:
-                    try:
-                        event = self.queue.get(timeout=0.025)
-                    except queue.Empty:
+            with (self.directory / "transcript.jsonl").open("w", encoding="utf-8") as transcript:
+                for body in store.event_json():
+                    transcript.write(body + "\n")
+                transcript.flush()
+                done = False
+                while not done:
+                    first = self.queue.get()
+                    if first is None:
                         break
-                    if event is None:
-                        done = True
-                        break
-                    batch.append(event)
-                store.append(batch)
+                    batch = [first]
+                    while len(batch) < 256:
+                        try:
+                            event = self.queue.get(timeout=0.025)
+                        except queue.Empty:
+                            break
+                        if event is None:
+                            done = True
+                            break
+                        batch.append(event)
+                    for body in store.append(batch):
+                        transcript.write(body + "\n")
+                    transcript.flush()
         except Exception as exc:
             self.error = exc
         finally:

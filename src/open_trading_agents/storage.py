@@ -59,17 +59,26 @@ class RunStore:
         row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
 
-    def append(self, events: list[AgentEvent]) -> None:
+    def append(self, events: list[AgentEvent]) -> list[str]:
         """Append a batch atomically, deduplicating repeated event identifiers.
 
         Args:
             events: Ordered events drained from the pipeline's write queue.
+
+        Returns:
+            Serialized records newly inserted, suitable for mirroring to JSONL.
         """
+        written = []
         with self.db:
-            self.db.executemany(
-                "INSERT OR IGNORE INTO events (event_id, agent, stage, timestamp, body) VALUES (?, ?, ?, ?, ?)",
-                [(e.event_id, e.agent, e.stage, e.timestamp, json.dumps(asdict(e), ensure_ascii=False)) for e in events],
-            )
+            for event in events:
+                body = json.dumps(asdict(event), ensure_ascii=False)
+                cursor = self.db.execute(
+                    "INSERT OR IGNORE INTO events (event_id, agent, stage, timestamp, body) VALUES (?, ?, ?, ?, ?)",
+                    (event.event_id, event.agent, event.stage, event.timestamp, body),
+                )
+                if cursor.rowcount:
+                    written.append(body)
+        return written
 
     def events(self, after: int = 0) -> list[AgentEvent]:
         """Read recorded events in their original order.
@@ -91,9 +100,20 @@ class RunStore:
         Yields:
             Each event in its original order.
         """
-        rows = self.db.execute("SELECT body FROM events WHERE sequence>? ORDER BY sequence", (after,))
-        for row in rows:
-            yield AgentEvent(**json.loads(row[0]))
+        for body in self.event_json(after):
+            yield AgentEvent(**json.loads(body))
+
+    def event_json(self, after: int = 0) -> Iterator[str]:
+        """Read committed JSON records without decoding large tool payloads.
+
+        Args:
+            after: Sequence number to start after.
+
+        Yields:
+            Serialized event records in their original order.
+        """
+        for row in self.db.execute("SELECT body FROM events WHERE sequence>? ORDER BY sequence", (after,)):
+            yield row[0]
 
     def save_session(self, agent: str, native_id: str) -> None:
         """Keep the explicit harness session identifier for an agent.
