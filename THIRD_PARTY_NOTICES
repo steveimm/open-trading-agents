@@ -6,7 +6,8 @@ License: Apache License, Version 2.0 (full text in LICENSE)
 Authors: Tauric Research and TradingAgents contributors
 
 The financial-data modules under src/open_trading_agents/dataflows and the
-financial-tool behavior in src/open_trading_agents/tools.py are adapted from
+financial-tool behavior in src/open_trading_agents/tools.py, and benchmark/return
+window semantics in src/open_trading_agents/memory.py are adapted from
 TradingAgents. Modifications include independent configuration, package imports,
 typing, documentation, local MCP tool exposure, and removal of graph-framework
 coupling. No upstream telemetry, update checks, or direct model clients are included.
