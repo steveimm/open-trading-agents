@@ -20,6 +20,7 @@ def default_data_config() -> dict[str, Any]:
     return {
         "data_cache_dir": str(Path.home() / ".local" / "share" / "open-trading-agents" / "cache"),
         "news_article_limit": 20,
+        "web_search_backend": "yahoo",
         "global_news_article_limit": 10,
         "global_news_lookback_days": 7,
         "global_news_queries": [

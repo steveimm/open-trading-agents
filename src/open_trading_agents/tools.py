@@ -18,6 +18,7 @@ from open_trading_agents.dataflows.symbols import safe_ticker_component
 from open_trading_agents.dataflows.vendors.reddit import fetch_reddit_posts, subreddits_for
 from open_trading_agents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
 from open_trading_agents.dataflows.vendors.yahoo.snapshot import build_verified_market_snapshot
+from open_trading_agents.dataflows.web import fetch_webpage, search_web
 
 TOOL_NAMES = (
     "get_stock_data",
@@ -33,6 +34,8 @@ TOOL_NAMES = (
     "get_macro_indicators",
     "get_prediction_markets",
     "get_social_sentiment",
+    "search_web",
+    "fetch_webpage",
 )
 
 
@@ -141,9 +144,7 @@ class FinancialTools:
         """
         try:
             with run_config(self.context.config):
-                return build_verified_market_snapshot(
-                    self.context.ticker, as_of(curr_date, self.context.trade_date), look_back_days
-                )
+                return build_verified_market_snapshot(self.context.ticker, as_of(curr_date, self.context.trade_date), look_back_days)
         except VendorUnavailableError as exc:
             return vendor_unavailable("get_verified_market_snapshot", exc)
         except NoMarketDataError as exc:
@@ -273,9 +274,7 @@ class FinancialTools:
         except Exception as exc:
             news = f"<news unavailable: {type(exc).__name__}>"
         with run_config(self.context.config):
-            stocktwits = fetch_stocktwits_messages(
-                self.context.ticker, start_date=start_date, end_date=end_date, screen=self.screen
-            )
+            stocktwits = fetch_stocktwits_messages(self.context.ticker, start_date=start_date, end_date=end_date, screen=self.screen)
             reddit = fetch_reddit_posts(
                 self.context.ticker,
                 subreddits_for(self.context.ticker),
@@ -284,6 +283,31 @@ class FinancialTools:
                 screen=self.screen,
             )
         return f"## News\n{news}\n\n## StockTwits\n{stocktwits}\n\n## Reddit\n{reddit}"
+
+    def search_web(self, query: str, limit: int = 5) -> str:
+        """Find additional public sources and return their citeable URLs and snippets.
+
+        Args:
+            query: Search terms, optionally including a source domain restriction.
+            limit: Maximum results, between one and ten.
+
+        Returns:
+            Current search evidence with explicit historical-index limitations.
+        """
+        with run_config(self.context.config):
+            return search_web(query, self.context.trade_date, limit)
+
+    def fetch_webpage(self, url: str, max_chars: int = 20000) -> str:
+        """Read public-page text with its URL, title, source-reported dates, and limitations.
+
+        Args:
+            url: Absolute public HTTP or HTTPS URL.
+            max_chars: Maximum visible text length, between one and 20000.
+
+        Returns:
+            Source evidence without scripts, images, subresource requests, or unsupported historical claims.
+        """
+        return fetch_webpage(url, self.context.trade_date, max_chars)
 
 
 def create_server(context: ToolContext, names: tuple[str, ...] = TOOL_NAMES) -> MCPServer:
@@ -313,9 +337,7 @@ def main() -> None:
     parser.add_argument("--tools", help="Comma-separated allowed tool names, defaulting to all financial tools")
     arguments = parser.parse_args()
     context = ToolContext.from_file(arguments.context)
-    names = (
-        tuple(part.strip() for part in arguments.tools.split(",") if part.strip()) if arguments.tools is not None else TOOL_NAMES
-    )
+    names = tuple(part.strip() for part in arguments.tools.split(",") if part.strip()) if arguments.tools is not None else TOOL_NAMES
     create_server(context, names).run(transport="stdio")
 
 
