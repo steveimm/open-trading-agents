@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -79,8 +80,20 @@ class RunStore:
         Returns:
             Events suitable for replaying the UI or exporting a transcript.
         """
+        return list(self.iter_events(after))
+
+    def iter_events(self, after: int = 0) -> Iterator[AgentEvent]:
+        """Read event records incrementally so replay can yield to terminal input.
+
+        Args:
+            after: Sequence number to start after.
+
+        Yields:
+            Each event in its original order.
+        """
         rows = self.db.execute("SELECT body FROM events WHERE sequence>? ORDER BY sequence", (after,))
-        return [AgentEvent(**json.loads(row[0])) for row in rows]
+        for row in rows:
+            yield AgentEvent(**json.loads(row[0]))
 
     def save_session(self, agent: str, native_id: str) -> None:
         """Keep the explicit harness session identifier for an agent.

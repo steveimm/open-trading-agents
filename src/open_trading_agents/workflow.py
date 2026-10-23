@@ -445,8 +445,10 @@ class Workflow:
         """
         self.sink = emit
         if emit:
-            for event in self.store.events():
+            for index, event in enumerate(self.store.iter_events(), 1):
                 await emit(event)
+                if index % 256 == 0:
+                    await asyncio.sleep(0)
         self.recorder = EventRecorder(self.directory)
         self.store.set_metadata("status", "running")
         try:
@@ -501,8 +503,7 @@ class Workflow:
             }
             try:
                 await asyncio.to_thread(self.recorder.close)
-                await asyncio.to_thread(write_reports, self.directory, self.ticker, self.trade_date,
-                                        self.outputs, self.rating, report_settings, self.store.events())
+                await asyncio.to_thread(self._export_reports, report_settings)
                 if self.store.metadata("status") == "running":
                     completed = [AgentEvent("stage_end", "Workflow", "reports"),
                                  AgentEvent("run_end", "Workflow", "reports", data={"rating": self.rating,
@@ -519,3 +520,16 @@ class Workflow:
             finally:
                 self.store.close()
         return RunResult(self.run_id, self.directory, self.rating, self.outputs)
+
+    def _export_reports(self, settings: dict[str, Any]) -> None:
+        """Load recorded events and render reports away from the live UI loop.
+
+        Args:
+            settings: Non-secret run configuration exported with the reports.
+        """
+        reader = RunStore(self.directory)
+        try:
+            events = reader.events()
+        finally:
+            reader.close()
+        write_reports(self.directory, self.ticker, self.trade_date, self.outputs, self.rating, settings, events)

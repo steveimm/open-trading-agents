@@ -223,8 +223,6 @@ def replay(directory: Annotated[Path, typer.Argument(exists=True, file_okay=Fals
 
     store = RunStore(directory)
     inputs = store.metadata("input", {})
-    history = store.events()
-    store.close()
 
     async def play(emit: EventSink) -> None:
         """Replay stored events in original order.
@@ -232,8 +230,13 @@ def replay(directory: Annotated[Path, typer.Argument(exists=True, file_okay=Fals
         Args:
             emit: Terminal event consumer.
         """
-        for event in history:
+        for index, event in enumerate(store.iter_events(), 1):
             await emit(event)
+            if index % 256 == 0:
+                await asyncio.sleep(0)
 
-    TradingApp(play, ticker=inputs.get("ticker", ""), run_dir=directory,
-               selected_analysts=tuple(inputs.get("settings", {}).get("analysts", ("market", "social", "news", "fundamentals")))).run()
+    try:
+        TradingApp(play, ticker=inputs.get("ticker", ""), run_dir=directory,
+                   selected_analysts=tuple(inputs.get("settings", {}).get("analysts", ("market", "social", "news", "fundamentals")))).run()
+    finally:
+        store.close()

@@ -162,3 +162,38 @@ async def test_persistence_failure_never_reports_success_and_closes_store(tmp_pa
     assert saved.metadata("status") == "failed"
     assert not any(event.kind == "run_end" for event in saved.events())
     saved.close()
+
+
+async def test_large_replay_yields_before_starting_more_model_work(tmp_path: Path) -> None:
+    """Keep the UI event loop available while restoring a long saved transcript."""
+    calls = []
+    ticks = 0
+    seen = 0
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Use offline role outputs after replay finishes."""
+        return FakeHarness(spec, emit, calls, [])
+
+    async def heartbeat() -> None:
+        """Represent terminal timers and input callbacks during transcript replay."""
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    async def observe(event: AgentEvent) -> None:
+        """Check that replay does not monopolize the loop before its next batch."""
+        nonlocal seen
+        seen += 1
+        if seen == 512:
+            assert ticks > 0
+
+    settings = Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    workflow.store.append([AgentEvent("text", "Market Analyst", "analysis", "recorded") for _ in range(1024)])
+    timer = asyncio.create_task(heartbeat())
+    try:
+        await workflow.run(observe)
+    finally:
+        timer.cancel()
+        await asyncio.gather(timer, return_exceptions=True)
