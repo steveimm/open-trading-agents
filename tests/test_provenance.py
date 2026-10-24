@@ -60,6 +60,7 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
         harness=HarnessSettings(kind="claude"),
         quick=HarnessSettings(kind="pi", model="quick-selector", provider="quick-provider"),
         deep=HarnessSettings(kind="codex", model="deep-selector", provider="deep-provider"),
+        data={"tool_vendors": {"get_news": "alpha_vantage"}},
     )
     workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
     with pytest.raises(RuntimeError, match="interrupted fixture"):
@@ -77,6 +78,8 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
     assert report_settings["quick_provider"] == "quick-provider" and report_settings["deep_provider"] == "deep-provider"
     assert report_settings["quick_model"] == "quick-selector" and report_settings["deep_model"] == "deep-selector"
     assert report_settings["version"] == __version__
+    assert report_settings["tool_vendors"] == {"get_news": "alpha_vantage"}
+    assert "get news: alpha_vantage" in (result.directory / "reports" / "complete_report.html").read_text()
     assert "excluded-from-report-settings" not in json.dumps(report_settings)
     assert "http://private-endpoint" not in json.dumps(report_settings)
     store = RunStore(result.directory)

@@ -15,7 +15,7 @@ from typing import Any
 
 from open_trading_agents import __version__
 from open_trading_agents.config import Portfolio, Settings, validate_date
-from open_trading_agents.dataflows.config import default_data_config
+from open_trading_agents.dataflows.config import build_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
 from open_trading_agents.decisions import SCHEMAS, decision_error, decision_format, parse_decision, render_decision
@@ -69,13 +69,7 @@ class Workflow:
         self.active_steps: dict[str, str] = {}
         self.conversation_turns: dict[str, str] = {}
         self.screening_futures: set[Future[tuple[list[bool], str]]] = set()
-        self.data_config = default_data_config()
-        self.data_config["data_cache_dir"] = str(settings.state_dir / "cache")
-        for key, value in settings.data.items():
-            if isinstance(value, dict) and isinstance(self.data_config.get(key), dict):
-                self.data_config[key].update(value)
-            else:
-                self.data_config[key] = value
+        self.data_config = build_data_config({"data_cache_dir": str(settings.state_dir / "cache"), **settings.data})
         self.tool_context = ToolContext(self.ticker, self.trade_date, self.asset_type, self.data_config)
         self.context_file = self.directory / "tool-context.json"
         identity = {"ticker": self.ticker, "trade_date": self.trade_date, "settings": settings.model_dump(mode="json"),
@@ -560,6 +554,7 @@ class Workflow:
                 "quick_model": quick.model, "deep_model": deep.model, "analysts": self.settings.analysts,
                 "research_rounds": self.settings.research_rounds, "risk_rounds": self.settings.risk_rounds,
                 "data_vendors": self.data_config["data_vendors"],
+                "tool_vendors": self.data_config["tool_vendors"],
             }
             try:
                 await asyncio.to_thread(self.recorder.close)

@@ -61,6 +61,18 @@ def _merge(base: dict[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     return base
 
 
+def build_data_config(overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """Combine data defaults with independently owned override values.
+
+    Args:
+        overrides: Scalar settings and optional nested vendor mappings.
+
+    Returns:
+        Complete data settings that share no mutable values with the caller.
+    """
+    return _merge(default_data_config(), overrides)
+
+
 def initialize_config() -> None:
     """Initialize process defaults without touching the filesystem or network."""
     global _config
@@ -88,7 +100,7 @@ def run_config(config: Mapping[str, Any]) -> Iterator[None]:
     Yields:
         Control while the run's settings are active.
     """
-    token = _run_config.set(_merge(default_data_config(), config))
+    token = _run_config.set(build_data_config(config))
     try:
         yield
     finally:
@@ -105,7 +117,7 @@ def run_config_context(config: Mapping[str, Any]) -> Context:
         A context suitable for invoking synchronous data functions.
     """
     context = copy_context()
-    context.run(_run_config.set, _merge(default_data_config(), config))
+    context.run(_run_config.set, build_data_config(config))
     return context
 
 

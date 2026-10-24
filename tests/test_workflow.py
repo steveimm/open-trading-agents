@@ -140,6 +140,31 @@ def test_rejected_resume_does_not_mutate_saved_tool_context(tmp_path: Path) -> N
     assert workflow.context_file.read_bytes() == original
 
 
+def test_workflows_do_not_share_mutable_data_overrides(tmp_path: Path) -> None:
+    """Keep source lists and vendor mappings independent across runs and caller settings.
+
+    Args:
+        tmp_path: Isolated run storage.
+    """
+    settings = Settings(
+        state_dir=tmp_path,
+        data={"global_news_queries": ["earnings"], "tool_vendors": {"get_news": "alpha_vantage"}},
+    )
+    first = Workflow("NVDA", "2026-01-02", settings)
+    second = Workflow("AAPL", "2026-01-02", settings)
+
+    try:
+        first.data_config["global_news_queries"].append("rates")
+        first.data_config["tool_vendors"]["get_news"] = "yfinance"
+
+        assert settings.data["global_news_queries"] == second.data_config["global_news_queries"] == ["earnings"]
+        assert settings.data["tool_vendors"] == second.data_config["tool_vendors"] == {"get_news": "alpha_vantage"}
+        assert second.data_config["data_vendors"]["technical_indicators"] == "yfinance"
+    finally:
+        first.store.close()
+        second.store.close()
+
+
 async def test_unacknowledged_pending_task_keeps_original_input(tmp_path: Path) -> None:
     """A crash before native acceptance must not replace the task with an empty continuation."""
     calls = []
