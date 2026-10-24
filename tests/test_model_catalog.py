@@ -48,10 +48,11 @@ for line in sys.stdin:
         continue
     elif method == "model/list":
         if request["params"]["cursor"] is None:
-            result = {"data": [{"id": "picker-id", "model": "native-a", "displayName": "Native A"}], "nextCursor": "page2"}
+            result = {"data": [{"id": "picker-id", "model": "native-a", "displayName": "Native A", "isDefault": True,
+                                 "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]}], "nextCursor": "page2"}
         else:
             assert request["params"]["cursor"] == "page2"
-            result = {"data": [{"id": "other-id", "model": "native-b", "displayName": "Native B"},
+            result = {"data": [{"id": "other-id", "model": "native-b", "displayName": "Native B", "supportedReasoningEfforts": []},
                                {"model": "hidden-model", "hidden": True}], "nextCursor": None}
     else:
         raise AssertionError(method)
@@ -66,6 +67,11 @@ for line in sys.stdin:
     assert [json.loads(line)["method"] for line in requests.read_text().splitlines()] == [
         "initialize", "initialized", "model/list", "model/list",
     ]
+    assert catalog.effort_choices(HarnessSettings(kind="codex", provider="configured"), result) == ("low", "high")
+    assert catalog.effort_choices(HarnessSettings(kind="codex", provider="configured", model="native-a"), result) == ("low", "high")
+    assert catalog.effort_choices(HarnessSettings(kind="codex", provider="configured", model="native-b"), result) == ()
+    assert catalog.effort_choices(HarnessSettings(kind="codex", provider="other", model="native-a"), result) == ()
+    assert catalog.effort_choices(HarnessSettings(kind="codex", model="unlisted"), result) == ()
 
 
 def test_claude_choices_follow_installed_help_instead_of_fixed_model_versions(tmp_path: Path) -> None:
@@ -76,6 +82,8 @@ assert sys.argv[-1] == "--help"
 print("""Options:
   --model <model>  Provide an alias (e.g. 'family-a', 'family-b')
                    or a model's full name.
+  --effort <level> Effort level for the current session
+                   (low, medium, high, xhigh, max)
   -n, --name <name>  Set a name, for example 'unrelated'.
 """)
 ''')
@@ -83,6 +91,42 @@ print("""Options:
     assert [model.id for model in result.models] == ["family-a", "family-b"]
     assert all(model.provider is None for model in result.models)
     assert result.notice and "aliases" in result.notice
+    assert catalog.effort_choices(HarnessSettings(kind="claude"), result) == ("low", "medium", "high", "xhigh", "max")
+
+
+@pytest.mark.parametrize("levels", [("off",), ("off", "low", "medium", "high")])
+def test_pi_efforts_follow_native_model_capabilities_without_generation(tmp_path: Path, levels: tuple[str, ...]) -> None:
+    """Ask pi for the selected model's levels without creating a persistent session or prompting it."""
+    script, requests = tmp_path / "pi_effort.py", tmp_path / "requests.jsonl"
+    script.write_text('''import json
+import sys
+from pathlib import Path
+assert "--no-session" in sys.argv and "--no-tools" in sys.argv and "--offline" in sys.argv
+assert sys.argv[sys.argv.index("--model") + 1] == "selected-model"
+assert sys.argv[sys.argv.index("--provider") + 1] == "local"
+assert "--thinking" not in sys.argv and "--print" not in sys.argv
+for line in sys.stdin:
+    request = json.loads(line)
+    Path(sys.argv[1]).write_text(line)
+    assert request["type"] == "get_available_thinking_levels"
+    print(json.dumps({"type": "response", "id": request["id"], "success": True, "data": {"levels": json.loads(sys.argv[2])}}), flush=True)
+''')
+    settings = HarnessSettings(command=(sys.executable, str(script), str(requests), json.dumps(levels)), provider="local", model="selected-model")
+    assert catalog.effort_choices(settings, catalog.ModelCatalog()) == levels
+    assert json.loads(requests.read_text())["type"] == "get_available_thinking_levels"
+
+
+def test_unavailable_effort_metadata_leaves_only_native_defaults(tmp_path: Path) -> None:
+    """An older or failing native CLI must not cause guessed model effort choices."""
+    script = tmp_path / "unknown_effort.py"
+    script.write_text('''import json
+import sys
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({"type": "response", "id": request["id"], "success": False, "error": "unsupported command"}), flush=True)
+''')
+    assert catalog.effort_choices(HarnessSettings(command=(sys.executable, str(script))), catalog.ModelCatalog()) == ()
+    assert catalog.effort_choices(HarnessSettings(kind="claude"), catalog.ModelCatalog()) == ()
 
 
 def test_failed_discovery_does_not_expose_native_diagnostics(tmp_path: Path) -> None:
