@@ -89,7 +89,10 @@ class TradingApp(App[None]):
     .agent-status { height: 3; padding: 0 1; color: #9fb2ca; }
     .single-stage { border: round #34475e; margin: 0 1; }
     .prompt-column { width: 1fr; min-width: 18; height: 1fr; }
-    .prompt-pane { border: round #34475e; padding: 0 1; height: 1fr; min-height: 3; }
+    .prompt-pane {
+        border: round #34475e; border-title-color: #a9bcd3; border-title-style: bold;
+        padding: 0 1; height: 1fr; min-height: 3;
+    }
     .prompt-pane:focus { border: round #bd9bfa; }
     .debate-transcript { width: 3fr; height: 1fr; border: round #34475e; }
     .debate-stage.prompt-fullscreen .prompt-column { width: 1fr; }
