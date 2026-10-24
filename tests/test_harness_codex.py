@@ -8,10 +8,11 @@ from open_trading_agents.harnesses import open_session
 
 
 @pytest.mark.asyncio
-async def test_codex_persistent_turns_and_cumulative_usage(tmp_path: Path) -> None:
+@pytest.mark.parametrize("effort", [None, "high"])
+async def test_codex_persistent_turns_and_cumulative_usage(tmp_path: Path, effort: str | None) -> None:
     """Verify JSON-RPC initialization, native tool events, and usage deduplication."""
     script = tmp_path / "codex_fixture.py"
-    script.write_text('''import json,sys
+    script.write_text('''import json,os,sys
 n=0
 for line in sys.stdin:
  r=json.loads(line);method=r.get('method');result={}
@@ -23,6 +24,9 @@ for line in sys.stdin:
   assert r['params']['config']['mcp_servers']['ambient']['enabled'] is False
   result={'thread':{'id':'thread1'},'model':'native-default','modelProvider':'native-provider'}
  if method=='turn/start':
+  effort=os.environ['EXPECTED_EFFORT']
+  assert ('effort' in r['params'])==bool(effort)
+  if effort:assert r['params']['effort']==effort
   n+=1;tid=f'turn{n}';result={'turn':{'id':tid}}
  print(json.dumps({'id':r['id'],'result':result}),flush=True)
  if method=='turn/start':
@@ -46,7 +50,8 @@ for line in sys.stdin:
         events.append(event)
 
     spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions")
-    session = await open_session(HarnessConfig(kind="codex", command=(sys.executable, str(script))), spec, emit)
+    session = await open_session(HarnessConfig(kind="codex", command=(sys.executable, str(script)), effort=effort,
+                                              environment={"EXPECTED_EFFORT": effort or ""}), spec, emit)
     try:
         assert (await session.prompt("first")).text == "1"
         assert (await session.prompt("second")).text == "2"

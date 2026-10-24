@@ -39,6 +39,7 @@ class HarnessConfig:
     provider: str | None = None
     extra_args: tuple[str, ...] = ()
     environment: dict[str, str] = field(default_factory=dict)
+    effort: str | None = None
 
 
 @dataclass(frozen=True)

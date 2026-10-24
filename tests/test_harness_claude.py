@@ -9,10 +9,14 @@ from open_trading_agents.harnesses import open_session
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streamed_output", [0, 10])
-async def test_claude_raw_stream_usage_avoids_final_and_cumulative_duplicates(tmp_path: Path, streamed_output: int) -> None:
+@pytest.mark.parametrize("effort", [None, "high"])
+async def test_claude_raw_stream_usage_avoids_final_and_cumulative_duplicates(tmp_path: Path, streamed_output: int, effort: str | None) -> None:
     """Count complete provider messages once despite repeated assistant and result counters."""
     script = tmp_path / "claude_fixture.py"
     script.write_text('''import json,os,sys
+effort=os.environ['EXPECTED_EFFORT']
+assert ('--effort' in sys.argv)==bool(effort)
+if effort:assert sys.argv[sys.argv.index('--effort')+1]==effort
 n=0
 for line in sys.stdin:
  r=json.loads(line)
@@ -35,7 +39,8 @@ for line in sys.stdin:
         events.append(event)
 
     spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions")
-    session = await open_session(HarnessConfig(kind="claude", command=(sys.executable, str(script)), environment={"STREAM_OUTPUT": str(streamed_output)}), spec, emit)
+    session = await open_session(HarnessConfig(kind="claude", command=(sys.executable, str(script)), effort=effort,
+                                              environment={"STREAM_OUTPUT": str(streamed_output), "EXPECTED_EFFORT": effort or ""}), spec, emit)
     try:
         assert (await session.prompt("first")).text == "1"
         assert (await session.prompt("second")).text == "2"

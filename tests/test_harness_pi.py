@@ -12,12 +12,16 @@ from open_trading_agents.harnesses.process import HarnessError
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow_execution", [False, True])
-async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path, allow_execution: bool) -> None:
+@pytest.mark.parametrize("effort", [None, "high"])
+async def test_pi_native_protocol_preserves_session_streams_and_unknown_cache(tmp_path: Path, allow_execution: bool, effort: str | None) -> None:
     """Exercise native subprocess framing, session continuation, and authoritative usage."""
     script = tmp_path / "fake_pi.py"
     script.write_text('''import json,os,sys,time
 native_allowed='--tools' in sys.argv and 'bash' in sys.argv[sys.argv.index('--tools')+1].split(',')
 assert native_allowed==(os.environ['ALLOW_EXECUTION']=='True')
+effort=os.environ['EXPECTED_EFFORT']
+assert ('--thinking' in sys.argv)==bool(effort)
+if effort:assert sys.argv[sys.argv.index('--thinking')+1]==effort
 metadata=os.environ['OTA_METADATA_FILE']
 with open(metadata,'a') as handle:handle.write(json.dumps({'type':'ota_ready','tools':[]})+'\\n')
 count=0
@@ -57,7 +61,9 @@ for line in sys.stdin:
             accepted.set()
 
     spec = AgentSpec("market", "analysis", "system", tmp_path, tmp_path / "sessions", allow_execution=allow_execution)
-    session = await open_session(HarnessConfig(command=(sys.executable, str(script)), environment={"ACCEPTANCE_GATE": str(gate), "ALLOW_EXECUTION": str(allow_execution)}), spec, emit)
+    session = await open_session(HarnessConfig(command=(sys.executable, str(script)), effort=effort,
+                                              environment={"ACCEPTANCE_GATE": str(gate), "ALLOW_EXECUTION": str(allow_execution),
+                                                           "EXPECTED_EFFORT": effort or ""}), spec, emit)
     try:
         task = asyncio.create_task(session.prompt("first"))
         await asyncio.wait_for(accepted.wait(), 2)

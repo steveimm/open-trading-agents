@@ -66,6 +66,8 @@ class PiSession(JsonProcess):
             args.extend(["--model", self.config.model])
         if self.config.provider:
             args.extend(["--provider", self.config.provider])
+        if self.config.effort:
+            args.extend(["--thinking", self.config.effort])
         if self.session_id:
             args.extend(["--session", self.session_id])
         args.extend(self.config.extra_args)

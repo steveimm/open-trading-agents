@@ -95,6 +95,8 @@ class CodexSession(JsonProcess):
             self.finished = asyncio.get_running_loop().create_future()
             await self.event("prompt", text, message_id=uuid.uuid4().hex)
             params = {"threadId": self.session_id, "input": [{"type": "text", "text": text}]}
+            if self.config.effort:
+                params["effort"] = self.config.effort
             if not self.allow_execution:
                 params["environments"] = []
             response = await self.request({"method": "turn/start", "params": params})

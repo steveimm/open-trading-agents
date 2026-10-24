@@ -44,6 +44,8 @@ class ClaudeSession(JsonProcess):
         args.extend(["--resume" if self.spec.session_id else "--session-id", self.session_id])
         if self.config.model:
             args.extend(["--model", self.config.model])
+        if self.config.effort:
+            args.extend(["--effort", self.config.effort])
         args.extend(self.config.extra_args)
         await self.start_process(args, {
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1",
