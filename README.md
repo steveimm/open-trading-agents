@@ -23,28 +23,37 @@ uv run open-trading-agents analyze BTC-USD --harness claude
 uv run open-trading-agents analyze NVDA --harness codex --date 2026-01-02
 ```
 
-Omitting the ticker opens a short ticker/date prompt in an interactive terminal. Model and provider selectors are optional. When omitted, the harness uses its own configuration. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
+In an interactive terminal, `analyze` asks for the ticker, research depth, working agent, and decision manager, in that order. A ticker supplied on the command line skips the first question. The analysis date defaults to today and can be set with `--date`. Shallow, Medium, and Deep research use 1, 3, and 5 rounds for both research and risk debates. Each agent role can use a saved profile or a custom harness selection for that run. The decision manager can also use the same settings as the working agents. Cancelling setup does not start an analysis or change saved profiles.
 
-Use `configure` for guided harness and model selection:
+Use `configure` to create a reusable agent profile:
 
 ```sh
 uv run open-trading-agents configure
 ```
 
-Use Up/Down to move through choices and Enter to confirm. Current settings start highlighted, and typing filters the choices. The menus cover shared defaults, working agents (`quick`), and decision managers (`deep`) in one session. Each tier can inherit the shared defaults or select its own harness and model. Providers and models come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom identifier when needed. Preset confirmations use the same menus. Ctrl+C cancels setup without saving. Setup does not send a model prompt.
+Use Up/Down to move through choices and Enter to confirm. Current settings start highlighted, and typing filters the choices. A profile contains only the harness, provider, model, and reasoning effort. Providers, models, and supported effort levels come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom model identifier when needed. With pi, choosing the native model default also uses its native provider. Ctrl+C cancels setup without saving. Setup does not send a model prompt.
 
 Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regardless of the working directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Connection settings and authentication remain in the harness.
 
-At the end, setup offers to save the default and both tier selections as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset, then asks whether to use the saved preset by default. That selection is stored as `default_preset` in the config. Analysis and backtest commands without `--preset` use it automatically. Multiple presets can be kept and selected for an individual analysis or backtest:
+At the end, setup offers to save the profile as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset, then asks whether to use it as the default profile. The default is the initial choice for a run. Saved profiles appear independently in the working-agent and decision-manager menus. Starting a run does not require a preset argument:
 
 ```sh
-uv run open-trading-agents analyze NVDA --preset local-research
-uv run open-trading-agents backtest NVDA --start 2026-01-05 --end 2026-01-09 --preset local-research
+uv run open-trading-agents analyze
+uv run open-trading-agents analyze NVDA
 ```
 
-A preset replaces all three harness selections for that invocation without rewriting the main config. An explicit `--preset` overrides the default preset. Other application and data preferences still come from the main config. Explicit CLI harness/model/provider options override the selected preset. If no default preset is selected, runs use the main config's harness choices. Resuming a run keeps the selections saved with that run.
+For example, a saved profile contains:
 
-For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model`. `--tier quick` or `--tier deep` targets one tier, and an empty `--model ""` or `--provider ""` selects native defaults. You can also use `tradingagents.example.toml` as a starting point for the global config or an explicit `--config` file. The `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides:
+```toml
+harness = "pi"
+provider = "my-local-provider"
+model = "my-configured-model"
+effort = "high"
+```
+
+Headless, JSON-event, and noninteractive runs use saved configuration without prompting. Backtests also use configured choices without prompting for each grid entry. Explicit CLI harness/model/provider/effort and round options override wizard or configured choices. Resuming a run keeps the selections saved with that run. Provider connections and authentication remain in the harness. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
+
+For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model --effort high`. An empty `--model ""`, `--provider ""`, or `--effort ""` selects native defaults. You can also use `tradingagents.example.toml` as a starting point for the global config or an explicit `--config` file. Without a named default profile, the main configuration's `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides for working agents and decision managers:
 
 ```toml
 [harness]
@@ -56,7 +65,7 @@ model = "my-configured-model"
 kind = "codex"
 ```
 
-The application does not set temperature, top-p, or thinking effort. A harness may apply its own defaults, so configure those in the harness's model profile when the server must retain particular defaults.
+Reasoning effort is passed to the harness only when explicitly selected. Available levels depend on the harness and model. Temperature and top-p remain controlled by the native harness and provider settings.
 
 ## Interface
 

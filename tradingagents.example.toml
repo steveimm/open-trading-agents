@@ -12,6 +12,7 @@ social_screening = false
 kind = "pi"
 # Omit model/provider to use the harness's existing choices.
 # model = "your-model-selector"
+# effort = "high" # Omit to retain the native harness effort.
 
 [data.data_vendors]
 core_stock_apis = "yfinance"

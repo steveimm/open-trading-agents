@@ -68,7 +68,7 @@ class HarnessSettings(BaseModel):
         """Interpret an empty selector as the native harness default.
 
         Args:
-            value: Optional provider or model selection.
+            value: Optional provider, model, or effort selection.
 
         Returns:
             The trimmed selection, or None for native defaults.

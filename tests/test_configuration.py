@@ -67,9 +67,7 @@ def test_tier_can_select_native_defaults_without_inheriting_shared_model(tmp_pat
     """Empty model/provider selections must reset a tier even when shared values exist."""
     path = tmp_path / "tradingagents.toml"
     path.write_text('[harness]\nkind="pi"\nmodel="working-model"\nprovider="local"\n')
-    result = runner.invoke(cli.app, ["configure", "--config", str(path), "--tier", "deep", "--model", "", "--provider", ""])
-    assert result.exit_code == 0, result.output
-    settings = load_settings(path)
+    settings = save_harness_selection(path, tier="deep", model="", provider="")
     assert settings.harness.model == "working-model"
     assert settings.deep is not None
     assert settings.deep.kind == "pi"
@@ -103,6 +101,7 @@ def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Pa
     path.write_text('[harness]\nkind="pi"\nmodel="old-model"\nprovider="old-provider"\n')
     monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
     monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(()))
+    monkeypatch.setattr(configuration_ui, "effort_choices", lambda settings, catalog: ())
     monkeypatch.setattr(configuration_ui, "_choose", lambda label, choices, default=0: default)
     result = runner.invoke(cli.app, ["configure", "--config", str(path)])
     assert result.exit_code == 0, result.output
@@ -111,8 +110,8 @@ def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Pa
     assert settings.harness.model == "old-model"
     assert settings.harness.provider == "old-provider"
     assert settings.quick is None and settings.deep is None
-    assert "Working agents (quick)" in result.output
-    assert "Decision managers (deep)" in result.output
+    assert "Working agents" not in result.output
+    assert "Decision manager" not in result.output
 
 
 def test_noninteractive_configuration_requires_selection_flags(tmp_path: Path) -> None:
@@ -120,7 +119,7 @@ def test_noninteractive_configuration_requires_selection_flags(tmp_path: Path) -
     path = tmp_path / "tradingagents.toml"
     result = runner.invoke(cli.app, ["configure", "--config", str(path)])
     assert result.exit_code == 2
-    assert "provide --harness, --model or --provider" in result.output
+    assert "provide --harness" in result.output and "--effort" in result.output
     assert not path.exists()
 
 
