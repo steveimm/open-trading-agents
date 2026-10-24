@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.control import Control
 from rich.spinner import Spinner
 from textual import events
 from textual.app import App, ComposeResult
@@ -209,6 +210,7 @@ class TradingApp(App[None]):
         self._wall_offset = self._started - time.time()
         self._finished: float | None = None
         self._failure: str | None = None
+        self._run_cancelled = False
         self._run_task: asyncio.Task[None] | None = None
         self._report_task: asyncio.Task[None] | None = None
         self._stage_agents: dict[str, list[str]] = {stage: [] for stage, _ in STAGES}
@@ -216,6 +218,8 @@ class TradingApp(App[None]):
         self._reports: dict[str, str] = {}
         self._tab_statuses: dict[str, tuple[str, str]] = {}
         self._running_spinner = Spinner("dots")
+        self._terminal_title_started = False
+        self._last_terminal_title: str | None = None
         self._status_widgets: dict[str, Static] = {}
         self._shortcuts_text = ""
 
@@ -273,6 +277,7 @@ class TradingApp(App[None]):
             assert self.run_callback is not None
             self.result = await self.run_callback(self.receive)
         except asyncio.CancelledError:
+            self._run_cancelled = True
             raise
         except Exception as exc:
             self.error = exc
@@ -282,6 +287,7 @@ class TradingApp(App[None]):
             self.flush_events()
             if self._finished is None and not self._pending:
                 self._finished = time.monotonic()
+            self._refresh_terminal_title(self._running_spinner.render(time.monotonic()).plain)
 
     async def receive(self, event: AgentEvent) -> None:
         """Queue one event without making generation wait for rendering.
@@ -461,6 +467,50 @@ class TradingApp(App[None]):
                 # Spinner frames have equal width, so they need no tab relayout.
                 Static.update(tab, content, layout=False)
 
+    def _refresh_terminal_title(self, frame: str) -> None:
+        """Update the terminal tab title using the current run state and spinner frame.
+
+        Args:
+            frame: Frame already rendered by the shared activity spinner.
+        """
+        driver = self._driver
+        if not self.is_running or driver is None or driver.is_headless or driver.is_web:
+            return
+
+        name = f"{self.TITLE} · {self.ticker}" if self.ticker else self.TITLE
+        if self._run_cancelled:
+            title = f"Stopped · {name}"
+        elif self._failure:
+            title = f"Failed · {name}"
+        elif self._finished is not None:
+            title = f"✓ {name}"
+        elif self.run_callback is not None or any(stage.status == "running" for stage in self.stages.values()):
+            title = f"{frame} {name}"
+        else:
+            title = name
+
+        title = "".join(character for character in title if character.isprintable())
+        if title == self._last_terminal_title:
+            return
+
+        if not self._terminal_title_started:
+            driver.write("\x1b[22;0t")
+            self._terminal_title_started = True
+        driver.write(str(Control.title(title)))
+        driver.flush()
+        self._last_terminal_title = title
+
+    def _restore_terminal_title(self) -> None:
+        """Clear activity and restore the previous title on terminals with title-stack support."""
+        if not self._terminal_title_started:
+            return
+
+        self._terminal_title_started = False
+        self._last_terminal_title = None
+        if self._driver is not None:
+            self._driver.write(str(Control.title("")) + "\x1b[23;0t")
+            self._driver.flush()
+
     def refresh_clocks(self) -> None:
         """Refresh clocks and counters without re-rendering historical chat content."""
         if not self.is_running or not self._status_widgets or not self._status_widgets["run-status"].is_attached:
@@ -468,6 +518,7 @@ class TradingApp(App[None]):
         now = time.monotonic()
         self._refresh_tabs(now)
         frame = self._running_spinner.render(now).plain
+        self._refresh_terminal_title(frame)
         statuses = {"running": frame, "complete": "✓", "using tool": f"{frame} tool"}
         for view in self._render_views:
             if isinstance(view, ChatView) and view.is_on_screen:
@@ -793,4 +844,7 @@ class TradingApp(App[None]):
 
     async def on_unmount(self) -> None:
         """Clean up background tasks on external terminal shutdown."""
-        await self._cancel_tasks()
+        try:
+            await self._cancel_tasks()
+        finally:
+            self._restore_terminal_title()

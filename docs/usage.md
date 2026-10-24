@@ -32,6 +32,8 @@ Resume retains completed steps, original inputs, and native sessions. Only one p
 
 Stage tabs show progress. Debate prompts occupy the left column, with the conversation on the right. Left/Right selects a debate pane, Up/Down scrolls it, and `f` toggles fullscreen. System prompts are available before the agents' turns begin.
 
+The terminal tab/window title shows the ticker and an animated activity indicator while a run is active. It switches to a completion mark or failure label when the run finishes. On exit, the app clears its title and restores the previous one where the terminal supports title restoration. Headless and JSON-event output contain no title-control sequences.
+
 Click a turn or detail header to collapse it, or select it with `[` / `]` and press Space. Collapsed turns continue receiving output. `m` shows supporting memory or screening work when available.
 
 Scrolling upward pauses stream-following. Scroll to the bottom or press End to follow again. Tool previews longer than 10,000 characters show the beginning and end with an omitted-character count. Complete content remains in the saved transcript.
