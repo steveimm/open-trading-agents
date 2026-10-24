@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.spinner import Spinner
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -150,7 +151,8 @@ class TradingApp(App[None]):
         self._stage_agents: dict[str, list[str]] = {stage: [] for stage, _ in STAGES}
         self._memory_agents: list[str] = []
         self._reports: dict[str, str] = {}
-        self._tab_statuses: dict[str, str] = {}
+        self._tab_statuses: dict[str, tuple[str, str]] = {}
+        self._running_spinner = Spinner("dots")
         self._status_widgets: dict[str, Static] = {}
         self._shortcuts_text = ""
 
@@ -341,26 +343,39 @@ class TradingApp(App[None]):
         self.report_document = document
         self.report_view.set_document(document)
 
-    def _refresh_tabs(self) -> None:
-        """Change stage indicators only when lifecycle status changes."""
+    def _refresh_tabs(self, now: float | None = None) -> None:
+        """Animate running indicators while keeping inactive tab labels unchanged.
+
+        Args:
+            now: Optional monotonic time supplied by the display timer.
+        """
         if not self.is_mounted:
             return
-        suffixes = {"running": " [run]", "complete": " ✓", "failed": " [failed]"}
+        frame = self._running_spinner.render(time.monotonic() if now is None else now).plain
+        suffixes = {"running": f" {frame}", "complete": " ✓", "failed": " [failed]"}
         for stage, label in STAGES:
             status = self.stages[stage].status
-            if self._tab_statuses.get(stage) == status:
+            indicator = suffixes.get(status, "")
+            previous = self._tab_statuses.get(stage)
+            if previous == (status, indicator):
                 continue
-            self._tab_statuses[stage] = status
+            self._tab_statuses[stage] = (status, indicator)
             tab = self.query_one(f"#tab-{stage}", Tab)
-            tab.label = Content(label + suffixes.get(status, ""))
-            for category in ("running", "complete", "failed"):
-                tab.set_class(status == category, category)
+            content = Content(label + indicator)
+            if previous is None or previous[0] != status:
+                tab.label = content
+                for category in ("running", "complete", "failed"):
+                    tab.set_class(status == category, category)
+            else:
+                # Spinner frames have equal width, so they need no tab relayout.
+                Static.update(tab, content, layout=False)
 
     def refresh_clocks(self) -> None:
         """Refresh clocks and counters without re-rendering historical chat content."""
         if not self._status_widgets or not self._status_widgets["run-status"].is_attached:
             return
         now = time.monotonic()
+        self._refresh_tabs(now)
         elapsed = duration((self._finished if self._finished is not None else now) - self._started)
         status = "Failed" if self._failure else "Complete" if self._finished is not None else "Running"
         running = [label for key, label in STAGES if self.stages[key].status == "running"]

@@ -55,7 +55,7 @@ async def test_parallel_streams_keep_complete_source_and_usage_without_raw_panel
         assert app.active_stage == "analysis"
 
 
-async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
+async def test_stage_tabs_distinguish_running_complete_and_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep running-stage progress visible even when the user views another tab."""
     app = TradingApp()
     async with app.run_test(size=(140, 40)) as pilot:
@@ -69,7 +69,27 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         await pilot.pause()
         assert app.active_stage == "analysis"
         assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
-        assert "[run]" in str(app.query_one("#tab-research", Tab).label)
+        running_tab = app.query_one("#tab-research", Tab)
+        start = app._running_spinner.start_time
+        assert start is not None
+        app._refresh_tabs(start)
+        first_frame = str(running_tab.render())
+        relabelled = []
+        post = running_tab.post_message
+
+        def record_message(message: object) -> bool:
+            """Record tab layout notifications while preserving normal event delivery."""
+            if isinstance(message, Tab.Relabelled):
+                relabelled.append(message)
+            return post(message)
+
+        monkeypatch.setattr(running_tab, "post_message", record_message)
+        app._refresh_tabs(start + 0.15)
+        assert str(running_tab.render()) != first_frame
+        assert str(running_tab.render()).startswith("Research debate ")
+        assert "[run]" not in str(running_tab.render())
+        assert not relabelled
+        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
         assert app.query_one("#tab-analysis", Tab).has_class("complete")
         assert app.query_one("#tab-research", Tab).has_class("running")
         app.refresh_clocks()
@@ -77,6 +97,8 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         await app.receive(AgentEvent("error", "Workflow", "reports", "Provider failed"))
         app.flush_events()
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
+        app._refresh_tabs(start + 1)
+        assert "[failed]" in str(running_tab.label)
         assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
         assert "Provider failed" in str(app.query_one("#run-error", Static).render())
 
