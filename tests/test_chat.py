@@ -216,12 +216,14 @@ async def test_late_systems_and_shared_input_do_not_displace_scrollback() -> Non
         view.navigate("home")
         view.navigate("pagedown")
         before = "".join(segment.text for segment in view.render_line(0))
+        body_before = "".join(segment.text for segment in view.render_line(1))
         view.consume(AgentEvent("system", "Bear Researcher", "research", "New participant's system prompt"))
         view.consume(AgentEvent("conversation_input", "Input", "research", "Shared evidence\n" * 20))
         view.sync()
         await pilot.pause()
         after = "".join(segment.text for segment in view.render_line(0))
         assert before == after
+        assert body_before == "".join(segment.text for segment in view.render_line(1))
         assert not view.following
 
 
@@ -285,3 +287,104 @@ async def test_reused_native_ids_do_not_mutate_previous_contributions() -> None:
         assert [section.source for section in second.sections if section.kind == "text"] == ["argument-2"]
         assert "value-1-1" in first.sections[0].source and "value-1-2" in first.sections[1].source
         assert "value-2-1" in second.sections[0].source and "value-2-2" in second.sections[1].source
+
+
+async def test_long_bubble_titles_stay_visible_and_switch_at_contribution_boundaries() -> None:
+    """Keep the visible speaker identifiable while scrolling, resizing and following new output."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 24)) as pilot:
+        view.consume(AgentEvent("system", "Bull Researcher", "research", "System guidance\n" * 40))
+        for turn, name in enumerate(("Bull Researcher", "Bear Researcher"), 1):
+            data = {"round": 1, "turn": turn, "total_rounds": 2, "conversation_turn_id": f"research:1:{turn}"}
+            view.consume(AgentEvent("turn_start", name, "research", data=data))
+            view.consume(AgentEvent("text", name, "research", "\n".join(f"{name} line {number}" for number in range(80)),
+                                    {**data, "message_id": name}))
+        view.sync()
+        await pilot.pause()
+        view.navigate("home")
+        assert view._sticky_header() is None
+        assert "System" in "".join(segment.text for segment in view.render_line(0))
+        await pilot.click("#chat", offset=(4, 0))
+        view.scroll_to(y=5, animate=False, immediate=True)
+        assert view._sticky_header() is None
+        assert "System guidance" in "".join(segment.text for segment in view.render_line(0))
+        view.navigate("home")
+        await pilot.click("#chat", offset=(4, 0))
+        bull_body = next(i for i, part in enumerate(view._parts)
+                         if part.kind == "body" and part.bubble is not None and part.bubble.agent == "Bull Researcher")
+        view.scroll_to(y=view._offsets[bull_body] + 10, animate=False, immediate=True)
+        first = "".join(segment.text for segment in view.render_line(0))
+        assert "Bull Researcher" in first and "Round 1/2" in first and "Turn 1" in first and "streaming" in first
+        body = "".join(segment.text for segment in view.render_line(1))
+        assert "line 11" in body
+        data = {"conversation_turn_id": "research:1:1", "round": 1, "turn": 1, "total_rounds": 2}
+        view.consume(AgentEvent("agent_end", "Bull Researcher", "research", data=data))
+        view.sync()
+        assert "streaming" not in "".join(segment.text for segment in view.render_line(0))
+        await pilot.resize_terminal(80, 20)
+        await pilot.pause()
+        assert "Bull Researcher" in "".join(segment.text for segment in view.render_line(0))
+        assert "line 11" in "".join(segment.text for segment in view.render_line(1))
+        gap = next(i for i, part in enumerate(view._parts)
+                   if part.kind == "gap" and part.bubble is not None and part.bubble.agent == "Bull Researcher")
+        view.scroll_to(y=view._offsets[gap], animate=False, immediate=True)
+        assert view._sticky_header() is None
+        assert "Bull Researcher" not in "".join(segment.text for segment in view.render_line(0))
+        bear_title = next(i for i, part in enumerate(view._parts) if part.kind == "top" and part.bubble.agent == "Bear Researcher")
+        view.scroll_to(y=view._offsets[bear_title], animate=False, immediate=True)
+        assert view._sticky_header() is None
+        assert "Turn 2" in "".join(segment.text for segment in view.render_line(0))
+        assert "Round 1/2" not in "".join(segment.text for segment in view.render_line(1))
+        view.navigate("end")
+        view.consume(AgentEvent("text", "Bear Researcher", "research", "\nLATEST",
+                                {"conversation_turn_id": "research:1:2", "message_id": "Bear Researcher"}))
+        view.sync()
+        assert view.following and view.scroll_y == view.max_scroll_y
+        assert "Bear Researcher" in "".join(segment.text for segment in view.render_line(0))
+        assert any("LATEST" in "".join(segment.text for segment in view.render_line(row)) for row in range(view.size.height))
+        assert len(view._cache) <= 256
+
+
+async def test_sticky_input_clicks_and_covered_details_use_visible_header_targets() -> None:
+    """Collapse a pinned input safely and never click through a pinned role title."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 24)) as pilot:
+        evidence = "\n".join(f"Shared input {number}" for number in range(60))
+        view.consume(AgentEvent("conversation_input", "Input", "research", evidence))
+        view.consume(AgentEvent("text", "Bull Researcher", "research", "Bull text\n" * 40, {"message_id": "bull"}))
+        view.consume(AgentEvent("reasoning", "Bull Researcher", "research", "Hidden arithmetic", {"message_id": "reason"}))
+        view.consume(AgentEvent("text", "Bear Researcher", "research", "Bear text\n" * 80, {"message_id": "bear"}))
+        view.sync()
+        await pilot.pause()
+        view.navigate("home")
+        view.scroll_to(y=20, animate=False, immediate=True)
+        assert "Input" in "".join(segment.text for segment in view.render_line(0))
+        input_section = view.bubbles[0].sections[0]
+        await pilot.click("#chat", offset=(view.size.width - 1, 0))
+        assert not input_section.collapsed
+        view.scroll_to(y=20, animate=False, immediate=True)
+        view.select_detail(-1)
+        assert view._selected is input_section and view.scroll_y == 20
+        assert view._detail_is_visible(input_section)
+        view.toggle_selected()
+        assert input_section.collapsed and view.scroll_y == 0
+        await pilot.click("#chat", offset=(4, 0))
+        assert not input_section.collapsed
+        view.scroll_to(y=20, animate=False, immediate=True)
+        await pilot.click("#chat", offset=(4, 0))
+        assert input_section.collapsed
+        assert view.scroll_y == 0
+        assert evidence in view.plain() and "Shared input 20" not in view.visible_plain()
+        reasoning = next(section for bubble in view.bubbles for section in bubble.sections if section.kind == "reasoning")
+        view.scroll_to(y=view._detail_rows[reasoning], animate=False, immediate=True)
+        assert "Bull Researcher" in "".join(segment.text for segment in view.render_line(0))
+        assert not view._detail_is_visible(reasoning)
+        await pilot.click("#chat", offset=(4, 0))
+        assert reasoning.collapsed
+        view.select_detail(-1)
+        assert view._selected is reasoning
+        assert view._detail_is_visible(reasoning)
+        row = view._detail_rows[reasoning] - int(view.scroll_y)
+        assert row > 0
+        view.toggle_selected()
+        assert not reasoning.collapsed

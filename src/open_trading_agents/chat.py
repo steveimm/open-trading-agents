@@ -117,6 +117,7 @@ class ChatView(FollowScrollView):
         self._finished_tools: set[tuple[ChatBubble, str]] = set()
         self._seen: set[str] = set()
         self._parts: list[ChatPart] = []
+        self._bubble_headers: dict[ChatBubble, ChatPart] = {}
         self._offsets = [0]
         self._detail_rows: dict[ChatSection, int] = {}
         self._cache: OrderedDict[tuple[TranscriptIndex, tuple[int, int]], Strip] = OrderedDict()
@@ -386,6 +387,7 @@ class ChatView(FollowScrollView):
             parts.append(ChatPart(f"bottom:{bubble.key}", "bottom", 1, bubble))
             parts.append(ChatPart(f"gap:{bubble.key}", "gap", 1, bubble))
         self._parts = parts
+        self._bubble_headers = {part.bubble: part for part in parts if part.kind == "top" and part.bubble is not None}
         visible_indexes = {part.section.index for part in parts if part.kind == "body" and part.section is not None}
         for key in list(self._cache):
             if key[0] not in visible_indexes:
@@ -424,6 +426,41 @@ class ChatView(FollowScrollView):
         value.truncate(width)
         return Strip(value.render(self.app.console)).apply_style(self.app.console.get_style(value.style)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
 
+    def _sticky_header(self) -> ChatPart | None:
+        """Find the title belonging to content whose natural header has scrolled away.
+
+        Returns:
+            A bubble title for the first viewport row, or None at headers and gaps.
+        """
+        index = bisect.bisect_right(self._offsets, int(self.scroll_y)) - 1
+        if 0 <= index < len(self._parts):
+            part = self._parts[index]
+            if part.bubble is not None and part.kind in {"body", "detail", "bottom"}:
+                return self._bubble_headers.get(part.bubble)
+        return None
+
+    def _title_line(self, part: ChatPart, width: int) -> Strip:
+        """Render a bubble title identically in its natural or pinned position.
+
+        Args:
+            part: Bubble title and its optional input disclosure.
+            width: Available terminal cells.
+
+        Returns:
+            A title row with role, round, turn and current streaming state.
+        """
+        bubble, section = part.bubble, part.section
+        assert bubble is not None
+        color = "#e8b86d" if bubble.kind == "input" else "#668ab5"
+        suffix = f" · {bubble.title}" if bubble.title else ""
+        active = f" · {bubble.status}" if bubble.status in {"streaming", "error", "stopped"} else ""
+        fold = f"{'▸' if section.collapsed else '▾'} " if section is not None else ""
+        style = "bold #f1e5b9 on #303547" if section is not None and section is self._selected else f"bold {color}"
+        title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
+        title.truncate(max(1, width - 1))
+        title.append("─" * max(0, width - title.cell_len - 1) + "╮")
+        return Strip(title.render(self.app.console)).apply_style(self.app.console.get_style(title.style)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
+
     def render_line(self, y: int) -> Strip:
         """Render one visible bubble row using bounded section caches.
 
@@ -434,6 +471,8 @@ class ChatView(FollowScrollView):
             A styled row with input/agent borders or a detail header.
         """
         width = max(1, self.scrollable_content_region.width)
+        if y == 0 and (header := self._sticky_header()) is not None:
+            return self._title_line(header, width)
         row = int(self.scroll_y) + y
         index = bisect.bisect_right(self._offsets, row) - 1
         if index < 0 or index >= len(self._parts):
@@ -443,14 +482,7 @@ class ChatView(FollowScrollView):
         color = "#e8b86d" if bubble and bubble.kind == "input" else "#668ab5"
         border = self.rich_style + Style(color=color)
         if part.kind == "top" and bubble is not None:
-            suffix = f" · {bubble.title}" if bubble.title else ""
-            active = f" · {bubble.status}" if bubble.status in {"streaming", "error", "stopped"} else ""
-            fold = f"{'▸' if section.collapsed else '▾'} " if section is not None else ""
-            style = "bold #f1e5b9 on #303547" if section is not None and section is self._selected else f"bold {color}"
-            title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
-            title.truncate(max(1, width - 1))
-            title.append("─" * max(0, width - title.cell_len - 1) + "╮")
-            return Strip(title.render(self.app.console)).apply_style(self.app.console.get_style(title.style)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
+            return self._title_line(part, width)
         if part.kind == "bottom":
             return self._line("╰" + "─" * max(0, width - 2) + "╯", color, width)
         if part.kind == "detail" and section is not None:
@@ -480,11 +512,31 @@ class ChatView(FollowScrollView):
         Args:
             section: Selected input, system, reasoning, or tool section.
         """
+        pinned = self._sticky_header()
+        header_row = self._detail_rows.get(section) if pinned is not None and pinned.section is section else None
         self.following = False
         self._selected = section
         section.collapsed = not section.collapsed
         self._dirty = True
         self.sync()
+        if header_row is not None:
+            self.scroll_to(y=header_row, animate=False, immediate=True)
+
+    def _detail_is_visible(self, section: ChatSection) -> bool:
+        """Check whether a disclosure is visible rather than covered by the pinned title.
+
+        Args:
+            section: Disclosure to inspect.
+
+        Returns:
+            Whether its natural or pinned header can be seen in the viewport.
+        """
+        pinned = self._sticky_header()
+        if pinned is not None and pinned.section is section:
+            return True
+        top = int(self.scroll_y) + int(pinned is not None)
+        row = self._detail_rows.get(section, -1)
+        return top <= row < self.scroll_y + self.size.height
 
     def select_detail(self, offset: int) -> None:
         """Move keyboard selection among expandable details.
@@ -499,22 +551,20 @@ class ChatView(FollowScrollView):
         if self._selected in sections:
             index = (sections.index(self._selected) + offset) % len(sections)
         else:
-            top = int(self.scroll_y)
+            top = int(self.scroll_y) + int(self._sticky_header() is not None)
             visible = [i for i, section in enumerate(sections) if self._detail_rows[section] >= top]
             index = (visible[0] if visible else len(sections) - 1) if offset > 0 else (visible[0] - 1 if visible else len(sections) - 1)
         self._selected = sections[index]
         self.following = False
         target = self._detail_rows[self._selected]
-        if target < self.scroll_y or target >= self.scroll_y + self.size.height:
+        if not self._detail_is_visible(self._selected):
             self.scroll_to(y=max(0, target - self.size.height // 2), animate=False, immediate=True)
         self.refresh()
 
     def toggle_selected(self) -> None:
         """Toggle the selected detail, choosing a visible detail when none is selected."""
-        if self._selected is not None:
-            row = self._detail_rows.get(self._selected, -1)
-            if not self.scroll_y <= row < self.scroll_y + self.size.height:
-                self._selected = None
+        if self._selected is not None and not self._detail_is_visible(self._selected):
+            self._selected = None
         if self._selected is None:
             self.select_detail(1)
         if self._selected is not None:
@@ -545,6 +595,13 @@ class ChatView(FollowScrollView):
             event: Pointer click within the conversation viewport.
         """
         self.focus()
+        if not (0 <= event.x < self.scrollable_content_region.width and 0 <= event.y < self.scrollable_content_region.height):
+            return
+        if int(event.y) == 0 and (header := self._sticky_header()) is not None:
+            if header.section is not None:
+                self._toggle(header.section)
+            event.stop()
+            return
         row = int(self.scroll_y) + int(event.y)
         index = bisect.bisect_right(self._offsets, row) - 1
         if 0 <= index < len(self._parts):
