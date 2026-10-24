@@ -21,13 +21,14 @@ for line in sys.stdin:
   assert 'environments' not in r['params']
   assert r['params']['sandbox']=='workspace-write'
   assert r['params']['config']['mcp_servers']['ambient']['enabled'] is False
-  result={'thread':{'id':'thread1'}}
+  result={'thread':{'id':'thread1'},'model':'native-default','modelProvider':'native-provider'}
  if method=='turn/start':
   n+=1;tid=f'turn{n}';result={'turn':{'id':tid}}
  print(json.dumps({'id':r['id'],'result':result}),flush=True)
  if method=='turn/start':
   total={'inputTokens':100*n,'outputTokens':10*n,'cachedInputTokens':30*n,'reasoningOutputTokens':2*n,'totalTokens':110*n}
   events=[('turn/started',{'turn':{'id':tid}}),
+   ('model/rerouted',{'threadId':'thread1','turnId':tid,'fromModel':'native-default','toModel':'native-rerouted','reason':'highRiskCyberActivity'}),
    ('item/agentMessage/delta',{'itemId':tid,'delta':'hello'}),
    ('item/reasoning/summaryTextDelta',{'itemId':'r','delta':'consider'}),
    ('item/started',{'item':{'type':'mcpToolCall','id':'tool','tool':'get_news','arguments':{'symbol':'NVDA'}}}),
@@ -52,6 +53,10 @@ for line in sys.stdin:
     finally:
         await session.close()
     assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
+    assert [event.data for event in events if event.kind == "model"] == [
+        {"harness": "codex", "provider": "native-provider", "model": "native-default"},
+        {"harness": "codex", "provider": "native-provider", "model": "native-rerouted"},
+    ]
     usage = [event.data for event in events if event.kind == "usage"]
     assert len(usage) == 2
     assert [row["input_tokens"] for row in usage] == [100, 100]

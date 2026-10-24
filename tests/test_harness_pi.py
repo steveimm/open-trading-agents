@@ -25,7 +25,8 @@ for line in sys.stdin:
  command=json.loads(line)
  kind=command['type']
  if kind=='get_state':
-  print(json.dumps({'id':command['id'],'type':'response','success':True,'data':{'sessionFile':'persisted-session.jsonl'}}),flush=True)
+  model={'id':'native-default','provider':'native-provider','baseUrl':'http://private-endpoint','apiKey':'not-for-report'}
+  print(json.dumps({'id':command['id'],'type':'response','success':True,'data':{'sessionFile':'persisted-session.jsonl','model':model}}),flush=True)
  elif kind=='prompt':
   count+=1
   print(json.dumps({'id':command['id'],'type':'response','success':True}),flush=True)
@@ -68,6 +69,9 @@ for line in sys.stdin:
     finally:
         await session.close()
     assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
+    assert [event.data for event in events if event.kind == "model"] == [
+        {"harness": "pi", "provider": "native-provider", "model": "native-default"},
+    ]
     usage = [event for event in events if event.kind == "usage"]
     assert len(usage) == 2
     assert usage[0].data["input_tokens"] == 100

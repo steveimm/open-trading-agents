@@ -117,6 +117,7 @@ class ClaudeSession(JsonProcess):
         kind = event.get("type")
         if kind == "message_start":
             message = event.get("message", {})
+            await self.observe_model(message.get("model"))
             self.message_id = message.get("id") or uuid.uuid4().hex
             self.message_usage = dict(message.get("usage") or {})
             self.stream_blocks[self.message_id] = {}
@@ -187,9 +188,12 @@ class ClaudeSession(JsonProcess):
             if identifier and identifier != self.session_id:
                 self.session_id = identifier
                 await self.event("session", session_id=identifier)
+            if record.get("subtype") == "init":
+                await self.observe_model(record.get("model"))
             await self.event("status", record.get("subtype", "system"), native=record)
         elif kind == "assistant":
             message = record.get("message", {})
+            await self.observe_model(message.get("model"))
             identifier = message.get("id") or record.get("uuid") or uuid.uuid4().hex
             for index, block in enumerate(message.get("content", [])):
                 if block.get("type") == "text":
@@ -214,6 +218,8 @@ class ClaudeSession(JsonProcess):
                     await self.event("tool_result", content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
                                      tool_call_id=block.get("tool_use_id"), is_error=block.get("is_error", False), final=True)
         elif kind == "result":
+            for model in record.get("modelUsage") or {}:
+                await self.observe_model(model)
             total = record.get("usage") or {}
             remaining = {key: max(0, value - self.turn_usage.get(key, 0))
                          for key, value in total.items() if isinstance(value, int)}

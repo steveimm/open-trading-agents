@@ -101,7 +101,7 @@ class PiSession(JsonProcess):
             self.metadata_offset = source.tell()
 
     async def save_session(self, state: dict[str, Any]) -> None:
-        """Publish the persisted session locator exposed by pi.
+        """Publish the persisted session locator and resolved model exposed by pi.
 
         Args:
             state: Native get_state response payload.
@@ -110,6 +110,9 @@ class PiSession(JsonProcess):
         if identifier and identifier != self.session_id:
             self.session_id = identifier
             await self.event("session", session_id=identifier)
+        model = state.get("model")
+        if isinstance(model, dict):
+            await self.observe_model(model.get("id"), model.get("provider"))
 
     async def prompt(self, text: str) -> AgentResult:
         """Append input to the native session and wait through automatic recovery.
@@ -172,6 +175,7 @@ class PiSession(JsonProcess):
             self.raw_usage.update(record["usage"])
         elif kind == "message_start" and record.get("message", {}).get("role") == "assistant":
             self.message_id = uuid.uuid4().hex
+            await self.observe_model(record["message"].get("model"), record["message"].get("provider"))
         elif kind == "message_update":
             event = record.get("assistantMessageEvent", {})
             event_type = event.get("type")
@@ -180,6 +184,7 @@ class PiSession(JsonProcess):
                                  message_id=self.message_id)
         elif kind == "message_end" and record.get("message", {}).get("role") == "assistant":
             message = record["message"]
+            await self.observe_model(message.get("model"), message.get("provider"))
             text = "".join(part.get("text", "") for part in message.get("content", []) if part.get("type") == "text")
             self.output, self.stop_reason = text, message.get("stopReason", "stop")
             if text:

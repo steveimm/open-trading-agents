@@ -77,6 +77,8 @@ class CodexSession(JsonProcess):
         response = await self.request({"method": method, "params": params})
         self.session_id = response["result"]["thread"]["id"]
         await self.event("session", session_id=self.session_id)
+        self.model_provider = response["result"].get("modelProvider")
+        await self.observe_model(response["result"].get("model"), self.model_provider)
 
     async def prompt(self, text: str) -> AgentResult:
         """Append a turn to the native thread and await its terminal status.
@@ -195,6 +197,8 @@ class CodexSession(JsonProcess):
                 await self.event("status", "Context compaction completed" if completed else "Compacting context", native=item)
         elif method == "thread/tokenUsage/updated":
             await self.record_usage(params)
+        elif method == "model/rerouted":
+            await self.observe_model(params.get("toModel"), self.model_provider)
         elif method == "turn/started":
             self.turn_id = params.get("turn", {}).get("id")
             await self.event("status", "Generating", turn_id=self.turn_id)

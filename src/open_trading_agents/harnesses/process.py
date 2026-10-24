@@ -31,6 +31,22 @@ class JsonProcess:
         self.stderr_tail = ""
         self.closing = False
         self.failure: Exception | None = None
+        self.reported_models: set[tuple[str | None, str | None]] = set()
+
+    async def observe_model(self, model: Any, provider: Any = None) -> None:
+        """Publish distinct model identities reported by the native harness.
+
+        Args:
+            model: Native model identifier, never a complete model configuration.
+            provider: Native provider identifier when the protocol exposes it.
+        """
+        model = model.strip() if isinstance(model, str) and model.strip() else None
+        provider = provider.strip() if isinstance(provider, str) and provider.strip() else None
+        identity = (provider, model)
+        if not any(identity) or identity in self.reported_models:
+            return
+        self.reported_models.add(identity)
+        await self.event("model", harness=self.config.kind, provider=provider, model=model)
 
     async def event(self, kind: str, text: str = "", **data: Any) -> None:
         """Publish one normalized native harness event.
