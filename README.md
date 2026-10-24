@@ -70,26 +70,27 @@ Reasoning effort is passed to the harness only when explicitly selected. Availab
 
 ## Interface
 
-The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Running tabs show an animated circular spinner, completed tabs show a check mark, and failed tabs are marked explicitly. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
+The seven stages are Analysis, Research Debate, Research Decision, Trader, Risk Debate, Portfolio Decision, and Reports. Running tabs and participant turns show an animated circular spinner, completed tabs and agents show a check mark, and failures are marked explicitly. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
 
-Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble, and its title stays at the top while scrolling through that contribution. Repeated per-agent input messages are omitted from the debate view entirely. System instructions, reasoning, and tool calls remain expandable. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
+Debates use a narrow left column of participant system-prompt panes and a wider right column for the conversation. The conversation shows shared input once, followed by each participant's turn. Turn titles stay visible while scrolling and can collapse the whole contribution, including reasoning and tool calls. A collapsed active turn continues receiving output. Repeated per-agent input messages are omitted from the debate view. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
 
 | Key | Action |
 | --- | --- |
 | Tab / Shift+Tab | Next / previous stage |
-| Arrow keys | Select between analyst panes in grid view, otherwise scroll the active transcript |
-| Enter / f | Expand or restore an analyst pane when multiple analyst panes are present |
-| Escape | Return from an analyst fullscreen view to its grid |
+| Arrow keys | Select analyst panes in grid view; Left/Right selects debate prompt/conversation panes, Up/Down scrolls the focused pane |
+| f | Toggle fullscreen for the selected analyst or debate system-prompt pane |
 | Page Up / Page Down | Scroll a page |
 | Home / End | Beginning / jump to the latest content and follow the stream |
-| [ / ] | Select the previous / next collapsible section; these keys navigate, rather than expand it |
-| Space | Expand or collapse the selected section |
+| [ / ] | Select the previous / next collapsible turn or detail |
+| Space | Expand or collapse the selected turn or detail |
 | m | Show supporting memory and screening work |
 | q | Exit, cancelling active work while retaining saved progress |
 
 Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Click a disclosure header or use the keyboard to expand it. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Exact native metadata remains in the saved event log rather than a separate payload pane.
 
-Shortcut hints follow the selected stage and focused pane. Fullscreen controls appear only for the analyst grid, and section controls appear only when there are expandable sections. System instructions use the same click or section-selection/Space controls as other disclosures.
+Shortcut hints follow the selected stage and focused pane. Fullscreen controls appear for analyst panes and debate system-prompt panes. Turn and detail controls appear only in conversations with expandable content. System instructions outside the debate stages retain their disclosure controls.
+
+The Research Manager produces a JSON recommendation, rationale, and implementation strategy. The Trader and Portfolio Manager have their own structured decision fields. These agents receive the exact validation schema in their initial system instructions. A response that still fails validation gets one correction request in the same native session, with the specific field or JSON error. Validated decisions are rendered as readable Markdown in reports.
 
 Scrolling upward pauses following so new output does not move what you are reading. Scrolling down to the bottom, or pressing End, resumes following automatically. End does not stop the run.
 
@@ -99,7 +100,7 @@ Elapsed clocks update independently of model responses. Usage shows total input,
 
 ## Calculations and sources
 
-Agents can use native execution tools to write and run calculation scripts in their own workspaces. Interpreters are resolved by the native shell environment, with no application interpreter path prescribed in prompts. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
+Agents can use native execution tools to write and run calculation scripts in their own workspaces. Interpreters are resolved by the native shell environment, with no application interpreter path prescribed in prompts. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. Its response contains only the result or error; the expression and variables remain in the tool arguments. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
 
 Financial tools retain Yahoo, SEC EDGAR, Alpha Vantage, FRED, Polymarket, Reddit, and StockTwits integrations. Tools bind the ticker and information cutoff outside the model's arguments. Technical reports have a shared verified price/indicator snapshot. Missing or unavailable data is reported explicitly.
 

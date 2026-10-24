@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 
 from open_trading_agents.config import Settings
 from open_trading_agents.dataflows.files import locked
+from open_trading_agents.decisions import SCHEMAS
 from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
 from open_trading_agents.events import EventRecorder
 from open_trading_agents.storage import RunStore
@@ -66,6 +68,44 @@ async def test_debates_reuse_native_sessions_and_append_only_new_arguments(tmp_p
     assert [name for name, _ in calls[-4:]] == ["Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager"]
     assert (result.directory / "reports" / "complete_report.html").is_file()
     assert (result.directory / "transcript.jsonl").is_file()
+
+
+@pytest.mark.parametrize("invalid_first_response", [False, True])
+async def test_managers_receive_the_schema_initially_and_repair_only_invalid_output(tmp_path: Path, invalid_first_response: bool) -> None:
+    """Provide field types before generation and reuse the native session for a bounded format correction."""
+    calls: list[tuple[str, str]] = []
+    opened: list[str] = []
+    seen_schemas: dict[str, dict] = {}
+
+    class DecisionHarness(FakeHarness):
+        async def prompt(self, text: str) -> AgentResult:
+            """Return a deliberately nested rationale once to reproduce a schema failure."""
+            previous = [prompt for name, prompt in calls if name == self.spec.agent]
+            if self.spec.agent == "Research Manager" and invalid_first_response and not previous:
+                calls.append((self.spec.agent, text))
+                await self.emit(AgentEvent("status", self.spec.agent, self.spec.stage, data={"prompt_accepted": True}))
+                return AgentResult('{"recommendation":"Overweight","rationale":{"evidence":"Verified"},"strategic_actions":["Scale in"]}', self.session_id)
+            if self.spec.agent == "Research Manager" and previous:
+                assert "rationale: Input should be a valid string" in text
+                assert "strategic_actions: Input should be a valid string" in text
+                assert "without changing its substantive conclusion" in text
+            return await super().prompt(text)
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> DecisionHarness:
+        """Inspect the initial native instructions before the first role prompt is submitted."""
+        opened.append(spec.agent)
+        for name, key in (("Research Manager", "research_manager"), ("Trader", "trader"), ("Portfolio Manager", "portfolio_manager")):
+            if spec.agent == name:
+                seen_schemas[key] = json.loads(spec.system_prompt.split("JSON schema:\n", 1)[1])
+                assert seen_schemas[key] == SCHEMAS[key].model_json_schema()
+        return DecisionHarness(spec, emit, calls, [])
+
+    result = await Workflow("NVDA", "2026-01-02", Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False),
+                            session_factory=factory).run()
+    assert result.rating == "Overweight"
+    assert set(seen_schemas) == {"research_manager", "trader", "portfolio_manager"}
+    assert opened.count("Research Manager") == 1
+    assert len([prompt for name, prompt in calls if name == "Research Manager"]) == (2 if invalid_first_response else 1)
 
 
 async def test_resume_keeps_finished_work_and_continues_pending_native_session(tmp_path: Path) -> None:

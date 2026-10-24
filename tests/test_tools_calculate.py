@@ -25,7 +25,7 @@ from open_trading_agents.tools import ToolContext, create_server
         ("2**10 % 100", None, 24),
     ],
 )
-def test_numeric_verification_returns_inputs_and_result(expression: str, variables: dict[str, Any] | None, expected: float) -> None:
+def test_numeric_verification_returns_only_the_result(expression: str, variables: dict[str, Any] | None, expected: float) -> None:
     """Compute real finance and statistics examples instead of relying on model arithmetic."""
     result = json.loads(calculate(expression, variables))
     assert result["result"] == pytest.approx(expected)

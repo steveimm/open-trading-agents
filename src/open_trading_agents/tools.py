@@ -320,7 +320,7 @@ class FinancialTools:
             variables: Optional named finite numbers or numeric lists used by the expression.
 
         Returns:
-            Exact submitted inputs and computed result, or a clear error. This tool cannot execute scripts.
+            Computed result or a clear error. Inputs are already present in the tool call. This tool cannot execute scripts.
         """
         return calculate(expression, variables)
 

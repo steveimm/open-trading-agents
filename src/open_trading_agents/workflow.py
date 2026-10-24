@@ -18,7 +18,7 @@ from open_trading_agents.config import Portfolio, Settings, validate_date
 from open_trading_agents.dataflows.config import default_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
-from open_trading_agents.decisions import SCHEMAS, parse_decision, render_decision
+from open_trading_agents.decisions import SCHEMAS, decision_error, decision_format, parse_decision, render_decision
 from open_trading_agents.domain import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.events import EventRecorder
 from open_trading_agents.harnesses import open_session
@@ -191,7 +191,10 @@ class Workflow:
             tools = ("calculate", *role.tools)
             if role_key in ("market", "social", "news", "fundamentals") and self.settings.web_research:
                 tools = (*tools, "search_web", "fetch_webpage")
-            spec = AgentSpec(name, role.stage, system_prompt(role, self.settings.output_language), workspace,
+            instructions = system_prompt(role, self.settings.output_language)
+            if role_key in SCHEMAS:
+                instructions += f"\n\n{decision_format(role_key)}"
+            spec = AgentSpec(name, role.stage, instructions, workspace,
                              workspace / "sessions", self.store.session(name), tools,
                              (sys.executable, "-m", "open_trading_agents.tools", "--context", str(self.context_file),
                               "--tools", ",".join(tools)) if tools else (),
@@ -382,10 +385,9 @@ class Workflow:
             try:
                 parsed = parse_decision(key, text)
                 break
-            except ValueError:
+            except ValueError as exc:
                 if attempt == 0:
-                    schema = json.dumps(SCHEMAS[key].model_json_schema())
-                    text = await self._call(f"{key}:format", key, f"Reformat your decision as one JSON object matching this schema. Preserve your substantive conclusion and use null for unavailable optional fields.\n{schema}")
+                    text = await self._call(f"{key}:format", key, f"Correct the format of your previous decision without changing its substantive conclusion. Validation errors: {decision_error(exc)}\n\n{decision_format(key)}")
         if parsed is not None:
             rendered = render_decision(parsed)
             if key == "portfolio_manager":

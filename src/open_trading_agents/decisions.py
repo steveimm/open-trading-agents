@@ -5,7 +5,7 @@ import math
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 Rating = Literal["Buy", "Overweight", "Hold", "Underweight", "Sell"]
 
@@ -73,6 +73,35 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "portfolio_manager": PortfolioDecision,
     "screening": SocialScreen,
 }
+
+
+def decision_format(role: str) -> str:
+    """Describe the exact final-response schema validated for a structured role.
+
+    Args:
+        role: Key of the decision or screening role.
+
+    Returns:
+        Final-response instructions followed by the authoritative JSON schema.
+    """
+    return "Your final response must be exactly one JSON object matching the schema below, with no prose or Markdown fences outside it. Keep string fields as text, not nested objects or arrays. Put supporting evidence within the specified text fields. Use null only for fields whose schema allows it.\nJSON schema:\n" + json.dumps(SCHEMAS[role].model_json_schema(), ensure_ascii=False)
+
+
+def decision_error(error: ValueError) -> str:
+    """Summarize a validation failure without replaying the rejected response.
+
+    Args:
+        error: JSON syntax or schema validation failure.
+
+    Returns:
+        Concise field-specific feedback for a single native-session repair.
+    """
+    if isinstance(error, ValidationError):
+        details = error.errors(include_input=False, include_url=False)
+        return "; ".join(f"{'.'.join(str(value) for value in item['loc']) or 'response'}: {item['msg']}" for item in details[:8])[:1000]
+    if isinstance(error, json.JSONDecodeError):
+        return f"Invalid JSON: {error.msg} at line {error.lineno}, column {error.colno}."
+    return str(error)[:1000]
 
 
 def parse_decision(role: str, text: str) -> BaseModel:
