@@ -10,6 +10,7 @@ from prompt_toolkit.output import DummyOutput
 from typer.testing import CliRunner
 
 from open_trading_agents import cli
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.config import HarnessSettings, Settings, load_preset, load_settings, preset_path, save_preset
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice
 from open_trading_agents.ui import configuration as configuration_ui
@@ -255,12 +256,15 @@ def test_run_selects_independent_profiles_without_changing_saved_files(wizard: P
     decision = HarnessSettings(kind="codex", model="large", effort="high")
     paths = [save_preset("alpha", working), save_preset("zeta", decision)]
     before = {path: path.read_bytes() for path in paths}
-    original = Settings(harness=working, default_preset="alpha")
-    shown = select_choices(monkeypatch, [None, 2])
+    override = HarnessSettings(kind="claude", model="news-model")
+    original = Settings(harness=working, default_preset="alpha", agents={"news": override})
+    shown = select_choices(monkeypatch, [None, 2, None])
     selected = configuration_ui.select_agent_settings(original)
     assert selected.quick == working and selected.deep == decision
+    assert selected.agents == original.agents == {"news": override}
     assert original.quick is None and original.deep is None
-    assert [label for label, _ in shown] == ["Working agents", "Decision manager"]
+    assert [label for label, _ in shown] == ["Working agents", "Decision manager", "Agent configuration"]
+    assert shown[-1][1] == ["Continue", "Advanced"]
     assert shown[0][1][0].startswith("alpha ·")
     assert " / low" in shown[0][1][0] and " / high" in shown[1][1][2]
     assert {path: path.read_bytes() for path in paths} == before
@@ -271,10 +275,30 @@ def test_manager_can_follow_newly_selected_working_profile(wizard: Path, monkeyp
     """Confirming the manager's same-as-working choice uses this run's working selection."""
     profile = HarnessSettings(kind="claude", model="manager", effort="high")
     save_preset("shared", profile)
-    select_choices(monkeypatch, [1, None])
+    select_choices(monkeypatch, [1, None, None])
     selected = configuration_ui.select_agent_settings(Settings())
     assert selected.quick == profile and selected.deep == profile
     assert selected.quick is not selected.deep
+    assert not wizard.exists()
+
+
+def test_partial_role_override_inherits_new_working_profile(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain an effort-only role override while inheriting the working model selected for this run."""
+    profile = HarnessSettings(provider="local", model="new-model", effort="low")
+    path = save_preset("new-worker", profile)
+    before = path.read_bytes()
+    original = Settings(
+        harness=HarnessSettings(provider="local", model="old-model", effort="low"),
+        agents={"bull": HarnessSettings(effort="high")},
+    )
+    select_choices(monkeypatch, [1, None, None])
+
+    selected = configuration_ui.select_agent_settings(original)
+
+    assert selected.model_settings(role="bull") == HarnessSettings(provider="local", model="new-model", effort="high")
+    assert selected.agents["bull"].model_dump(exclude_unset=True) == {"effort": "high"}
+    assert original.model_settings(role="bull").model == "old-model"
+    assert path.read_bytes() == before
     assert not wizard.exists()
 
 
@@ -283,7 +307,7 @@ def test_custom_runtime_choices_are_only_applied_to_the_run(wizard: Path, monkey
     wizard.parent.mkdir(parents=True)
     original = '[harness]\nkind="pi"\nprovider="local"\nmodel="small"\neffort="low"\n'
     wizard.write_text(original)
-    select_choices(monkeypatch, [2, None, None, 2, 2, None])
+    select_choices(monkeypatch, [2, None, None, 2, 2, None, None])
     selected = configuration_ui.select_agent_settings(load_settings())
     assert selected.quick == HarnessSettings(provider="local", model="large", effort="high")
     assert selected.deep == selected.quick
@@ -299,6 +323,108 @@ def test_run_role_cancellation_leaves_source_settings_unchanged(wizard: Path, mo
         configuration_ui.select_agent_settings(original)
     assert original.quick is None and original.deep is None
     assert not wizard.exists()
+
+
+def test_advanced_run_selection_edits_multiple_roles_without_saving(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use saved profiles and an unsaved runtime across working, manager, and supporting roles."""
+    working = HarnessSettings(provider="local", model="small", effort="low")
+    decision = HarnessSettings(kind="codex", model="large", effort="high")
+    news = HarnessSettings(kind="claude", model="news-model")
+    paths = [save_preset("alpha", working), save_preset("zeta", decision)]
+    before = {path: path.read_bytes() for path in paths}
+    original = Settings(harness=working, deep=decision, agents={"news": news})
+    original_values = original.model_dump()
+    roles = list(ROLES)
+    answers = [None, None, 1]
+    answers.extend([roles.index("market") + 1, 2])
+    answers.extend([roles.index("research_manager") + 1, 1])
+    answers.extend([roles.index("reflection") + 1, 4, None, None, 2, 2])
+    answers.append(0)
+    shown = select_choices(monkeypatch, answers)
+
+    selected = configuration_ui.select_agent_settings(original)
+
+    reflection = HarnessSettings(provider="local", model="large", effort="high")
+    assert selected.agents == {"news": news, "market": decision, "research_manager": working, "reflection": reflection}
+    assert selected.model_settings(role="market") == decision
+    assert selected.model_settings(role="research_manager") == working
+    assert selected.model_settings(role="portfolio_manager") == decision
+    assert selected.model_settings(role="reflection") == reflection
+    role_menus = [choices for label, choices in shown if label == "Advanced agent configuration"]
+    assert len(role_menus) == 4
+    assert role_menus[0][0] == "Continue"
+    assert [label.split(" · ", 1)[0] for label in role_menus[0][1:]] == [role.name for role in ROLES.values()]
+    assert role_menus[-1][roles.index("market") + 1] == f"Market Analyst · {configuration_ui._describe(decision)}"
+    assert role_menus[-1][roles.index("research_manager") + 1] == f"Research Manager · {configuration_ui._describe(working)}"
+    assert role_menus[-1][roles.index("reflection") + 1] == f"Reflection · {configuration_ui._describe(reflection)}"
+    assert original.model_dump() == original_values
+    assert {path: path.read_bytes() for path in paths} == before
+    assert not wizard.exists()
+
+
+@pytest.mark.parametrize("saved_profile", [False, True])
+def test_advanced_harness_defaults_reset_inherited_selectors(
+    wizard: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    saved_profile: bool,
+) -> None:
+    """Treat selected default profiles as complete choices rather than inheriting the group's explicit selectors."""
+    original = Settings(harness=HarnessSettings(
+        provider="local", model="small", effort="high", command=("custom-pi",), extra_args=("--profile", "custom"),
+    ))
+    if saved_profile:
+        save_preset("harness-default", HarnessSettings())
+    select_choices(monkeypatch, [None, None, 1, list(ROLES).index("bull") + 1, 1, 0])
+
+    selected = configuration_ui.select_agent_settings(original)
+    restored = Settings.model_validate(selected.model_dump())
+
+    assert selected.model_settings(role="bull") == HarnessSettings()
+    assert restored.model_settings(role="bull") == HarnessSettings()
+    assert selected.agents["bull"].model_dump(exclude_unset=True) == HarnessSettings().model_dump()
+    assert selected.model_settings() == original.harness
+    assert not wizard.exists()
+
+
+@pytest.mark.parametrize("role_key", ["market", "portfolio_manager"])
+def test_advanced_role_can_return_to_its_group_default(wizard: Path, monkeypatch: pytest.MonkeyPatch, role_key: str) -> None:
+    """Remove a role override through its explicit inheritance choice without changing other assignments."""
+    working = HarnessSettings(provider="local", model="small")
+    decision = HarnessSettings(kind="codex", model="large")
+    override = HarnessSettings(kind="claude", model="role-model")
+    original = Settings(harness=working, deep=decision, agents={role_key: override, "bull": override})
+    shown = select_choices(monkeypatch, [None, None, 1, list(ROLES).index(role_key) + 1, 0, 0])
+
+    selected = configuration_ui.select_agent_settings(original)
+
+    role = ROLES[role_key]
+    inherited = decision if role.deep else working
+    group = "decision manager" if role.deep else "working agents"
+    role_choices = next(choices for label, choices in shown if label == role.name)
+    assert role_choices[0] == f"Same as {group} · {configuration_ui._describe(inherited)}"
+    assert selected.agents == {"bull": override}
+    assert selected.model_settings(role=role_key) == inherited
+    assert original.agents == {role_key: override, "bull": override}
+    assert not wizard.exists()
+
+
+def test_advanced_role_cancellation_discards_all_unsaved_edits(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancel after an override is changed without mutating the original settings or any saved file."""
+    profile = save_preset("daily", HarnessSettings(provider="local", model="small"))
+    wizard.write_text('[harness]\nkind="pi"\nmodel="small"\n[agents.market]\nkind="claude"\nmodel="override"\n')
+    before = {path: path.read_bytes() for path in (wizard, profile)}
+    original = load_settings()
+    original_values = original.model_dump()
+    roles = list(ROLES)
+    select_choices(monkeypatch, [None, None, 1, roles.index("market") + 1, 0, roles.index("bull") + 1])
+
+    with pytest.raises(typer.Abort):
+        configuration_ui.select_agent_settings(original)
+
+    assert original.model_dump() == original_values
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path.name for path in wizard.parent.iterdir()} == {"config.toml", "presets"}
+    assert [path.name for path in profile.parent.iterdir()] == ["daily.toml"]
 
 
 @pytest.mark.parametrize(("keys", "expected"), [("\r", 1), ("\x1b[A\r", 0), ("\x1b[B\r", 2)])

@@ -16,6 +16,8 @@ During configuration, save a **named preset** containing your harness, provider,
 
 The run wizard asks for the ticker, analysis date, research depth, working-agent profile, decision-manager profile, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select, type to filter, and Enter to confirm. `(default)` marks the initial choice.
 
+After choosing the two profiles, select **Continue** to use them for the run, or **Advanced** to assign profiles to individual agents.
+
 To supply the ticker and date directly:
 
 ```sh

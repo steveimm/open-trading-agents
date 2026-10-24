@@ -7,6 +7,7 @@ from textual.widgets import Static
 
 from open_trading_agents import cli
 from open_trading_agents.analysis.models import AgentEvent, HarnessConfig
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.analysis.workflow import RunResult
 from open_trading_agents.config import HarnessSettings, Settings
 from open_trading_agents.ui import app as tui
@@ -56,14 +57,94 @@ async def test_shared_harness_defaults_are_shown_once_without_inventing_model_id
         assert "\n" not in details
 
 
-def test_cli_forwards_final_working_and_decision_settings_to_the_tui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Display the actual per-run tier choices rather than the shared configuration they override."""
+@pytest.mark.parametrize("size", [(170, 43), (80, 24)])
+async def test_individual_profiles_follow_visible_agent_without_expanding_the_header(size: tuple[int, int]) -> None:
+    """Show the selected role's effective settings across panes and stages.
+
+    Args:
+        size: Wide or compact terminal dimensions.
+    """
+    profiles = {
+        role.name: HarnessConfig(kind="pi", provider="local", model=f"{key}-model", effort="low",
+                                 command=("private-command",), environment={"TOKEN": "private-environment-value"})
+        for key, role in ROLES.items()
+    }
+    profiles["News Analyst"] = HarnessConfig(kind="claude", model="news-model", effort="high", extra_args=("private-argument",))
+    profiles["Bear Researcher"] = HarnessConfig(kind="codex", model="bear-model", effort="high")
+    app = TradingApp(ticker="NVDA", selected_analysts=("market", "news"), agent_configs=profiles)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        config = app.query_one("#model-config", Static)
+
+        def assert_header(expected: str) -> None:
+            """Check visible identity and keep all panes and controls inside the terminal.
+
+            Args:
+                expected: Exact public configuration of the currently inspected role.
+            """
+            assert str(config.render()) == expected
+            assert config.display and config.region.height <= 2
+            assert config.region.bottom <= app.query_one("#stage-tabs").region.y
+            assert app.query_one("#shortcuts", Static).region.bottom <= size[1]
+            assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0
+
+        assert_header("Market Analyst · pi · local · market-model · low")
+        tooltip = str(config.tooltip)
+        for name, profile in profiles.items():
+            assert name in tooltip and profile.model in tooltip
+        for value in ("private-command", "private-environment-value", "private-argument"):
+            assert value not in tooltip
+
+        await pilot.press("right")
+        assert_header("News Analyst · claude · Harness default · news-model · high")
+        await pilot.press("f")
+        assert app.fullscreen
+        assert_header("News Analyst · claude · Harness default · news-model · high")
+        await pilot.press("f", "tab")
+        assert_header("Bull Researcher · pi · local · bull-model · low")
+
+        await app.receive(AgentEvent("turn_start", "Bear Researcher", "research", data={"round": 1, "turn": 2, "total_rounds": 1}))
+        app.flush_events()
+        await pilot.pause()
+        assert_header("Bear Researcher · codex · Harness default · bear-model · high")
+        await pilot.press("left", "left", "f")
+        assert app._debate_fullscreen["research"] is app.prompt_views["research"]["Bull Researcher"]
+        assert_header("Bull Researcher · pi · local · bull-model · low")
+        await pilot.press("f", "right", "right")
+        assert_header("Bear Researcher · codex · Harness default · bear-model · high")
+
+        for name, key in (("Research Manager", "research_manager"), ("Trader", "trader"), ("Aggressive Analyst", "aggressive")):
+            await pilot.press("tab")
+            assert_header(f"{name} · pi · local · {key}-model · low")
+        await app.receive(AgentEvent("turn_start", "Conservative Analyst", "risk", data={"round": 1, "turn": 2, "total_rounds": 1}))
+        app.flush_events()
+        await pilot.pause()
+        assert_header("Conservative Analyst · pi · local · conservative-model · low")
+        for _ in range(2):
+            await pilot.press("tab")
+            assert_header("Portfolio Manager · pi · local · portfolio_manager-model · low")
+
+
+@pytest.mark.parametrize("individual", [False, True])
+def test_cli_forwards_final_working_and_decision_settings_to_the_tui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, individual: bool,
+) -> None:
+    """Forward effective group or role settings so the header describes the configured run.
+
+    Args:
+        tmp_path: Isolated run output location.
+        monkeypatch: Scoped terminal and UI replacements.
+        individual: Whether one role uses its own harness selection.
+    """
     settings = Settings(
         harness=HarnessSettings(kind="pi", model="unused-shared-model"),
         quick=HarnessSettings(kind="pi", provider="local", model="selected-worker", effort="low"),
         deep=HarnessSettings(kind="claude", model="selected-manager", effort="high"),
         output_language="Korean",
     )
+    if individual:
+        settings.agents["bull"] = HarnessSettings(kind="codex", model="selected-bull", effort="medium")
     result = RunResult("fixture", tmp_path, "Hold", {})
     report_dir = tmp_path / "reports"
     report_dir.mkdir()
@@ -85,3 +166,12 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(tmp_path: P
     assert received["working_config"] == settings.model_settings().runtime()
     assert received["decision_config"] == settings.model_settings(True).runtime()
     assert received["output_language"] == settings.output_language
+    if individual:
+        profiles = received["agent_configs"]
+        assert isinstance(profiles, dict)
+        assert set(profiles) == {role.name for role in ROLES.values()}
+        assert profiles["Bull Researcher"] == HarnessConfig(kind="codex", model="selected-bull", effort="medium")
+        assert profiles["Market Analyst"] == settings.model_settings().runtime()
+        assert profiles["Research Manager"] == settings.model_settings(True).runtime()
+    else:
+        assert received["agent_configs"] is None

@@ -69,6 +69,19 @@ def duration(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{second:02}" if hours else f"{minutes:02}:{second:02}"
 
 
+def _model_selection(config: HarnessConfig) -> str:
+    """Describe public model selectors without commands or environment values.
+
+    Args:
+        config: Selected harness and optional provider, model, and effort.
+
+    Returns:
+        One sanitized line of model settings.
+    """
+    values = (config.kind, config.provider or "Harness default", config.model or "Harness default", config.effort or "Harness default")
+    return " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
+
+
 def model_configuration(working: HarnessConfig | None, decision: HarnessConfig | None) -> str:
     """Describe the selected native runtimes without displaying commands or environment values.
 
@@ -83,8 +96,7 @@ def model_configuration(working: HarnessConfig | None, decision: HarnessConfig |
     for label, config in (("Working", working), ("Manager", decision)):
         if config is None:
             continue
-        values = (config.kind, config.provider or "Harness default", config.model or "Harness default", config.effort or "Harness default")
-        choices[label] = " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
+        choices[label] = _model_selection(config)
     if len(choices) == 2 and choices["Working"] == choices["Manager"]:
         return f"Agents · {choices['Working']}"
     return "\n".join(f"{label} · {value}" for label, value in choices.items())
@@ -158,6 +170,7 @@ class TradingApp(App[None]):
         run_dir: Path | None = None,
         working_config: HarnessConfig | None = None,
         decision_config: HarnessConfig | None = None,
+        agent_configs: dict[str, HarnessConfig] | None = None,
         output_language: str = "English",
     ) -> None:
         """Create stage views without starting native model work.
@@ -169,11 +182,14 @@ class TradingApp(App[None]):
             run_dir: Saved run location used to load the completed report.
             working_config: Selected working-agent harness, provider, model, and effort.
             decision_config: Selected decision-manager harness, provider, model, and effort.
+            agent_configs: Effective per-role settings keyed by display name when individual assignments are used.
             output_language: Run language used to build the initial debate system prompts.
         """
         super().__init__()
         self.run_callback, self.selected_analysts, self.ticker, self.run_dir = run, selected_analysts, ticker, run_dir
         self._model_config_text = model_configuration(working_config, decision_config)
+        self._agent_config_text = {name: _model_selection(config) for name, config in (agent_configs or {}).items()}
+        self._displayed_model_config_text = ""
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -230,8 +246,11 @@ class TradingApp(App[None]):
             Tabs, analyst panes, chronological chats, and counters.
         """
         yield Static(id="run-status", markup=False)
-        configuration = Static(self._model_config_text, id="model-config", classes="" if self._model_config_text else "hidden", markup=False)
-        configuration.tooltip = Content(self._model_config_text)
+        self._displayed_model_config_text = self._current_model_configuration()
+        configuration = Static(self._displayed_model_config_text, id="model-config",
+                               classes="" if self._displayed_model_config_text else "hidden", markup=False)
+        assignments = "\n".join(f"{name} · {value}" for name, value in self._agent_config_text.items())
+        configuration.tooltip = Content(assignments or self._model_config_text)
         yield configuration
         yield Static(id="run-error", classes="hidden", markup=False)
         yield Tabs(*(Tab(label, id=f"tab-{stage}") for stage, label in STAGES), id="stage-tabs")
@@ -511,6 +530,52 @@ class TradingApp(App[None]):
             self._driver.write(str(Control.title("")) + "\x1b[23;0t")
             self._driver.flush()
 
+    def _current_model_configuration(self) -> str:
+        """Describe the selected role while retaining grouped settings for ordinary runs.
+
+        Returns:
+            The current role's configuration, or the shared working/manager description.
+        """
+        if not self._agent_config_text:
+            return self._model_config_text
+
+        name: str | None = None
+        if self.memory_view.has_focus and self.memory_view.is_on_screen and self._memory_agents:
+            latest = self._memory_agents[-1]
+            name = next((ROLES[key].name for key in ("reflection", "screening")
+                         if latest == ROLES[key].name or latest.startswith(ROLES[key].name + " ")), None)
+        if name is None and self.active_stage == "analysis" and self.selected_analysts:
+            key = self.selected_analysts[self.selected_agent]
+            name = ANALYSTS.get(key, key)
+        elif name is None and self.active_stage == "reports":
+            name = ROLES["portfolio_manager"].name
+        elif name is None:
+            view = self._active_view()
+            if view in self._prompt_targets:
+                name = self._prompt_targets[view][1]
+            else:
+                participants = self._stage_agents[self.active_stage]
+                name = self.current_speakers.get(self.active_stage) or (participants[-1] if participants else None)
+                if name is None:
+                    name = next((role.name for role in ROLES.values() if role.stage == self.active_stage), None)
+
+        description = self._agent_config_text.get(name) if name is not None else None
+        return f"{name} · {description}" if description is not None else self._model_config_text
+
+    def _refresh_model_configuration(self) -> None:
+        """Update the role header only when selection or active speaker changes."""
+        if not self._agent_config_text or "model-config" not in self._status_widgets:
+            return
+
+        text = self._current_model_configuration()
+        if text == self._displayed_model_config_text:
+            return
+
+        self._displayed_model_config_text = text
+        widget = self._status_widgets["model-config"]
+        widget.set_class(not text, "hidden")
+        widget.update(text)
+
     def refresh_clocks(self) -> None:
         """Refresh clocks and counters without re-rendering historical chat content."""
         if not self.is_running or not self._status_widgets or not self._status_widgets["run-status"].is_attached:
@@ -519,6 +584,7 @@ class TradingApp(App[None]):
         self._refresh_tabs(now)
         frame = self._running_spinner.render(now).plain
         self._refresh_terminal_title(frame)
+        self._refresh_model_configuration()
         status_suffixes = {"running": f" {frame}", "complete": "", "using tool": f" {frame} tool"}
         for view in self._render_views:
             if isinstance(view, ChatView) and view.is_on_screen:
@@ -761,6 +827,7 @@ class TradingApp(App[None]):
         self.query_one("#stage-analysis", Grid).set_class(self.fullscreen, "full-grid")
         if self.selected_analysts:
             self._active_view().focus()
+        self._refresh_model_configuration()
         self.call_after_refresh(self._refresh_shortcuts)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
@@ -780,6 +847,7 @@ class TradingApp(App[None]):
             if event.widget in views:
                 self._debate_focus[stage] = views.index(event.widget)
                 break
+        self.call_after_refresh(self._refresh_model_configuration)
         self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:

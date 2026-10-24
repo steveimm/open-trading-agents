@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.analysis.workflow import RunResult, Workflow
 from open_trading_agents.config import (
     HarnessSettings,
@@ -69,7 +70,7 @@ def runtime_overrides(
     provider: str | None,
     effort: str | None = None,
 ) -> Settings:
-    """Apply explicit runtime flags to every agent tier after interactive selection.
+    """Apply explicit runtime flags to group defaults and individual role selections.
 
     Args:
         settings: Loaded settings or choices returned by the run wizard.
@@ -84,14 +85,30 @@ def runtime_overrides(
     overrides = {key: value for key, value in {"kind": harness, "model": model, "provider": provider, "effort": effort}.items()
                  if value is not None}
     if overrides:
+        def apply(selection: HarnessSettings, inherited: HarnessSettings | None = None) -> HarnessSettings:
+            """Override one profile while clearing incompatible harness-specific settings.
+
+            Args:
+                selection: Existing group or role profile.
+                inherited: Group defaults for a partial role profile, or None for a group.
+
+            Returns:
+                Validated profile with explicit command-line choices applied.
+            """
+            updated = selection.model_dump(exclude_unset=inherited is not None)
+            kind = updated.get("kind", inherited.kind if inherited is not None else selection.kind)
+            if harness is not None and kind != harness:
+                resets = {"model": None, "provider": None, "effort": None, "command": (), "extra_args": ()}
+                updated.update({key: value for key, value in resets.items() if key in updated})
+            updated.update(overrides)
+            return HarnessSettings.model_validate(updated)
+
+        agents = {role: apply(selection, settings.model_settings(ROLES[role].deep)) for role, selection in settings.agents.items()}
         for tier in ("harness", "quick", "deep"):
             configured_tier = getattr(settings, tier)
             if configured_tier:
-                updated = configured_tier.model_dump()
-                if harness is not None and configured_tier.kind != harness:
-                    updated.update(model=None, provider=None, effort=None, command=(), extra_args=())
-                updated.update(overrides)
-                setattr(settings, tier, HarnessSettings.model_validate(updated))
+                setattr(settings, tier, apply(configured_tier))
+        settings.agents = agents
     return settings
 
 
@@ -123,10 +140,20 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         from open_trading_agents.ui.app import TradingApp
 
         selected = tuple(key for key in workflow.settings.analysts if not (workflow.asset_type == "crypto" and key == "fundamentals"))
-        ui = TradingApp(workflow.run, selected_analysts=selected, ticker=workflow.ticker, run_dir=workflow.directory,
-                        working_config=workflow.settings.model_settings().runtime(),
-                        decision_config=workflow.settings.model_settings(deep=True).runtime(),
-                        output_language=workflow.settings.output_language)
+        agent_configs = None
+        if workflow.settings.agents:
+            agent_configs = {role.name: workflow.settings.model_settings(role=key).runtime() for key, role in ROLES.items()}
+
+        ui = TradingApp(
+            workflow.run,
+            selected_analysts=selected,
+            ticker=workflow.ticker,
+            run_dir=workflow.directory,
+            working_config=workflow.settings.model_settings().runtime(),
+            decision_config=workflow.settings.model_settings(deep=True).runtime(),
+            agent_configs=agent_configs,
+            output_language=workflow.settings.output_language,
+        )
         ui.run()
         if ui.error:
             raise RuntimeError(str(ui.error)) from ui.error

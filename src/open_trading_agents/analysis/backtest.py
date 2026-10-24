@@ -161,6 +161,9 @@ def _manifest(tickers: list[str], dates: list[str], settings: Settings, portfoli
         A versioned grid and exact configuration fingerprint.
     """
     inputs = {"settings": settings.model_dump(mode="json"), "portfolio": portfolio.model_dump(mode="json") if portfolio else None}
+    if not settings.agents:
+        inputs["settings"].pop("agents")
+
     digest = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {"schema_version": 1, "tickers": tickers, "dates": dates, "configuration_fingerprint": digest}
 

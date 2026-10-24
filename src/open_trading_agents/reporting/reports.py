@@ -119,14 +119,26 @@ def report_details(settings: dict[str, Any], generated: str) -> list[tuple[str, 
 
     if not runtimes or any(not identity[2] for identity in runtimes):
         configured: dict[tuple[Any, Any, Any], list[str]] = {}
-        for tier in ("quick", "deep"):
-            identity = (settings.get(f"{tier}_harness") or settings.get("harness"),
-                        settings.get(f"{tier}_provider"), settings.get(f"{tier}_model"))
-            if not runtimes or identity[2]:
-                configured.setdefault(identity, []).append(tier)
-        for identity, tiers in configured.items():
-            label = "Configured runtime" if len(tiers) == 2 else f"Configured {tiers[0]} runtime"
-            details.append((label, _runtime_description(*identity)))
+        if selections := settings.get("configured_agents"):
+            unknown = {runtime.get("agent") for runtime in settings.get("runtime_agents", []) if not runtime.get("model")}
+            for selection in selections:
+                name = selection["agent"]
+                names = [name] if not runtimes else [agent for agent in unknown if agent == name or (
+                    selection.get("role") in {"reflection", "screening"} and agent and agent.startswith(f"{name} "))]
+                if names:
+                    identity = (selection.get("harness"), selection.get("provider"), selection.get("model"))
+                    configured.setdefault(identity, []).extend(sorted(names))
+            for identity, agents in configured.items():
+                details.append(("Configured runtime", f"{_runtime_description(*identity)} ({', '.join(agents)})"))
+        else:
+            for tier in ("quick", "deep"):
+                identity = (settings.get(f"{tier}_harness") or settings.get("harness"),
+                            settings.get(f"{tier}_provider"), settings.get(f"{tier}_model"))
+                if not runtimes or identity[2]:
+                    configured.setdefault(identity, []).append(tier)
+            for identity, tiers in configured.items():
+                label = "Configured runtime" if len(tiers) == 2 else f"Configured {tiers[0]} runtime"
+                details.append((label, _runtime_description(*identity)))
     if analysts := settings.get("analysts"):
         details.append(("Analysts", ", ".join("sentiment" if name == "social" else name for name in analysts)))
     rounds = [f"{name}: {settings[f'{name}_rounds']}" for name in ("research", "risk") if f"{name}_rounds" in settings]

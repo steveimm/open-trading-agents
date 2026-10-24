@@ -6,6 +6,7 @@ from pathlib import Path
 import questionary
 import typer
 
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.config import (
     HarnessSettings,
     Settings,
@@ -263,18 +264,20 @@ def _agent_profile(
     default_preset: str | None,
     catalogs: dict[str, ModelCatalog],
     same_as: HarnessSettings | None = None,
-    inherit_working: bool = False,
+    inherit_default: bool = False,
+    same_as_label: str = "Same as working agents",
 ) -> HarnessSettings:
-    """Select a saved profile or configure a runtime for one role group.
+    """Select a saved profile or configure a runtime for a group or individual role.
 
     Args:
-        label: Working-agent or decision-manager menu title.
-        current: Existing runtime selection for this role group.
+        label: Group or individual role shown as the menu title.
+        current: Existing runtime selection for this group or role.
         profiles: Saved named single-agent profiles.
         default_preset: Name to highlight when it matches the current selection.
         catalogs: Shared native discovery results for custom selections.
-        same_as: Working-agent runtime offered to decision managers.
-        inherit_working: Whether decision managers initially follow the working agents.
+        same_as: Runtime offered as an explicit inheritance choice.
+        inherit_default: Whether inheritance is initially selected.
+        same_as_label: Name of the group whose runtime can be inherited.
 
     Returns:
         The selected runtime without persisting the run's role assignments.
@@ -282,7 +285,7 @@ def _agent_profile(
     labels: list[str] = []
     selections: list[HarnessSettings] = []
     if same_as is not None:
-        labels.append(f"Same as working agents · {_describe(same_as)}")
+        labels.append(f"{same_as_label} · {_describe(same_as)}")
         selections.append(same_as)
     if current not in profiles.values() and current not in selections:
         labels.append(f"Current settings · {_describe(current)}")
@@ -300,27 +303,55 @@ def _agent_profile(
     default = selections.index(current) if current in selections else 0
     if preferred is not None:
         default = preferred
-    if inherit_working and same_as is not None:
+    if inherit_default and same_as is not None:
         default = 0
     choice = _choose(label, [*labels, "Configure for this run"], default)
     return _runtime(current, catalogs) if choice == len(selections) else selections[choice]
 
 
 def select_agent_settings(settings: Settings) -> Settings:
-    """Select working and decision runtimes independently for a new analysis.
+    """Select group runtimes and optional per-role overrides for a new analysis.
 
     Args:
         settings: Current application settings and optional default profile.
 
     Returns:
-        New settings with complete working-agent and decision-manager selections.
+        New settings with working-agent, decision-manager, and individual role selections.
     """
     profiles = {name: load_preset(name) for name in list_presets()}
     catalogs: dict[str, ModelCatalog] = {}
     working = _agent_profile("Working agents", settings.model_settings(), profiles, settings.default_preset, catalogs)
     decision = _agent_profile("Decision manager", settings.model_settings(True), profiles, settings.default_preset, catalogs,
-                              same_as=working, inherit_working=settings.deep is None)
-    return settings.model_copy(update={"quick": working.model_copy(deep=True), "deep": decision.model_copy(deep=True)})
+                              same_as=working, inherit_default=settings.deep is None)
+    selected = settings.model_copy(deep=True, update={"quick": working.model_copy(deep=True), "deep": decision.model_copy(deep=True)})
+    if _choose("Agent configuration", ["Continue", "Advanced"]) == 0:
+        return selected
+
+    roles = list(ROLES)
+    while True:
+        labels = [f"{ROLES[key].name} · {_describe(selected.model_settings(role=key))}" for key in roles]
+        choice = _choose("Advanced agent configuration", ["Continue", *labels])
+        if choice == 0:
+            return selected
+
+        key = roles[choice - 1]
+        role = ROLES[key]
+        inherited = selected.model_settings(deep=role.deep)
+        current = selected.model_settings(role=key)
+        profile = _agent_profile(
+            role.name,
+            current,
+            profiles,
+            selected.default_preset,
+            catalogs,
+            same_as=inherited,
+            inherit_default=current == inherited,
+            same_as_label="Same as decision manager" if role.deep else "Same as working agents",
+        )
+        if profile == inherited:
+            selected.agents.pop(key, None)
+        else:
+            selected.agents[key] = HarnessSettings.model_validate(profile.model_dump())
 
 
 def _preset() -> tuple[str, bool] | None:

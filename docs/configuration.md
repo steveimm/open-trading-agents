@@ -40,7 +40,7 @@ model = "my-model"
 effort = "high"
 ```
 
-Profiles are selected independently for the working agents and decision managers. Run-specific choices apply only to that run. A named default profile supplies the initial selection for both groups and supersedes the main config's harness/tier settings. Explicit CLI harness, provider, model, effort, and round options take precedence over the wizard's choices.
+Profiles are selected independently for the working agents and decision managers. Run-specific choices apply only to that run. A named default profile supplies the initial selection for both groups and supersedes the main config's harness/tier settings. Individual agent assignments override their group selection. Explicit CLI harness, provider, model, effort, and round options take precedence over the wizard's choices, including individual assignments.
 
 `--config PATH` selects another application configuration file. Profiles, shared cache, and feedback memory remain under `~/.open-trading-agents/`. The run wizard's output-directory choice or `--output-dir PATH` changes where that run's folder is created. Without an override, runs are saved under `~/.open-trading-agents/runs/`. Resume uses the choices saved with that run.
 
@@ -51,6 +51,30 @@ uv run open-trading-agents configure --harness pi --provider local --model my-mo
 ```
 
 These flags do not create a named preset. Use the interactive wizard to save one before the first analysis. Empty `--model ""`, `--provider ""`, or `--effort ""` values reset the corresponding selector to its harness default.
+
+## Individual agent profiles
+
+After choosing the working-agent and decision-manager profiles, **Continue** keeps those group selections. Choose **Advanced** to edit individual analysts, the bull and bear researchers, the trader, the risk participants, either manager, or the supporting reflection and screening agents.
+
+Select a role, then choose a saved profile or **Configure for this run**. Repeat for any other roles, then select **Continue**. **Same as working agents** or **Same as decision manager** restores that role's group default. Unassigned roles inherit their group profile. These choices are saved with the run for resume and do not modify your presets or configuration file.
+
+To retain individual assignments across runs, including unattended runs, add role sections to `config.toml`:
+
+```toml
+[agents.bull]
+kind = "claude"
+model = "sonnet"
+effort = "high"
+
+[agents.bear]
+kind = "codex"
+model = "my-model"
+
+[agents.portfolio_manager]
+model = "my-manager-model"
+```
+
+Omitted fields inherit from the role's group profile when using the same harness. Role keys are `market`, `social`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `trader`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`, `reflection`, and `screening`. Configuring an analyst or supporting role does not enable it if it is disabled elsewhere.
 
 ## Application preferences
 

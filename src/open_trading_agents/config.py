@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import tomlkit
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializationInfo, field_serializer, field_validator, model_validator
 from tomlkit.toml_document import TOMLDocument
 
 from open_trading_agents.analysis.models import HarnessConfig
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.dataflows.symbols import normalize_symbol
 
 _PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -154,6 +155,7 @@ class Settings(BaseModel):
     harness: HarnessSettings = Field(default_factory=HarnessSettings)
     quick: HarnessSettings | None = None
     deep: HarnessSettings | None = None
+    agents: dict[str, HarnessSettings] = Field(default_factory=dict)
     analysts: tuple[Literal["market", "social", "news", "fundamentals"], ...] = ("market", "social", "news", "fundamentals")
     research_rounds: int = Field(default=1, ge=1, le=20)
     risk_rounds: int = Field(default=1, ge=1, le=20)
@@ -187,20 +189,51 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def resolve_model_tiers(self) -> Settings:
-        """Resolve partial tier selections against the shared harness configuration.
+        """Resolve group selections while retaining sparse role overrides.
 
         Returns:
-            Settings with stable, fully resolved tiers for persistence and resume.
+            Settings with stable group defaults and explicit role fields preserved.
         """
         for name in ("quick", "deep"):
             tier = getattr(self, name)
             if tier is None:
                 continue
-            selected = tier.model_dump(exclude_unset=True)
-            kind = selected.get("kind", self.harness.kind)
-            base = self.harness if kind == self.harness.kind else HarnessSettings(kind=kind)
-            setattr(self, name, HarnessSettings.model_validate({**base.model_dump(), **selected}))
+            setattr(self, name, _resolve_harness(tier, self.harness))
+
         return self
+
+    @field_validator("agents")
+    @classmethod
+    def validate_agent_roles(cls, value: dict[str, HarnessSettings]) -> dict[str, HarnessSettings]:
+        """Reject role names that the workflow cannot dispatch.
+
+        Args:
+            value: Independent role selections keyed by canonical role name.
+
+        Returns:
+            Validated role selections.
+
+        Raises:
+            ValueError: A supplied role is not part of the workflow.
+        """
+        unknown = value.keys() - ROLES.keys()
+        if unknown:
+            raise ValueError(f"Unknown agent roles: {', '.join(sorted(unknown))}. Valid roles: {', '.join(ROLES)}.")
+
+        return value
+
+    @field_serializer("agents")
+    def serialize_agent_overrides(self, value: dict[str, HarnessSettings], info: SerializationInfo) -> dict[str, dict[str, Any]]:
+        """Keep inherited role fields absent when settings are copied or persisted.
+
+        Args:
+            value: Explicit role selections.
+            info: Requested Python or JSON serialization mode.
+
+        Returns:
+            Role selections containing only explicitly supplied fields.
+        """
+        return {role: selection.model_dump(mode=info.mode, exclude_unset=True) for role, selection in value.items()}
 
     @field_validator("analysts")
     @classmethod
@@ -217,16 +250,43 @@ class Settings(BaseModel):
             raise ValueError("select at least one analyst")
         return tuple(dict.fromkeys(value))
 
-    def model_settings(self, deep: bool = False) -> HarnessSettings:
-        """Choose the manager or working-agent harness settings.
+    def model_settings(self, deep: bool = False, *, role: str | None = None) -> HarnessSettings:
+        """Choose a role override or its manager/working-agent defaults.
 
         Args:
-            deep: Whether this is a decision manager.
+            deep: Whether to use manager defaults when no role is supplied.
+            role: Canonical role whose override and group determine the selection.
 
         Returns:
-            The configured tier, falling back to the shared harness.
+            The effective role or group selection, falling back to the shared harness.
+
+        Raises:
+            ValueError: The supplied role does not exist.
         """
-        return (self.deep if deep else self.quick) or self.harness
+        if role is not None:
+            if role not in ROLES:
+                raise ValueError(f"Unknown agent role: {role}.")
+            deep = ROLES[role].deep
+
+        baseline = (self.deep if deep else self.quick) or self.harness
+        return _resolve_harness(self.agents[role], baseline) if role in self.agents else baseline
+
+
+def _resolve_harness(selection: HarnessSettings, baseline: HarnessSettings) -> HarnessSettings:
+    """Merge explicit selectors, resetting incompatible fields on a harness change.
+
+    Args:
+        selection: Partial group or role overrides.
+        baseline: Inherited settings for the role or group.
+
+    Returns:
+        Fully resolved independent harness settings.
+    """
+    selected = selection.model_dump(exclude_unset=True)
+    kind = selected.get("kind", baseline.kind)
+    base = baseline if kind == baseline.kind else HarnessSettings(kind=kind)
+
+    return HarnessSettings.model_validate({**base.model_dump(), **selected})
 
 
 def load_preset(name: str) -> HarnessSettings:

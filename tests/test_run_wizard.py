@@ -176,6 +176,10 @@ def test_supplied_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
         return settings.model_copy(update={
             "quick": HarnessSettings(kind="claude", model="picked-worker", effort="high", command=("custom-claude",)),
             "deep": HarnessSettings(kind="codex", model="picked-manager", effort="high", extra_args=("--profile", "old")),
+            "agents": {
+                "bear": HarnessSettings(kind="claude", model="picked-bear", effort="high", command=("custom-claude",)),
+                "research_manager": HarnessSettings(kind="codex", model="picked-research", extra_args=("--profile", "old")),
+            },
         })
 
     monkeypatch.setattr(cli.typer, "prompt", prompt)
@@ -193,6 +197,8 @@ def test_supplied_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
     assert (settings.research_rounds, settings.risk_rounds) == expected
     for deep in (False, True):
         assert settings.model_settings(deep) == HarnessSettings(kind="pi", provider="local", model="flag-model", effort="medium")
+    for role in ("bear", "research_manager"):
+        assert settings.model_settings(role=role) == HarnessSettings(kind="pi", provider="local", model="flag-model", effort="medium")
 
 
 def test_cancelling_run_selection_creates_no_run_or_settings_changes(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:

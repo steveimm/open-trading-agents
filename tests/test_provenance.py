@@ -60,6 +60,7 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
         harness=HarnessSettings(kind="claude"),
         quick=HarnessSettings(kind="pi", model="quick-selector", provider="quick-provider"),
         deep=HarnessSettings(kind="codex", model="deep-selector", provider="deep-provider"),
+        agents={"trader": HarnessSettings(kind="claude", model="trader-selector", command=("private-command",))},
         data={"tool_vendors": {"get_news": "alpha_vantage"}},
     )
     workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
@@ -72,7 +73,13 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
     assert calls["Market Analyst"] == 1
     assert identities.count({"agent": "Market Analyst", "harness": "pi", "provider": "native-provider", "model": "native-pi"}) == 1
     assert {"agent": "Research Manager", "harness": "codex", "provider": "native-provider", "model": "native-codex"} in identities
-    assert {"agent": "Trader", "harness": "pi", "provider": None, "model": None} in identities
+    assert {"agent": "Trader", "harness": "claude", "provider": None, "model": None} in identities
+    configured = {row["role"]: row for row in report_settings["configured_agents"]}
+    assert configured["trader"]["harness"] == "claude" and configured["trader"]["model"] == "trader-selector"
+    assert configured["bull"]["model"] == "quick-selector"
+    assert configured["research_manager"]["model"] == "deep-selector"
+    assert "private-command" not in json.dumps(report_settings)
+    assert "trader-selector (Trader)" in (result.directory / "reports" / "complete_report.md").read_text()
     assert [row["model"] for row in identities if row["agent"] == "Neutral Analyst"] == ["native-pi", "native-replacement"]
     assert report_settings["quick_harness"] == "pi" and report_settings["deep_harness"] == "codex"
     assert report_settings["quick_provider"] == "quick-provider" and report_settings["deep_provider"] == "deep-provider"

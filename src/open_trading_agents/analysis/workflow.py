@@ -64,6 +64,9 @@ class Workflow:
         self.ticker = safe_ticker_component(normalize_symbol(ticker))
         self.trade_date = validate_date(trade_date)
         settings = settings.model_copy(update={"state_dir": settings.state_dir.expanduser().resolve()})
+        for role in settings.agents:
+            settings.model_settings(role=role)
+
         self.settings, self.portfolio = settings, portfolio
         self.asset_type = "crypto" if crypto_base(self.ticker) else "stock"
         self.run_id = run_id or f"{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
@@ -87,6 +90,8 @@ class Workflow:
         identity = {"ticker": self.ticker, "trade_date": self.trade_date, "settings": settings.model_dump(mode="json"),
                     "portfolio": portfolio.model_dump() if portfolio is not None else None}
         previous = self.store.metadata("input")
+        if previous and "agents" not in previous["settings"]:
+            previous["settings"]["agents"] = {}
         if previous and previous != identity:
             self.store.close()
             raise ValueError("run inputs differ from the saved run; resume its original configuration or start a new run")
@@ -200,7 +205,7 @@ class Workflow:
 
         role = ROLES[role_key]
         name = session_name or role.name
-        harness = self.settings.model_settings(role.deep)
+        harness = self.settings.model_settings(role=role_key)
         prior_session = self.store.session(name)
         await self._event("agent_start", role.stage, name)
 
@@ -604,6 +609,14 @@ class Workflow:
                 "data_vendors": self.data_config["data_vendors"],
                 "tool_vendors": self.data_config["tool_vendors"],
             }
+            if self.settings.agents:
+                report_settings["configured_agents"] = [
+                    {"role": key, "agent": role.name, "harness": configured.kind, "provider": configured.provider,
+                     "model": configured.model, "effort": configured.effort}
+                    for key, role in ROLES.items()
+                    for configured in (self.settings.model_settings(role=key),)
+                ]
+
             try:
                 await asyncio.to_thread(self.recorder.close)
                 self.store.set_metadata("report_settings", report_settings)

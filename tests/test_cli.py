@@ -140,14 +140,29 @@ def test_unknown_harness_is_rejected_by_cli() -> None:
 
 
 def test_explicit_model_selection_overrides_configured_tiers(tmp_path: Path) -> None:
-    """An explicit CLI backend choice applies to manager and working-agent tiers."""
+    """Explicit CLI choices apply to group defaults and individual agent profiles."""
     config = tmp_path / "settings.toml"
-    config.write_text('[quick]\nkind="pi"\nmodel="old-quick"\nprovider="old-provider"\n[deep]\nkind="pi"\nmodel="old-deep"\n')
+    config.write_text('''[quick]
+kind = "pi"
+model = "old-quick"
+provider = "old-provider"
+[deep]
+kind = "pi"
+model = "old-deep"
+[agents.bull]
+kind = "claude"
+model = "old-bull"
+command = ["custom-claude"]
+[agents.portfolio_manager]
+model = "old-manager"
+''')
     settings = configured(config, HarnessName.codex, "new-model", None)
     for deep in (False, True):
         assert settings.model_settings(deep).kind == "codex"
         assert settings.model_settings(deep).model == "new-model"
         assert settings.model_settings(deep).provider is None
+    for role in ("bull", "portfolio_manager"):
+        assert settings.model_settings(role=role) == HarnessSettings(kind="codex", model="new-model")
 
 
 def test_portfolio_alias_is_not_mistaken_for_an_absent_position() -> None:
@@ -156,6 +171,28 @@ def test_portfolio_alias_is_not_mistaken_for_an_absent_position() -> None:
     rendered = portfolio.render("BTC-USD")
     assert "No current position" not in rendered
     assert "BTC-USD: 2 units" in rendered
+
+
+@pytest.mark.parametrize("harness,effort", [(None, "medium"), (HarnessName.pi, None)])
+def test_flags_preserve_role_inheritance_after_group_selection(harness: HarnessName | None, effort: str | None) -> None:
+    """Apply flags before and after the wizard without fixing inherited fields to the old group.
+
+    Args:
+        harness: Optional CLI harness change that must preserve omitted role fields.
+        effort: Optional CLI effort override applied to every role.
+    """
+    settings = Settings(
+        harness=HarnessSettings(kind="claude", model="old-worker"),
+        agents={"bull": HarnessSettings(effort="high")},
+    )
+    initial = cli.runtime_overrides(settings, harness, None, None, effort)
+    selected = initial.model_copy(update={"quick": HarnessSettings(kind="pi", provider="local", model="new-worker")})
+    final = cli.runtime_overrides(selected, harness, None, None, effort)
+
+    expected = HarnessSettings(kind="pi", provider="local", model="new-worker", effort=effort)
+    assert final.model_settings(role="bull") == expected
+    restored = Settings.model_validate_json(final.model_dump_json())
+    assert restored.model_settings(role="bull") == expected
 
 
 def test_switching_harness_discards_old_backend_specific_configuration(tmp_path: Path) -> None:
