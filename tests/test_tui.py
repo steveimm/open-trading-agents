@@ -86,14 +86,14 @@ async def test_stage_tabs_distinguish_running_complete_and_failed(monkeypatch: p
         monkeypatch.setattr(running_tab, "post_message", record_message)
         app._refresh_tabs(start + 0.15)
         assert str(running_tab.render()) != first_frame
-        assert str(running_tab.render()).startswith("Research debate ")
+        assert str(running_tab.render()).startswith("Research Debate ")
         assert "[run]" not in str(running_tab.render())
         assert not relabelled
         assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
         assert app.query_one("#tab-analysis", Tab).has_class("complete")
         assert app.query_one("#tab-research", Tab).has_class("running")
         app.refresh_clocks()
-        assert "Running: Research debate" in str(app.query_one("#run-status", Static).render())
+        assert "Running: Research Debate" in str(app.query_one("#run-status", Static).render())
         await app.receive(AgentEvent("error", "Workflow", "reports", "Provider failed"))
         app.flush_events()
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
@@ -111,7 +111,7 @@ async def test_tabs_fullscreen_scroll_anchor_and_bottom_follow() -> None:
         app.flush_events()
         await pilot.pause()
         pane = app.query_one("#pane-1", Vertical)
-        await pilot.press("right", "enter")
+        await pilot.press("right", "f")
         view = app.agent_views["Sentiment Analyst"]
         assert app.fullscreen and view.size.width > 130 and view.size.height > 20
         await pilot.press("home", "pagedown")
@@ -131,7 +131,7 @@ async def test_tabs_fullscreen_scroll_anchor_and_bottom_follow() -> None:
         app.flush_events()
         await pilot.pause()
         assert view.scroll_y == view.max_scroll_y
-        await pilot.press("escape", "tab")
+        await pilot.press("f", "tab")
         assert app.active_stage == "research"
         assert app.query_one("#stages", ContentSwitcher).current == "stage-research"
         await pilot.press("shift+tab")
@@ -174,8 +174,9 @@ async def test_debate_chat_has_shared_input_once_and_completed_role_bubbles() ->
         assert not app.query("#current-research, .debate-speaker")
         await pilot.press("s")
         assert "Instructions for Bull Researcher" not in view.visible_plain()
-        await pilot.press("home", "]", "space")
-        assert "Instructions for Bull Researcher" in view.visible_plain()
+        assert app.prompt_views["research"]["Bull Researcher"].document.plain() == "Instructions for Bull Researcher"
+        assert app.prompt_views["research"]["Bear Researcher"].document.plain() == "Instructions for Bear Researcher"
+        assert not view.show_systems
 
 
 async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections() -> None:
@@ -197,10 +198,11 @@ async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections()
         assert app.active_stage == "research"
         assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
         assert not app.check_action("fullscreen", ())
-        assert not app.check_action("restore", ())
         await pilot.press("f", "escape")
         assert app.fullscreen
         await pilot.press("shift+tab", "escape")
+        assert app.fullscreen
+        await pilot.press("f")
         assert not app.fullscreen
         for event in (
             AgentEvent("agent_start", "Reflection 1", "analysis"),
@@ -243,12 +245,13 @@ async def test_following_survives_contextual_control_height_changes() -> None:
         await app.receive(AgentEvent("reasoning", "Market Analyst", "analysis", "Check data.", {"message_id": "y"}))
         app.flush_events()
         await pilot.pause()
-        view = app.agent_views["Market Analyst"]
-        height = view.size.height
+        heights = {view: view.size.height for view in app.agent_views.values()}
         await app.receive(AgentEvent("prompt", "Reflection 1", "analysis", "Review prior outcome."))
         app.flush_events()
         await pilot.pause()
-        assert view.size.height < height
+        resized = [view for view, height in heights.items() if view.size.height < height]
+        assert resized
+        view = app.agent_views["Market Analyst"]
         assert view.following and view.scroll_y == view.max_scroll_y
         view.navigate("home")
         await pilot.resize_terminal(100, 35)
@@ -273,10 +276,104 @@ async def test_reasoning_and_tools_can_be_revealed_from_keyboard() -> None:
         view = app.agent_views["Market Analyst"]
         assert "Check units." not in view.visible_plain()
         assert "python check.py" not in view.visible_plain()
-        await pilot.press("]", "space")
+        await pilot.press("]", "]", "space")
         assert "Check units." in view.visible_plain()
         await pilot.press("]", "space")
         assert "python check.py" in view.visible_plain() and "Result\n25" in view.visible_plain()
+
+
+@pytest.mark.parametrize("stage", ["research", "risk"])
+async def test_debate_prompt_panes_keep_independent_scroll_and_toggle_fullscreen(stage: str) -> None:
+    """Read each participant's actual system prompt beside the shared chat using keyboard or mouse focus."""
+    app = TradingApp()
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range([key for key, _ in STAGES].index(stage)):
+            await pilot.press("tab")
+        await pilot.pause()
+        assert app.active_stage == stage
+        for agent in app.prompt_views[stage]:
+            await app.receive(AgentEvent("system", agent, stage, f"{agent} instructions\n" + "Verify cited evidence.\n" * 80))
+        await app.receive(AgentEvent("text", next(iter(app.prompt_views[stage])), stage, "Public debate output.\n" * 80))
+        app.flush_events()
+        await pilot.pause()
+        chat = app.stage_views[stage]
+        panes = list(app.prompt_views[stage].values())
+        assert chat.size.width > panes[0].size.width * 2.5
+        assert panes[0].region.x < chat.region.x
+        assert panes[0].region.y == chat.region.y
+        assert panes[-1].region.bottom == chat.region.bottom
+        assert all("instructions" in pane.document.plain() for pane in panes)
+        assert "instructions" not in chat.visible_plain()
+        await pilot.press("left")
+        selected = panes[-1]
+        assert app._active_view() is selected and selected.has_focus
+        assert "f toggle fullscreen" in str(app.query_one("#shortcuts", Static).render())
+        await pilot.press("home", "down")
+        position = selected.scroll_y
+        assert position > 0
+        name = app._prompt_targets[selected][1]
+        await app.receive(AgentEvent("system", name, stage, selected.document.plain()))
+        app.flush_events()
+        await pilot.pause()
+        assert selected.scroll_y == position
+        await pilot.press("f")
+        assert app._prompt_fullscreen[stage] is selected
+        assert selected.size.width > 150 and not chat.display
+        assert all(not pane.display for pane in panes if pane is not selected)
+        await pilot.press("enter", "escape")
+        assert app._prompt_fullscreen[stage] is selected
+        await pilot.press("f")
+        assert app._prompt_fullscreen[stage] is None and chat.display
+        await pilot.click(f"#{panes[0].id}", offset=(3, 2))
+        assert app._active_view() is panes[0] and panes[0].has_focus
+        await pilot.press("left")
+        assert app._active_view() is chat and chat.has_focus
+
+
+@pytest.mark.parametrize("size", [(190, 43), (100, 32), (80, 24)])
+async def test_debate_geometry_fills_available_area_without_outer_scrollbars(size: tuple[int, int]) -> None:
+    """Reserve scrolling inside panes while keeping stage borders and footer within the terminal."""
+    app = TradingApp()
+    async with app.run_test(size=size) as pilot:
+        for _ in range(4):
+            await pilot.press("tab")
+        for agent in app.prompt_views["risk"]:
+            await app.receive(AgentEvent("system", agent, "risk", "System instructions\n" * 150))
+        await app.receive(AgentEvent("text", "Aggressive Analyst", "risk", "Evidence and calculations\n" * 300))
+        app.flush_events()
+        await pilot.pause()
+        chat = app.stage_views["risk"]
+        stage = app.query_one("#stage-risk")
+        footer = app.query_one("#shortcuts", Static)
+        assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0
+        assert not app.screen.show_horizontal_scrollbar and not app.screen.show_vertical_scrollbar
+        assert stage.region.right == size[0] and chat.region.right == stage.region.right
+        assert chat.region.bottom == stage.region.bottom
+        assert footer.region.bottom <= size[1]
+        assert chat.max_scroll_x == 0 and chat.max_scroll_y > 0
+        assert all(pane.size.height >= 2 for pane in app.prompt_views["risk"].values())
+
+
+async def test_analyst_completion_and_fullscreen_use_requested_controls() -> None:
+    """Mark finished analysts with a check and keep fullscreen on f alone."""
+    app = TradingApp()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.receive(AgentEvent("agent_start", "Market Analyst", "analysis"))
+        await app.receive(AgentEvent("agent_end", "Market Analyst", "analysis", data={"output": "Verified report"}))
+        app.flush_events()
+        app.refresh_clocks()
+        status = str(app.query_one("#agent-status-0", Static).render())
+        assert "✓" in status and "complete" not in status
+        await pilot.press("enter", "escape")
+        assert not app.fullscreen
+        await pilot.press("f")
+        assert app.fullscreen
+        footer = str(app.query_one("#shortcuts", Static).render())
+        assert "f toggle fullscreen" in footer and "Esc" not in footer and "Enter" not in footer
+        await pilot.press("enter", "escape")
+        assert app.fullscreen
+        await pilot.press("f")
+        assert not app.fullscreen
 
 
 async def test_clocks_tick_without_reindexing_chats(monkeypatch: pytest.MonkeyPatch) -> None:

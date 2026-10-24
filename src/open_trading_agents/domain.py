@@ -89,11 +89,11 @@ class HarnessSession(Protocol):
 
 STAGES = (
     ("analysis", "Analysis"),
-    ("research", "Research debate"),
-    ("research_decision", "Research decision"),
+    ("research", "Research Debate"),
+    ("research_decision", "Research Decision"),
     ("trader", "Trader"),
-    ("risk", "Risk debate"),
-    ("portfolio", "Portfolio decision"),
+    ("risk", "Risk Debate"),
+    ("portfolio", "Portfolio Decision"),
     ("reports", "Reports"),
 )
 

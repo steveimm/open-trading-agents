@@ -11,18 +11,23 @@ from rich.spinner import Spinner
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Grid, Vertical
+from textual.containers import Grid, Horizontal, Vertical
 from textual.content import Content
 from textual.geometry import Size
 from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
 from open_trading_agents.chat import ChatView
 from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
+from open_trading_agents.prompts import ROLES
 from open_trading_agents.transcript import Transcript, TranscriptView, literal_text
 from open_trading_agents.usage import format_usage as usage_label
 from open_trading_agents.usage import request_usage
 
-DEBATE_STAGES = {"research", "risk"}
+DEBATE_ROLES = {
+    "research": ("bull", "bear"),
+    "risk": ("aggressive", "conservative", "neutral"),
+}
+DEBATE_STAGES = set(DEBATE_ROLES)
 
 
 @dataclass
@@ -66,7 +71,7 @@ def duration(seconds: float) -> str:
 class TradingApp(App[None]):
     TITLE = "Open Trading Agents"
     CSS = """
-    Screen { background: #0d131c; color: #d9e2ef; }
+    Screen { background: #0d131c; color: #d9e2ef; overflow: hidden hidden; }
     #run-status { height: 2; padding: 0 1; background: #1a2635; }
     #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
     #stage-tabs { height: 3; }
@@ -74,7 +79,7 @@ class TradingApp(App[None]):
     #stage-tabs Tab.complete { color: #91d5ac; }
     #stage-tabs Tab.failed { color: #f2858a; }
     #stage-status { height: 2; padding: 0 1; color: #a9bcd3; }
-    #stages, .stage { height: 1fr; }
+    #stages, .stage { height: 1fr; min-height: 0; }
     #stage-analysis { grid-size: 2 2; grid-gutter: 1; padding: 0 1; }
     #stage-analysis.one-agent { grid-size: 1 1; }
     #stage-analysis.two-agents { grid-size: 2 1; }
@@ -83,6 +88,11 @@ class TradingApp(App[None]):
     .agent-pane.selected { border: round #bd9bfa; }
     .agent-status { height: 3; padding: 0 1; color: #9fb2ca; }
     .single-stage { border: round #34475e; margin: 0 1; }
+    .prompt-column { width: 1fr; min-width: 18; height: 1fr; }
+    .prompt-pane { border: round #34475e; padding: 0 1; height: 1fr; min-height: 3; }
+    .prompt-pane:focus { border: round #bd9bfa; }
+    .debate-transcript { width: 3fr; height: 1fr; border: round #34475e; }
+    .debate-stage.prompt-fullscreen .prompt-column { width: 1fr; }
     .hidden { display: none; }
     #memory-details { height: auto; max-height: 14; padding: 0; border: none; }
     #memory-transcript { height: 9; }
@@ -105,8 +115,7 @@ class TradingApp(App[None]):
         Binding("pagedown", "navigate('pagedown')", show=False, priority=True),
         Binding("home", "navigate('home')", show=False, priority=True),
         Binding("end", "navigate('end')", "Follow stream", priority=True),
-        Binding("enter,f", "fullscreen", "Expand", priority=True),
-        Binding("escape", "restore", "Restore", priority=True),
+        Binding("f", "fullscreen", "Toggle fullscreen", priority=True),
         Binding("left_square_bracket", "detail(-1)", "Prev", show=False, priority=True),
         Binding("right_square_bracket", "detail(1)", "Next", show=False, priority=True),
         Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
@@ -134,12 +143,26 @@ class TradingApp(App[None]):
         self.usage: dict[tuple[str, str], Usage] = {}
         self.current_speakers: dict[str, str] = {}
         self.agent_views = {ANALYSTS.get(key, key): ChatView(id=f"analyst-{index}") for index, key in enumerate(selected_analysts)}
-        self.stage_views = {stage: ChatView(debate=stage in DEBATE_STAGES, id=f"transcript-{stage}")
+        self.stage_views = {stage: ChatView(debate=stage in DEBATE_STAGES, show_systems=stage not in DEBATE_STAGES, id=f"transcript-{stage}")
                             for stage, _ in STAGES[1:] if stage != "reports"}
+        self.prompt_views: dict[str, dict[str, TranscriptView]] = {}
+        for stage, roles in DEBATE_ROLES.items():
+            self.prompt_views[stage] = {}
+            for key in roles:
+                name = ROLES[key].name
+                view = TranscriptView(Transcript(), id=f"system-{stage}-{key}")
+                view.add_class("prompt-pane")
+                view.border_title = name
+                view.following = False
+                self.prompt_views[stage][name] = view
+            self.stage_views[stage].add_class("debate-transcript")
+        self._prompt_targets = {view: (stage, name) for stage, views in self.prompt_views.items() for name, view in views.items()}
+        self._debate_focus = {stage: len(views) for stage, views in self.prompt_views.items()}
+        self._prompt_fullscreen: dict[str, TranscriptView | None] = {stage: None for stage in DEBATE_STAGES}
         self.memory_view = ChatView(id="memory-transcript")
         self.report_document = Transcript()
         self.report_view = TranscriptView(self.report_document, id="transcript-reports")
-        self._render_views = [*self.agent_views.values(), *self.stage_views.values(), self.memory_view, self.report_view]
+        self._render_views = [*self.agent_views.values(), *self.stage_views.values(), *self._prompt_targets, self.memory_view, self.report_view]
         self._pending: deque[AgentEvent] = deque()
         self._event_ids: set[str] = set()
         self._started = time.monotonic()
@@ -175,8 +198,14 @@ class TradingApp(App[None]):
                         yield Static(name, id=f"agent-status-{index}", classes="agent-status", markup=False)
                         yield self.agent_views[name]
             for stage, _ in STAGES[1:]:
-                with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
-                    yield self.report_view if stage == "reports" else self.stage_views[stage]
+                if stage in DEBATE_STAGES:
+                    with Horizontal(id=f"stage-{stage}", classes="stage debate-stage"):
+                        with Vertical(id=f"prompts-{stage}", classes="prompt-column"):
+                            yield from self.prompt_views[stage].values()
+                        yield self.stage_views[stage]
+                else:
+                    with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
+                        yield self.report_view if stage == "reports" else self.stage_views[stage]
         with Collapsible(title="Supporting analysis", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status", markup=False)
             yield self.memory_view
@@ -244,13 +273,20 @@ class TradingApp(App[None]):
         Args:
             event: A deduplicated event with immutable source content.
         """
-        if event.kind == "system" and event.data.get("source") == "native_request":
+        if event.kind in {"system", "system_prompt"} and event.data.get("source") == "native_request":
             return
         now = min(time.monotonic(), event.timestamp + self._wall_offset)
         self._started = min(self._started, now)
         kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(event.kind, event.kind)
         stage = event.stage if event.stage in self.stages else self.active_stage
         agent = event.agent or "Workflow"
+        if kind == "system" and agent in self.prompt_views.get(stage, {}):
+            view = self.prompt_views[stage][agent]
+            if view.document.plain() != event.text:
+                document = Transcript()
+                document.append(event.text, "#a9bcd3")
+                view.set_document(document)
+                view.navigate("home")
         activity = self.agents.setdefault(agent, Activity())
         supporting = agent == "Memory" or agent.startswith(("Reflection ", "Sentiment Screening "))
         if agent != "Workflow" and not supporting and agent not in self._stage_agents[stage]:
@@ -378,6 +414,11 @@ class TradingApp(App[None]):
             return
         now = time.monotonic()
         self._refresh_tabs(now)
+        frame = self._running_spinner.render(now).plain
+        statuses = {"running": frame, "complete": "✓", "using tool": f"{frame} tool"}
+        for view in self._render_views:
+            if isinstance(view, ChatView) and view.is_on_screen:
+                view.refresh_activity(now)
         elapsed = duration((self._finished if self._finished is not None else now) - self._started)
         status = "Failed" if self._failure else "Complete" if self._finished is not None else "Running"
         running = [label for key, label in STAGES if self.stages[key].status == "running"]
@@ -387,7 +428,7 @@ class TradingApp(App[None]):
         separator = " · " if compact else "\n"
         self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}{separator}{status} · Total {elapsed}")
         stage = self.stages[self.active_stage]
-        stage_text = f"{STAGES[self.stage_index][1]} · {stage.status} · {duration(stage.elapsed(now))}"
+        stage_text = f"{STAGES[self.stage_index][1]} · {statuses.get(stage.status, stage.status)} · {duration(stage.elapsed(now))}"
         participants = self._stage_agents[self.active_stage]
         if self.active_stage not in {"analysis", "reports"} and participants:
             name = self.current_speakers.get(self.active_stage, participants[-1])
@@ -405,13 +446,13 @@ class TradingApp(App[None]):
             values = [value for (agent, _), value in self.usage.items() if agent == name]
             label = name.removesuffix(" Analyst") if compact else name
             self._status_widgets[f"agent-status-{index}"].update(
-                f"{label} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
+                f"{label} · {statuses.get(activity.status, activity.status)} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
         if self._memory_agents:
             name = self._memory_agents[-1]
             activity = self.agents[name]
             values = [value for (agent, _), value in self.usage.items() if agent in self._memory_agents]
             self._status_widgets["memory-status"].update(
-                f"{name} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
+                f"{name} · {statuses.get(activity.status, activity.status)} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
         self._status_widgets["usage"].update(usage_label(list(self.usage.values()), compact=compact))
         self._refresh_shortcuts()
 
@@ -456,17 +497,16 @@ class TradingApp(App[None]):
         view = self._active_view()
         analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
         if action == "fullscreen":
-            return analyst
-        if action == "restore":
-            return analyst and self.fullscreen
+            return analyst or view in self._prompt_targets
         if action in {"detail", "toggle_detail"}:
-            return isinstance(view, ChatView) and (bool(view.systems) or any(
-                section.collapsible for bubble in view.bubbles for section in bubble.sections))
+            return isinstance(view, ChatView) and view.has_details
         if action == "memory":
             return self.active_stage == "analysis" and bool(self._memory_agents)
         if action == "navigate":
             direction = parameters[0] if parameters else ""
-            return self._grid_navigation() if direction in {"left", "right"} else view.is_on_screen
+            if direction in {"left", "right"}:
+                return self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._prompt_fullscreen[self.active_stage] is None)
+            return view.is_on_screen
         return True
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -479,7 +519,7 @@ class TradingApp(App[None]):
         Returns:
             The current availability, or the framework's behavior for other actions.
         """
-        if action in {"fullscreen", "restore", "detail", "toggle_detail", "memory", "navigate"}:
+        if action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
             return self._action_available(action, parameters)
         return super().check_action(action, parameters)
 
@@ -492,15 +532,17 @@ class TradingApp(App[None]):
         parts = ["Tab stages" if compact else "Tab/Shift+Tab stages"]
         if self._grid_navigation():
             parts.append("Arrows pane" if compact else "Arrows select pane")
-        elif view.max_scroll_y > 0:
-            parts.append("Up/Down scroll")
+        else:
+            if self._action_available("navigate", ("left",)):
+                parts.append("Left/Right pane")
+            if view.max_scroll_y > 0:
+                parts.append("Up/Down scroll")
         if self._action_available("fullscreen"):
-            parts.append(("f/Esc grid" if compact else "f/Esc restore grid") if self.fullscreen
-                         else ("f full" if compact else "Enter/f fullscreen"))
+            parts.append("f toggle fullscreen")
         if self._action_available("detail"):
             parts.extend(["[ prev · ] next",
                           "Space toggle" if compact else "Space expand/collapse"])
-        if not view.following:
+        if not view.following and view not in self._prompt_targets:
             parts.append("End follow")
         if self._action_available("memory"):
             parts.append("m support")
@@ -539,7 +581,20 @@ class TradingApp(App[None]):
             return self.agent_views[ANALYSTS.get(self.selected_analysts[self.selected_agent], self.selected_analysts[self.selected_agent])]
         if self.active_stage == "analysis":
             return self.report_view
+        if self.active_stage in DEBATE_STAGES:
+            return self._prompt_fullscreen[self.active_stage] or self._debate_views(self.active_stage)[self._debate_focus[self.active_stage]]
         return self.report_view if self.active_stage == "reports" else self.stage_views[self.active_stage]
+
+    def _debate_views(self, stage: str) -> tuple[ChatView | TranscriptView, ...]:
+        """List prompt panes followed by the shared conversation for keyboard focus.
+
+        Args:
+            stage: Research or risk debate stage.
+
+        Returns:
+            Stable panes in left-to-right focus order.
+        """
+        return (*self.prompt_views[stage].values(), self.stage_views[stage])
 
     def action_next_stage(self) -> None:
         """Select the next stage."""
@@ -577,6 +632,13 @@ class TradingApp(App[None]):
                 self.selected_agent = (self.selected_agent + step) % len(self.selected_analysts)
                 self._update_selection()
             return
+        if self.active_stage in DEBATE_STAGES and direction in {"left", "right"}:
+            views = self._debate_views(self.active_stage)
+            offset = -1 if direction == "left" else 1
+            self._debate_focus[self.active_stage] = (self._debate_focus[self.active_stage] + offset) % len(views)
+            self._active_view().focus()
+            self._refresh_shortcuts()
+            return
         if direction not in {"left", "right"}:
             self._active_view().navigate(direction)
         self._refresh_shortcuts()
@@ -604,19 +666,31 @@ class TradingApp(App[None]):
             if index != self.selected_agent:
                 self.selected_agent = index
                 self._update_selection()
+        for stage in DEBATE_STAGES:
+            views = self._debate_views(stage)
+            if event.widget in views:
+                self._debate_focus[stage] = views.index(event.widget)
+                break
         self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:
-        """Expand or restore the selected analyst pane."""
-        if self._action_available("fullscreen"):
-            self.fullscreen = not self.fullscreen
-            self._update_selection()
-
-    def action_restore(self) -> None:
-        """Restore the analyst grid."""
-        if self._action_available("restore"):
-            self.fullscreen = False
-            self._update_selection()
+        """Toggle fullscreen for the selected analyst or debate system prompt."""
+        if not self._action_available("fullscreen"):
+            return
+        view = self._active_view()
+        if view in self._prompt_targets:
+            stage, _ = self._prompt_targets[view]
+            selected = None if self._prompt_fullscreen[stage] is view else view
+            self._prompt_fullscreen[stage] = selected
+            self.query_one(f"#stage-{stage}", Horizontal).set_class(selected is not None, "prompt-fullscreen")
+            for prompt in self.prompt_views[stage].values():
+                prompt.set_class(selected is not None and prompt is not selected, "hidden")
+            self.stage_views[stage].set_class(selected is not None, "hidden")
+            view.focus()
+            self.call_after_refresh(self.flush_events)
+            return
+        self.fullscreen = not self.fullscreen
+        self._update_selection()
 
     def action_detail(self, offset: int) -> None:
         """Select a collapsible section without changing stages.
