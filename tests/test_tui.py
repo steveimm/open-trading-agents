@@ -50,7 +50,7 @@ async def test_parallel_streams_keep_complete_source_and_usage_without_raw_panel
             assert "Research using supplied tools." not in chat.visible_plain()
         assert not app.query("#details, #raw-events, #transcript-hint, #payload-hint")
         assert "write" not in str(app.query_one("#usage", Static).render())
-        assert all(binding.key != "d" for binding in app.BINDINGS)
+        assert all(binding.key not in {"d", "s"} for binding in app.BINDINGS)
         await pilot.press("d")
         assert app.active_stage == "analysis"
 
@@ -68,7 +68,7 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         app.flush_events()
         await pilot.pause()
         assert app.active_stage == "analysis"
-        assert "[done]" in str(app.query_one("#tab-analysis", Tab).label)
+        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
         assert "[run]" in str(app.query_one("#tab-research", Tab).label)
         assert app.query_one("#tab-analysis", Tab).has_class("complete")
         assert app.query_one("#tab-research", Tab).has_class("running")
@@ -77,7 +77,7 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         await app.receive(AgentEvent("error", "Workflow", "reports", "Provider failed"))
         app.flush_events()
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
-        assert "[done]" in str(app.query_one("#tab-analysis", Tab).label)
+        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
         assert "Provider failed" in str(app.query_one("#run-error", Static).render())
 
 
@@ -145,12 +145,93 @@ async def test_debate_chat_has_shared_input_once_and_completed_role_bubbles() ->
         assert visible.count("Bull case") == visible.count("Bear response") == 1
         assert visible.index("Bull case") < visible.index("Bear response")
         assert "Exact native turn input" not in visible and "Weighing evidence." not in visible
-        assert "Exact native turn input" in view.plain()
+        assert "Exact native turn input" not in view.plain()
+        assert not any(section.kind == "prompt" for bubble in view.bubbles if bubble.kind == "agent" for section in bubble.sections)
         assert [bubble.agent for bubble in view.bubbles] == ["Input", "Bull Researcher", "Bear Researcher"]
         assert all(b.status == "complete" for b in view.bubbles)
         assert not app.query("#current-research, .debate-speaker")
         await pilot.press("s")
+        assert "Instructions for Bull Researcher" not in view.visible_plain()
+        await pilot.press("home", "]", "space")
         assert "Instructions for Bull Researcher" in view.visible_plain()
+
+
+async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections() -> None:
+    """Do not advertise or execute controls belonging to another stage or background pane."""
+    app = TradingApp()
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        footer = app.query_one("#shortcuts", Static)
+        assert "fullscreen" in str(footer.render())
+        assert "Space" not in str(footer.render())
+        assert not app.check_action("detail", (1,))
+        await app.receive(AgentEvent("reasoning", "Market Analyst", "analysis", "Check evidence.", {"message_id": "r"}))
+        app.flush_events()
+        assert "previous section" in str(footer.render()) and "next section" in str(footer.render())
+        assert "Space expand/collapse" in str(footer.render())
+        await pilot.press("f")
+        assert app.fullscreen
+        await pilot.press("tab")
+        assert app.active_stage == "research"
+        assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
+        assert not app.check_action("fullscreen", ())
+        assert not app.check_action("restore", ())
+        await pilot.press("f", "escape")
+        assert app.fullscreen
+        await pilot.press("shift+tab", "escape")
+        assert not app.fullscreen
+        for event in (
+            AgentEvent("agent_start", "Reflection 1", "analysis"),
+            AgentEvent("reasoning", "Reflection 1", "analysis", "Supporting work.", {"message_id": "m"}),
+        ):
+            await app.receive(event)
+        app.flush_events()
+        await pilot.press("f", "m")
+        await pilot.pause()
+        assert app.memory_view.has_focus and app.fullscreen
+        assert not app.check_action("fullscreen", ())
+        assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
+        await pilot.press("f", "escape")
+        assert app.fullscreen
+        await pilot.press("m", "shift+tab")
+        assert app.active_stage == "reports"
+        assert not app.check_action("detail", (1,)) and not app.check_action("toggle_detail", ())
+        assert "Space" not in str(footer.render()) and "section" not in str(footer.render())
+
+
+async def test_single_analyst_arrows_scroll_without_a_redundant_fullscreen_mode() -> None:
+    """A single pane already fills its stage and should use arrows for scrolling."""
+    app = TradingApp(selected_analysts=("market",))
+    async with app.run_test(size=(100, 35)) as pilot:
+        await app.receive(AgentEvent("text", "Market Analyst", "analysis", "Line\n" * 100))
+        app.flush_events()
+        await pilot.pause()
+        assert not app.check_action("fullscreen", ())
+        await pilot.press("home", "down")
+        assert app.agent_views["Market Analyst"].scroll_y > 0
+        await pilot.press("f")
+        assert not app.fullscreen
+
+
+async def test_following_survives_contextual_control_height_changes() -> None:
+    """Keep the latest line visible when new supporting controls reduce viewport height."""
+    app = TradingApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.receive(AgentEvent("text", "Market Analyst", "analysis", "line\n" * 100, {"message_id": "x"}))
+        await app.receive(AgentEvent("reasoning", "Market Analyst", "analysis", "Check data.", {"message_id": "y"}))
+        app.flush_events()
+        await pilot.pause()
+        view = app.agent_views["Market Analyst"]
+        height = view.size.height
+        await app.receive(AgentEvent("prompt", "Reflection 1", "analysis", "Review prior outcome."))
+        app.flush_events()
+        await pilot.pause()
+        assert view.size.height < height
+        assert view.following and view.scroll_y == view.max_scroll_y
+        view.navigate("home")
+        await pilot.resize_terminal(100, 35)
+        await pilot.pause()
+        assert not view.following and view.scroll_y == 0
 
 
 async def test_reasoning_and_tools_can_be_revealed_from_keyboard() -> None:

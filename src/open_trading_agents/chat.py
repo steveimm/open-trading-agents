@@ -560,6 +560,7 @@ class ChatView(FollowScrollView):
             event: Textual resize event.
         """
         self.sync()
+        self.call_after_refresh(self._follow_after_resize)
 
     def plain(self) -> str:
         """Return all retained input, output and detail text for verification.

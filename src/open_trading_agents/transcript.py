@@ -339,6 +339,11 @@ class FollowScrollView(ScrollView):
         """
         return self.scroll_target_y >= self.max_scroll_y - 0.5
 
+    def _follow_after_resize(self) -> None:
+        """Keep following at the newest row after surrounding controls change height."""
+        if self.following and self.is_on_screen:
+            self.scroll_end(animate=False, immediate=True)
+
     def navigate(self, direction: str) -> None:
         """Scroll manually and resume following when downward navigation reaches the end.
 
@@ -479,5 +484,6 @@ class TranscriptView(FollowScrollView):
             event: Textual resize event.
         """
         self.sync()
+        self.call_after_refresh(self._follow_after_resize)
 
 

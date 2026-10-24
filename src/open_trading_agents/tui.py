@@ -87,7 +87,7 @@ class TradingApp(App[None]):
     #memory-transcript { height: 9; }
     #memory-status { height: 2; }
     #usage { height: 1; padding: 0 1; background: #1a2635; }
-    #shortcuts { height: 1; padding: 0 1; color: #8799af; }
+    #shortcuts { height: auto; max-height: 2; padding: 0 1; color: #8799af; }
     Screen.compact #run-status, Screen.compact #stage-status { height: 1; }
     Screen.compact #stage-tabs { height: 2; }
     Screen.compact .agent-status { height: 2; }
@@ -106,10 +106,9 @@ class TradingApp(App[None]):
         Binding("end", "navigate('end')", "Follow stream", priority=True),
         Binding("enter,f", "fullscreen", "Expand", priority=True),
         Binding("escape", "restore", "Restore", priority=True),
-        Binding("left_square_bracket", "detail(-1)", "Previous detail", show=False, priority=True),
-        Binding("right_square_bracket", "detail(1)", "Next detail", show=False, priority=True),
-        Binding("space", "toggle_detail", "Toggle detail", priority=True),
-        Binding("s", "system", "Instructions", priority=True),
+        Binding("left_square_bracket", "detail(-1)", "Previous section", show=False, priority=True),
+        Binding("right_square_bracket", "detail(1)", "Next section", show=False, priority=True),
+        Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
         Binding("m", "memory", "Supporting analysis", show=False, priority=True),
         Binding("ctrl+c,q", "stop", "Quit", priority=True),
     ]
@@ -153,6 +152,7 @@ class TradingApp(App[None]):
         self._reports: dict[str, str] = {}
         self._tab_statuses: dict[str, str] = {}
         self._status_widgets: dict[str, Static] = {}
+        self._shortcuts_text = ""
 
     def compose(self) -> ComposeResult:
         """Create stable viewports so updates do not rebuild the stage layout.
@@ -232,6 +232,7 @@ class TradingApp(App[None]):
         for view in self._render_views:
             if view.is_on_screen:
                 view.sync()
+        self._refresh_shortcuts()
 
     def _apply(self, event: AgentEvent) -> None:
         """Update lifecycle counters and route content to its chronological chat.
@@ -344,7 +345,7 @@ class TradingApp(App[None]):
         """Change stage indicators only when lifecycle status changes."""
         if not self.is_mounted:
             return
-        suffixes = {"running": " [run]", "complete": " [done]", "failed": " [failed]"}
+        suffixes = {"running": " [run]", "complete": " ✓", "failed": " [failed]"}
         for stage, label in STAGES:
             status = self.stages[stage].status
             if self._tab_statuses.get(stage) == status:
@@ -395,6 +396,7 @@ class TradingApp(App[None]):
             self._status_widgets["memory-status"].update(
                 f"{name} · {activity.status} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
         self._status_widgets["usage"].update(usage_label(list(self.usage.values()), compact=compact))
+        self._refresh_shortcuts()
 
     def on_resize(self, event: events.Resize) -> None:
         """Adapt status density to the terminal dimensions.
@@ -413,12 +415,82 @@ class TradingApp(App[None]):
         size = size or self.size
         compact = size.height < 32 or size.width < 110
         self.screen.set_class(compact, "compact")
-        if "shortcuts" in self._status_widgets:
-            text = "Tab stage · f expand · [ ] details · Space toggle · s instructions · q quit"
-            if not compact:
-                text = "Tab/Shift+Tab stage · Arrows select/scroll · f expand · [ ] details · Space toggle · s instructions · End follow · q quit"
-            self._status_widgets["shortcuts"].update(text)
         self.refresh_clocks()
+
+    def _grid_navigation(self) -> bool:
+        """Return whether arrow keys select between analyst panes."""
+        return (self.active_stage == "analysis" and len(self.selected_analysts) > 1 and not self.fullscreen
+                and self._active_view() is not self.memory_view)
+
+    def _action_available(self, action: str, parameters: tuple[object, ...] = ()) -> bool:
+        """Apply the same context rules to key handling and visible shortcut hints.
+
+        Args:
+            action: Application action name.
+            parameters: Optional action arguments.
+
+        Returns:
+            Whether the action applies to the current stage and focused content.
+        """
+        if not self.is_mounted:
+            return False
+        view = self._active_view()
+        analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
+        if action == "fullscreen":
+            return analyst
+        if action == "restore":
+            return analyst and self.fullscreen
+        if action in {"detail", "toggle_detail"}:
+            return isinstance(view, ChatView) and (bool(view.systems) or any(
+                section.collapsible for bubble in view.bubbles for section in bubble.sections))
+        if action == "memory":
+            return self.active_stage == "analysis" and bool(self._memory_agents)
+        if action == "navigate":
+            direction = parameters[0] if parameters else ""
+            return self._grid_navigation() if direction in {"left", "right"} else view.is_on_screen
+        return True
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Disable controls that do not apply to the selected view.
+
+        Args:
+            action: Requested action.
+            parameters: Action arguments parsed from the key binding.
+
+        Returns:
+            The current availability, or the framework's behavior for other actions.
+        """
+        if action in {"fullscreen", "restore", "detail", "toggle_detail", "memory", "navigate"}:
+            return self._action_available(action, parameters)
+        return super().check_action(action, parameters)
+
+    def _refresh_shortcuts(self) -> None:
+        """Show only useful controls, with section navigation separate from toggling."""
+        if "shortcuts" not in self._status_widgets or not self.is_mounted:
+            return
+        view = self._active_view()
+        compact = self.screen.has_class("compact")
+        parts = ["Tab stages" if compact else "Tab/Shift+Tab stages"]
+        if self._grid_navigation():
+            parts.append("Arrows pane" if compact else "Arrows select pane")
+        elif view.max_scroll_y > 0:
+            parts.append("Up/Down scroll")
+        if self._action_available("fullscreen"):
+            parts.append(("f/Esc grid" if compact else "f/Esc restore grid") if self.fullscreen
+                         else ("f full" if compact else "Enter/f fullscreen"))
+        if self._action_available("detail"):
+            parts.extend(["[ prev · ] next" if compact else "[ previous section · ] next section",
+                          "Space toggle" if compact else "Space expand/collapse"])
+        if not view.following:
+            parts.append("End follow")
+        if self._action_available("memory"):
+            parts.append("m support")
+        parts.append("q quit")
+        text = " · ".join(parts)
+        if text != self._shortcuts_text:
+            self._shortcuts_text = text
+            self._status_widgets["shortcuts"].update(text)
+            self.refresh_bindings()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Switch stages without disturbing another stage's scroll position.
@@ -473,11 +545,14 @@ class TradingApp(App[None]):
         Args:
             direction: Keyboard movement direction.
         """
+        if not self._action_available("navigate", (direction,)):
+            return
         if self.memory_view.has_focus and self.memory_view.is_on_screen:
             if direction not in {"left", "right"}:
                 self.memory_view.navigate(direction)
+            self._refresh_shortcuts()
             return
-        if self.active_stage == "analysis" and not self.fullscreen and direction in {"left", "right", "up", "down"}:
+        if self._grid_navigation() and direction in {"left", "right", "up", "down"}:
             if self.selected_analysts:
                 step = {"left": -1, "right": 1, "up": -2, "down": 2}[direction]
                 self.selected_agent = (self.selected_agent + step) % len(self.selected_analysts)
@@ -485,6 +560,7 @@ class TradingApp(App[None]):
             return
         if direction not in {"left", "right"}:
             self._active_view().navigate(direction)
+        self._refresh_shortcuts()
 
     def _update_selection(self) -> None:
         """Update analyst pane borders and fullscreen dimensions."""
@@ -495,6 +571,7 @@ class TradingApp(App[None]):
         self.query_one("#stage-analysis", Grid).set_class(self.fullscreen, "full-grid")
         if self.selected_analysts:
             self._active_view().focus()
+        self.call_after_refresh(self._refresh_shortcuts)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Select a pane when its chat receives mouse focus.
@@ -508,16 +585,17 @@ class TradingApp(App[None]):
             if index != self.selected_agent:
                 self.selected_agent = index
                 self._update_selection()
+        self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:
         """Expand or restore the selected analyst pane."""
-        if self.active_stage == "analysis":
+        if self._action_available("fullscreen"):
             self.fullscreen = not self.fullscreen
             self._update_selection()
 
     def action_restore(self) -> None:
         """Restore the analyst grid."""
-        if self.fullscreen:
+        if self._action_available("restore"):
             self.fullscreen = False
             self._update_selection()
 
@@ -528,24 +606,20 @@ class TradingApp(App[None]):
             offset: Previous or next section.
         """
         view = self._active_view()
-        if isinstance(view, ChatView):
+        if self._action_available("detail") and isinstance(view, ChatView):
             view.select_detail(offset)
+            self._refresh_shortcuts()
 
     def action_toggle_detail(self) -> None:
         """Expand or collapse the selected reasoning, tool, or input section."""
         view = self._active_view()
-        if isinstance(view, ChatView):
+        if self._action_available("toggle_detail") and isinstance(view, ChatView):
             view.toggle_selected()
-
-    def action_system(self) -> None:
-        """Toggle system instructions in the active conversation."""
-        view = self._active_view()
-        if isinstance(view, ChatView):
-            view.toggle_system()
+            self._refresh_shortcuts()
 
     def action_memory(self) -> None:
         """Show optional memory and screening conversations."""
-        if self.active_stage == "analysis" and self._memory_agents:
+        if self._action_available("memory"):
             panel = self.query_one("#memory-details", Collapsible)
             panel.collapsed = not panel.collapsed
             if not panel.collapsed:

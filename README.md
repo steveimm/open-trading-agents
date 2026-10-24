@@ -41,25 +41,26 @@ The application does not set temperature, top-p, or thinking effort. A harness m
 
 ## Interface
 
-The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Tabs mark running, completed, and failed stages. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
+The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Tabs mark running and failed stages, with a check mark for completion. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
 
-Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble. Exact turn inputs, system instructions, reasoning, and tool calls remain available in collapsible sections. This presentation does not change what is sent to the harness.
+Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble. Repeated per-agent input messages are omitted from the debate view entirely. System instructions, reasoning, and tool calls remain expandable. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
 
 | Key | Action |
 | --- | --- |
 | Tab / Shift+Tab | Next / previous stage |
-| Arrow keys | Select an analysis pane, or scroll the expanded transcript |
-| Enter / f | Expand or restore a pane |
-| Escape | Return to the stage layout |
+| Arrow keys | Select between analyst panes in grid view, otherwise scroll the active transcript |
+| Enter / f | Expand or restore an analyst pane when multiple analyst panes are present |
+| Escape | Return from an analyst fullscreen view to its grid |
 | Page Up / Page Down | Scroll a page |
 | Home / End | Beginning / jump to the latest content and follow the stream |
-| [ / ] | Select the previous / next collapsible section |
+| [ / ] | Select the previous / next collapsible section; these keys navigate, rather than expand it |
 | Space | Expand or collapse the selected section |
-| s | Show or hide system instructions |
 | m | Show supporting memory and screening work |
 | q | Exit, cancelling active work while retaining saved progress |
 
 Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Click a disclosure header or use the keyboard to expand it. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Exact native metadata remains in the saved event log rather than a separate payload pane.
+
+Shortcut hints follow the selected stage and focused pane. Fullscreen controls appear only for the analyst grid, and section controls appear only when there are expandable sections. System instructions use the same click or section-selection/Space controls as other disclosures.
 
 Scrolling upward pauses following so new output does not move what you are reading. Scrolling down to the bottom, or pressing End, resumes following automatically. End does not stop the run.
 
