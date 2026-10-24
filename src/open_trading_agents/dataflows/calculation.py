@@ -162,14 +162,14 @@ def _evaluate(node: ast.AST, variables: dict[str, Value], depth: int = 0) -> Val
 
 
 def calculate(expression: str, variables: dict[str, Any] | None = None) -> str:
-    """Compute bounded arithmetic and statistics while retaining the exact supplied inputs.
+    """Compute bounded arithmetic and statistics from the supplied tool arguments.
 
     Args:
         expression: Arithmetic with +, -, *, /, //, **, %, numeric lists, or approved functions.
         variables: Up to 64 named finite numbers or numeric lists.
 
     Returns:
-        JSON containing inputs and the computed result, or a clear calculation error.
+        JSON containing the computed result or a clear calculation error.
     """
     try:
         if not isinstance(expression, str) or not expression.strip() or len(expression) > MAX_EXPRESSION_CHARS:
@@ -189,15 +189,6 @@ def calculate(expression: str, variables: dict[str, Any] | None = None) -> str:
         if sum(1 for _ in ast.walk(tree)) > MAX_NODES:
             raise ValueError("Expression exceeds the 300-node calculation limit")
         result = _evaluate(tree, values)
-        return json.dumps(
-            {
-                "expression": expression,
-                "variables": values,
-                "result": result,
-                "numeric_note": "Uses finite real arithmetic and Python floating-point precision. Round explicitly where required.",
-            },
-            allow_nan=False,
-        )
+        return json.dumps({"result": result}, allow_nan=False)
     except (ValueError, TypeError, SyntaxError, ArithmeticError, IndexError, RecursionError) as exc:
-        shown = expression[:MAX_EXPRESSION_CHARS] if isinstance(expression, str) else ""
-        return json.dumps({"expression": shown, "error": f"CALCULATION_ERROR: {exc}"}, allow_nan=False)
+        return json.dumps({"error": f"CALCULATION_ERROR: {exc}"}, allow_nan=False)

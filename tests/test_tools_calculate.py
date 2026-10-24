@@ -29,7 +29,7 @@ def test_numeric_verification_returns_inputs_and_result(expression: str, variabl
     """Compute real finance and statistics examples instead of relying on model arithmetic."""
     result = json.loads(calculate(expression, variables))
     assert result["result"] == pytest.approx(expected)
-    assert result["expression"] == expression and result["variables"] == (variables or {})
+    assert set(result) == {"result"}
 
 
 @pytest.mark.parametrize(
