@@ -95,6 +95,16 @@ def test_failed_discovery_does_not_expose_native_diagnostics(tmp_path: Path) -> 
     assert "api-key-secret" not in result.notice
 
 
+def test_custom_cli_arguments_do_not_offer_a_different_native_profile(tmp_path: Path) -> None:
+    """Custom startup arguments require manual selection rather than another profile's catalog."""
+    script, started = tmp_path / "custom.py", tmp_path / "started"
+    script.write_text(f'from pathlib import Path\nPath({str(started)!r}).touch()\n')
+    result = catalog.discover_models(HarnessSettings(kind="codex", command=(sys.executable, str(script)), extra_args=("--profile", "work")))
+    assert not started.exists()
+    assert not result.models
+    assert result.notice and "extra CLI arguments" in result.notice
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Process group cleanup requires POSIX")
 def test_discovery_timeout_terminates_descendants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A stalled catalog wrapper cannot leave a child running after the setup prompt returns."""

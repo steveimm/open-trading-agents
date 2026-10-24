@@ -199,7 +199,7 @@ async def _discover(config: HarnessSettings) -> ModelCatalog:
         args.extend(["--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-approve", "--list-models"])
         environment["PI_OFFLINE"] = "1"
     elif config.kind == "codex":
-        args.extend(["app-server", "-c", "features.remote_models=false", "-c", "features.api_key_model_discovery=false"])
+        args.extend(["app-server", "-c", "features.api_key_model_discovery=false"])
         if config.provider:
             args.extend(["-c", f"model_provider={json.dumps(config.provider)}"])
     else:
@@ -229,6 +229,8 @@ def discover_models(config: HarnessSettings) -> ModelCatalog:
     Returns:
         Native choices, or a short notice allowing manual selection after discovery fails.
     """
+    if config.extra_args:
+        return ModelCatalog(notice="Model discovery does not apply extra CLI arguments. Keep the current selection, use native defaults, or enter a model.")
     try:
         catalog = asyncio.run(_discover(config))
     except FileNotFoundError:
@@ -239,7 +241,4 @@ def discover_models(config: HarnessSettings) -> ModelCatalog:
         return ModelCatalog(notice=f"{config.kind} could not list models. Use its native default or enter a model.")
     if not catalog.models and not catalog.notice:
         return ModelCatalog(notice=f"{config.kind} did not list models. Use its native default or enter a model.")
-    if config.extra_args:
-        notice = "Choices use native configuration. Extra CLI arguments are not applied during discovery."
-        return ModelCatalog(catalog.models, f"{catalog.notice} {notice}" if catalog.notice else notice)
     return catalog
