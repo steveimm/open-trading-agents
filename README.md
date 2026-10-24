@@ -34,7 +34,7 @@ Use `configure` to create a reusable agent profile:
 uv run open-trading-agents configure
 ```
 
-Use Up/Down to move through choices and Enter to confirm. Current settings start highlighted, and typing filters the choices. A profile contains only the harness, provider, model, and reasoning effort. Providers, models, and supported effort levels come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom model identifier when needed. With pi, choosing the native model default also uses its native provider. Ctrl+C cancels setup without saving. Setup does not send a model prompt.
+Use Up/Down to move the pointer through choices and Enter to confirm. The initial choice has a `(default)` suffix, without a background highlight. Typing filters the choices. A profile contains only the harness, provider, model, and reasoning effort. Providers, models, and supported effort levels come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom model identifier when needed. With pi, choosing the native model default also uses its native provider. Ctrl+C cancels setup without saving. Setup does not send a model prompt.
 
 Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regardless of the working directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Connection settings and authentication remain in the harness.
 
@@ -44,6 +44,8 @@ At the end, setup offers to save the profile as a named preset under `~/.open-tr
 uv run open-trading-agents
 uv run open-trading-agents --ticker NVDA
 ```
+
+To delete a saved profile, run `configure` and choose **Delete saved profile**, select its name, then confirm. Deleting a default profile clears its default selection in the active and global configuration. Other profiles and saved runs are retained.
 
 For example, a saved profile contains:
 

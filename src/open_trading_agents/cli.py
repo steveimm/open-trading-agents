@@ -256,7 +256,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
         raise typer.Exit(1) from exc
 
 
-@app.command(help="Configure one harness, provider, model, and effort profile, then optionally save it as a preset.")
+@app.command(help="Create, update, or delete saved agent profiles.")
 def configure(
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
@@ -264,7 +264,7 @@ def configure(
     provider: Annotated[str | None, typer.Option(help='Native pi or Codex provider selector. Pass "" to use native defaults.')] = None,
     effort: Annotated[str | None, typer.Option(help='Native reasoning or thinking effort. Pass "" to use native defaults.')] = None,
 ) -> None:
-    """Guide configuration of one reusable runtime profile, or apply explicit flags.
+    """Manage saved runtime profiles, or apply explicit configuration flags.
 
     Args:
         config: Destination TOML configuration file.
