@@ -10,6 +10,8 @@ financial-tool behavior in src/open_trading_agents/tools.py, and benchmark/retur
 window semantics in src/open_trading_agents/memory.py are adapted from
 TradingAgents. Financial role instructions in src/open_trading_agents/prompts.py
 and decision field behavior also derive from the reference project.
+Report grouping and HTML presentation in reporting.py and report_html.py are
+adapted from the corresponding TradingAgents report modules.
 Modifications include independent configuration, package imports,
 typing, documentation, local MCP tool exposure, and removal of graph-framework
 coupling. No upstream telemetry, update checks, or direct model clients are included.

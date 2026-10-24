@@ -559,9 +559,9 @@ class Workflow:
                 "research_rounds": self.settings.research_rounds, "risk_rounds": self.settings.risk_rounds,
                 "data_vendors": self.data_config["data_vendors"],
             }
-            self.store.set_metadata("report_settings", report_settings)
             try:
                 await asyncio.to_thread(self.recorder.close)
+                self.store.set_metadata("report_settings", report_settings)
                 await asyncio.to_thread(self._export_reports, report_settings)
                 if self.store.metadata("status") == "running":
                     completed = [AgentEvent("stage_end", "Workflow", "reports"),

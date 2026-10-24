@@ -25,7 +25,17 @@ uv run open-trading-agents analyze NVDA --harness codex --date 2026-01-02
 
 Omitting the ticker opens a short ticker/date prompt in an interactive terminal. Model and provider selectors are optional. When omitted, the harness uses its own configuration. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
 
-For application settings, copy `tradingagents.example.toml` to `tradingagents.toml`, or use `--config PATH`. The `[harness]` section sets the default. Optional `[quick]` and `[deep]` sections select different harnesses or models for working agents and decision managers. Explicit CLI harness/model/provider options override both tiers.
+Use `configure` to save the application's harness and model selections:
+
+```sh
+uv run open-trading-agents configure
+uv run open-trading-agents configure --harness pi --provider my-local-provider --model my-model
+uv run open-trading-agents configure --tier deep --harness codex --model manager-model
+```
+
+The command writes `tradingagents.toml` in the current directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Empty `--model ""` or `--provider ""` selects native defaults. This command selects an existing native provider/model; connection settings and authentication remain in the harness.
+
+You can also edit `tradingagents.example.toml` as a starting point. The `[harness]` section sets the default. Optional `[quick]` and `[deep]` sections select different harnesses or models for working agents and decision managers. Explicit CLI harness/model/provider options override both tiers.
 
 ```toml
 [harness]
@@ -82,13 +92,12 @@ Most default sources need no API key. Optional FRED and Alpha Vantage sources us
 
 ## Saved runs and unattended use
 
-The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a `reports/usage.json` summary with per-agent token/cache counts. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
+The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a separate `reports/usage.json` diagnostic file. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. They follow five team sections: analyst reports, research decision, trading plan, risk decision, and portfolio decision. Their headers identify the observed harnesses, providers, and models, with configuration fallbacks explicitly labeled when native identity is unavailable. Token statistics remain in the TUI and diagnostic usage file, not in the human reports. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
 
 ```sh
 uv run open-trading-agents analyze NVDA --headless
 uv run open-trading-agents analyze NVDA --events > run-events.jsonl
 uv run open-trading-agents resume /path/to/state/runs/RUN_ID
-uv run open-trading-agents replay /path/to/state/runs/RUN_ID
 ```
 
 Resume retains completed steps and the original inputs. An acknowledged unfinished task continues its native session. If delivery was never acknowledged, the stored task is submitted again, so that narrow crash window provides at-least-once delivery. Only one process can drive a saved run at a time.
