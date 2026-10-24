@@ -197,10 +197,10 @@ async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections()
         assert app.fullscreen
         await pilot.press("tab")
         assert app.active_stage == "research"
-        assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
-        assert not app.check_action("fullscreen", ())
+        assert "f toggle fullscreen" in str(footer.render()) and "grid" not in str(footer.render())
+        assert app.check_action("fullscreen", ())
         await pilot.press("f", "escape")
-        assert app.fullscreen
+        assert app.fullscreen and app._debate_fullscreen["research"] is app.stage_views["research"]
         await pilot.press("shift+tab", "escape")
         assert app.fullscreen
         await pilot.press("f")
@@ -318,13 +318,13 @@ async def test_debate_prompt_panes_keep_independent_scroll_and_toggle_fullscreen
         await pilot.pause()
         assert selected.scroll_y == position
         await pilot.press("f")
-        assert app._prompt_fullscreen[stage] is selected
+        assert app._debate_fullscreen[stage] is selected
         assert selected.size.width > 150 and not chat.display
         assert all(not pane.display for pane in panes if pane is not selected)
         await pilot.press("enter", "escape")
-        assert app._prompt_fullscreen[stage] is selected
+        assert app._debate_fullscreen[stage] is selected
         await pilot.press("f")
-        assert app._prompt_fullscreen[stage] is None and chat.display
+        assert app._debate_fullscreen[stage] is None and chat.display
         await pilot.click(f"#{panes[0].id}", offset=(3, 2))
         assert app._active_view() is panes[0] and panes[0].has_focus
         await pilot.press("left")
