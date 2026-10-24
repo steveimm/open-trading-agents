@@ -13,6 +13,7 @@ from open_trading_agents.config import (
     preset_path,
     save_configuration,
     save_preset,
+    set_default_preset,
 )
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models
 
@@ -219,6 +220,9 @@ def configure_interactively(path: Path) -> None:
     typer.echo("\nDecision managers (deep)")
     deep = _runtime(settings.deep, harness, catalogs)
     preset = _preset()
+    make_default = preset is not None and _confirm(
+        f"Use preset '{preset[0]}' by default?", default=settings.default_preset in (None, preset[0]),
+    )
     saved = save_configuration(path, harness, quick, deep)
     typer.echo(f"\nSaved default: {_describe(saved.harness)}")
     typer.echo(f"Saved quick: {_describe(saved.quick) if saved.quick else 'use default settings'}")
@@ -227,4 +231,10 @@ def configure_interactively(path: Path) -> None:
     if preset is not None:
         name, overwrite = preset
         target = save_preset(name, saved, overwrite=overwrite)
+        if make_default:
+            saved = set_default_preset(path, name)
+        elif saved.default_preset == name:
+            saved = set_default_preset(path, None)
         typer.echo(f"Preset: {name} ({target})")
+    if saved.default_preset:
+        typer.echo(f"Default preset: {saved.default_preset}")

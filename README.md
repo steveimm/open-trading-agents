@@ -35,14 +35,14 @@ Use Up/Down to move through choices and Enter to confirm. Current settings start
 
 Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regardless of the working directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Connection settings and authentication remain in the harness.
 
-At the end, setup offers to save the default and both tier selections as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset. Multiple presets can be kept and selected for an individual analysis or backtest:
+At the end, setup offers to save the default and both tier selections as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset, then asks whether to use the saved preset by default. That selection is stored as `default_preset` in the config. Analysis and backtest commands without `--preset` use it automatically. Multiple presets can be kept and selected for an individual analysis or backtest:
 
 ```sh
 uv run open-trading-agents analyze NVDA --preset local-research
 uv run open-trading-agents backtest NVDA --start 2026-01-05 --end 2026-01-09 --preset local-research
 ```
 
-A preset replaces all three harness selections for that invocation without rewriting the main config. Other application and data preferences still come from the main config. Explicit CLI harness/model/provider options override the preset. Resuming a run keeps the selections saved with that run.
+A preset replaces all three harness selections for that invocation without rewriting the main config. An explicit `--preset` overrides the default preset. Other application and data preferences still come from the main config. Explicit CLI harness/model/provider options override the selected preset. If no default preset is selected, runs use the main config's harness choices. Resuming a run keeps the selections saved with that run.
 
 For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model`. `--tier quick` or `--tier deep` targets one tier, and an empty `--model ""` or `--provider ""` selects native defaults. You can also use `tradingagents.example.toml` as a starting point for the global config or an explicit `--config` file. The `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides:
 
