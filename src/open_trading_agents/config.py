@@ -59,9 +59,10 @@ class HarnessSettings(BaseModel):
     command: tuple[str, ...] = ()
     model: str | None = None
     provider: str | None = None
+    effort: str | None = None
     extra_args: tuple[str, ...] = ()
 
-    @field_validator("model", "provider")
+    @field_validator("model", "provider", "effort")
     @classmethod
     def normalize_selector(cls, value: str | None) -> str | None:
         """Interpret an empty selector as the native harness default.
@@ -212,14 +213,14 @@ class Settings(BaseModel):
         return (self.deep if deep else self.quick) or self.harness
 
 
-def _preset_selections(name: str) -> dict[str, Any]:
-    """Read and validate a complete named harness selection.
+def load_preset(name: str) -> HarnessSettings:
+    """Read one reusable harness, provider, model, and effort profile.
 
     Args:
-        name: Preset selected explicitly or configured as the default.
+        name: Saved profile selected for an agent role or configured as the default.
 
     Returns:
-        All three harness tiers, including None for inherited tiers.
+        A native harness selection without application settings or CLI command overrides.
     """
     selected = preset_path(name)
     if not selected.is_file():
@@ -227,19 +228,20 @@ def _preset_selections(name: str) -> dict[str, Any]:
         raise ValueError(f"Unknown preset {name!r}. Available presets: {available}")
     with selected.open("rb") as handle:
         selections = tomllib.load(handle)
-    if "harness" not in selections or set(selections) - {"harness", "quick", "deep"}:
-        raise ValueError(f"Preset {name!r} must contain harness selections only, including [harness].")
-    Settings.model_validate(selections)
-    return {tier: selections.get(tier) for tier in ("harness", "quick", "deep")}
+    if not isinstance(selections.get("harness"), str) or set(selections) - {"harness", "provider", "model", "effort"}:
+        raise ValueError(f"Preset {name!r} must contain only harness, provider, model, and effort, with harness set to pi, codex, or claude. Recreate it with 'open-trading-agents configure'.")
+    profile = HarnessSettings.model_validate({"kind": selections["harness"], **{key: value for key, value in selections.items() if key != "harness"}})
+    if profile.kind == "claude" and profile.provider:
+        raise ValueError("Claude Code selects its provider through its native configuration.")
+    return profile
 
 
-def load_settings(path: Path | None = None, preset: str | None = None, use_default_preset: bool = False) -> Settings:
-    """Read application settings and optionally replace all harness tier selections.
+def load_settings(path: Path | None = None, use_default_preset: bool = False) -> Settings:
+    """Read application settings and optionally use the default single-agent profile.
 
     Args:
         path: An explicit configuration file, otherwise the global default file.
-        preset: Optional saved default, working-agent, and decision-manager selections.
-        use_default_preset: Apply the configured default when no explicit preset is given.
+        use_default_preset: Use the configured default profile as the initial agent selection.
 
     Returns:
         Validated settings, with relative state paths based on the config file.
@@ -250,16 +252,12 @@ def load_settings(path: Path | None = None, preset: str | None = None, use_defau
         with source.open("rb") as handle:
             values = tomllib.load(handle)
     settings = Settings.model_validate(values)
-    selected = preset
-    if selected is None and use_default_preset:
-        selected = settings.default_preset
-    if selected is not None:
+    if use_default_preset and settings.default_preset is not None:
         try:
-            values.update(_preset_selections(selected))
+            profile = load_preset(settings.default_preset)
         except ValueError as exc:
-            if preset is None:
-                raise ValueError(f"Default preset {selected!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default, or pass --preset NAME.") from exc
-            raise
+            raise ValueError(f"Default preset {settings.default_preset!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default profile.") from exc
+        values.update(harness=profile, quick=None, deep=None)
         settings = Settings.model_validate(values)
     settings.state_dir = settings.state_dir.expanduser()
     if not settings.state_dir.is_absolute():
@@ -326,7 +324,7 @@ def _set_harness_tables(document: TOMLDocument, harness: HarnessSettings, quick:
         if name not in document:
             document[name] = tomlkit.table()
         values = selection.model_dump(mode="json")
-        values.update(model=selection.model or "", provider=selection.provider or "")
+        values.update(model=selection.model or "", provider=selection.provider or "", effort=selection.effort or "")
         document[name].update(values)
 
 
@@ -350,12 +348,12 @@ def save_configuration(path: Path, harness: HarnessSettings, quick: HarnessSetti
     return load_settings(path)
 
 
-def save_preset(name: str, settings: Settings, overwrite: bool = False) -> Path:
-    """Save all three harness tier choices for reuse without copying application data settings.
+def save_preset(name: str, settings: HarnessSettings, overwrite: bool = False) -> Path:
+    """Save a reusable single-agent profile containing only its four native selectors.
 
     Args:
-        name: Name used by the run command's preset option.
-        settings: Validated settings whose harness choices should be retained.
+        name: Name shown in the working-agent and decision-manager menus.
+        settings: Native harness, provider, model, and effort selection to retain.
         overwrite: Whether the caller has selected replacement of an existing preset.
 
     Returns:
@@ -366,9 +364,10 @@ def save_preset(name: str, settings: Settings, overwrite: bool = False) -> Path:
         ValueError: The preset name or selections are invalid.
     """
     path = preset_path(name)
+    if settings.kind == "claude" and settings.provider:
+        raise ValueError("Claude Code selects its provider through its native configuration.")
     document = tomlkit.document()
-    _set_harness_tables(document, settings.harness, settings.quick, settings.deep)
-    Settings.model_validate(document.unwrap())
+    document.update(harness=settings.kind, provider=settings.provider or "", model=settings.model or "", effort=settings.effort or "")
     _write_document(path, document, overwrite=overwrite)
     return path
 
@@ -392,7 +391,7 @@ def set_default_preset(path: Path, name: str | None) -> Settings:
     if name is None:
         document.pop("default_preset", None)
     else:
-        _preset_selections(name)
+        load_preset(name)
         document["default_preset"] = name
     Settings.model_validate(document.unwrap())
     _write_document(path, document)
@@ -405,6 +404,7 @@ def save_harness_selection(
     harness: Literal["pi", "codex", "claude"] | None = None,
     model: str | None = None,
     provider: str | None = None,
+    effort: str | None = None,
 ) -> Settings:
     """Persist harness choices while preserving unrelated TOML settings and comments.
 
@@ -414,6 +414,7 @@ def save_harness_selection(
         harness: Optional native harness selection.
         model: Optional model selection, with an empty string selecting native defaults.
         provider: Optional provider selection, with an empty string selecting native defaults.
+        effort: Optional native reasoning effort, with an empty string selecting native defaults.
 
     Returns:
         The validated settings saved to disk.
@@ -437,19 +438,19 @@ def save_harness_selection(
     selected = document[name]
 
     if harness is not None and harness != current.kind:
-        for key in ("model", "provider", "command", "extra_args"):
+        for key in ("model", "provider", "effort", "command", "extra_args"):
             selected.pop(key, None)
         if name != "harness" and harness == settings.harness.kind:
-            selected.update(model="", provider="", command=[], extra_args=[])
+            selected.update(model="", provider="", effort="", command=[], extra_args=[])
         if name == "harness":
             for child_name in ("quick", "deep"):
                 child = document.get(child_name)
                 if child is not None and "kind" not in child:
-                    for key in ("model", "provider", "command", "extra_args"):
+                    for key in ("model", "provider", "effort", "command", "extra_args"):
                         child.pop(key, None)
     if harness is not None:
         selected["kind"] = harness
-    for key, value in (("model", model), ("provider", provider)):
+    for key, value in (("model", model), ("provider", provider), ("effort", effort)):
         if value is not None:
             selected[key] = value.strip()
     Settings.model_validate(document.unwrap())
