@@ -163,11 +163,11 @@ class TradingApp(App[None]):
     Screen { background: #0d131c; color: #d9e2ef; overflow: hidden hidden; }
     #run-status { height: 1; padding: 0 1; background: #1a2635; }
     #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
-    #stage-tabs { height: 3; }
+    #stage-tabs { height: 2; }
     #stage-tabs Tab.running { color: #e8b86d; text-style: bold; }
     #stage-tabs Tab.complete { color: #91d5ac; }
     #stage-tabs Tab.failed { color: #f2858a; }
-    #stage-status { height: 2; padding: 0 1; color: #a9bcd3; }
+    #stage-status { height: auto; min-height: 1; max-height: 2; padding: 0 1; color: #a9bcd3; }
     #stages, .stage { height: 1fr; min-height: 0; }
     #stage-analysis { grid-size: 2 2; grid-gutter: 1; padding: 0 1; }
     #stage-analysis.one-agent { grid-size: 1 1; }
@@ -175,7 +175,7 @@ class TradingApp(App[None]):
     #stage-analysis.full-grid { grid-size: 1 1; }
     .agent-pane { border: round #34475e; height: 1fr; }
     .agent-pane.selected { border: round #bd9bfa; }
-    .agent-status { height: 3; padding: 0 1; color: #9fb2ca; }
+    .agent-status { height: 2; padding: 0 1; color: #9fb2ca; }
     .single-stage { border: round #34475e; margin: 0 1; }
     .prompt-column { width: 1fr; min-width: 18; height: 1fr; }
     .prompt-pane {
@@ -192,8 +192,6 @@ class TradingApp(App[None]):
     #usage { height: 1; padding: 0 1; background: #1a2635; }
     #shortcuts { height: auto; max-height: 2; padding: 0 1; color: #8799af; }
     Screen.compact #run-status, Screen.compact #stage-status { height: 1; }
-    Screen.compact #stage-tabs { height: 2; }
-    Screen.compact .agent-status { height: 2; }
     Screen.compact #stage-analysis { grid-gutter: 0; }
     """
     BINDINGS = [
