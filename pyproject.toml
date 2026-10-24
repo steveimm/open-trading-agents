@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Financial research workflows using independent CLI agent sessions"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
+license-files = ["LICENSE"]
 authors = [
     { name = "SteveImmanuel", email = "steveandreasimanuel@gmail.com" }
 ]

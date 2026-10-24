@@ -155,11 +155,9 @@ uv run ruff check src tests
 uv build
 ```
 
-Default tests use offline fixtures and subprocess protocol doubles. The optional `native` tests use an installed CLI and a local fixture server, without external model requests. Live validation is performed separately with explicitly selected harness configurations. The implementation has been tested with pi 1.3.0, Codex 0.164.0, and Claude Code 2.1.294. Native execution can still be blocked by the harness's own permissions or the host's sandbox support. Such failures stay visible, and the arithmetic tool remains available.
+Default tests use offline fixtures and subprocess protocol doubles. The optional `native` tests use an installed CLI and a local fixture server, without external model requests. Live validation is performed separately with explicitly selected harness configurations. The implementation has been tested with pi 1.3.0, Codex 0.164.0, and Claude Code 2.1.294. Native execution can still be blocked by the harness's own permissions or the host's sandbox support. Such failures stay visible, and agents must identify numerical claims they could not verify.
 
 There is no application telemetry, update polling, announcement service, or remote tracing. Dependency and native-harness telemetry are outside this project's scope. Local transcript persistence is part of the requested interface and resume behavior.
-
-See `THIRD_PARTY_NOTICES` and `LICENSE` for the adapted reference components.
 
 ## Agreed requirements
 
@@ -178,4 +176,10 @@ See `THIRD_PARTY_NOTICES` and `LICENSE` for the adapted reference components.
 - Preserve native sessions between debate turns. Persist pipeline progress separately so a completed stage need not rerun after interruption.
 - Add meaningful tests during development and commit small, verified increments frequently.
 
-The reference is [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) at revision `e8f5503e9b86d5c2710b0c76b1f686703968c9df`. Its source and the user's development transcript informed this design. No reference checkout is required at runtime.
+## Credits
+
+This project adapts components from [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents), by Tauric Research and TradingAgents contributors, at revision `e8f5503e9b86d5c2710b0c76b1f686703968c9df` (0.7.0). The upstream project is licensed under the Apache License, Version 2.0. The full license text is included in [LICENSE](LICENSE).
+
+Adapted components include the financial-data modules in `src/open_trading_agents/dataflows`, financial-tool behavior in `tools.py`, benchmark and return-window semantics in `memory.py`, financial role instructions in `prompts.py`, decision-field behavior, and the report grouping and HTML presentation in `reporting.py` and `report_html.py`.
+
+Modifications include independent configuration, package imports, typing, documentation, local MCP tool exposure, and removal of graph-framework coupling. No upstream telemetry, update checks, or direct model clients are included. The reference source and the user's development transcript informed this design. No reference checkout is required at runtime.
