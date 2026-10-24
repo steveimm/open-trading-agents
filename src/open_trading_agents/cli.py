@@ -43,13 +43,13 @@ def configured(path: Path | None, harness: HarnessName | None, model: str | None
         harness: Optional CLI harness override.
         model: Optional native model selector.
         provider: Optional native provider selector.
-        preset: Named harness selections applied before explicit CLI overrides.
+        preset: Named harness selections, otherwise the configured default preset.
 
     Returns:
         Validated application settings.
     """
     load_dotenv(Path.cwd() / ".env", override=False)
-    settings = load_settings(path, preset=preset)
+    settings = load_settings(path, preset=preset, use_default_preset=True)
     overrides = {key: value for key, value in {"kind": harness, "model": model, "provider": provider}.items() if value is not None}
     if overrides:
         for tier in ("harness", "quick", "deep"):
@@ -111,7 +111,7 @@ def analyze(
     ticker: Annotated[str | None, typer.Argument(help="Ticker or supported alias, for example NVDA or BTC-USD.")] = None,
     analysis_date: Annotated[str | None, typer.Option("--date", help="Information cutoff, YYYY-MM-DD.")] = None,
     config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-    preset: Annotated[str | None, typer.Option(help="Named harness/model preset saved by configure.")] = None,
+    preset: Annotated[str | None, typer.Option(help="Named preset override. Omit to use the configured default preset.")] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
     model: Annotated[str | None, typer.Option(help="Native harness model selector.")] = None,
     provider: Annotated[str | None, typer.Option(help="Native pi provider selector.")] = None,
@@ -129,7 +129,7 @@ def analyze(
         ticker: Instrument symbol.
         analysis_date: Analysis cutoff date.
         config: Optional TOML configuration.
-        preset: Named harness/model selections.
+        preset: Named harness/model selections, otherwise the configured default preset.
         harness: Native harness override.
         model: Native model selector override.
         provider: Pi provider selector override.
@@ -182,7 +182,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
              end: Annotated[str, typer.Option(help="Last analysis date, YYYY-MM-DD.")],
              every: Annotated[int, typer.Option(min=1)] = 1,
              config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-             preset: Annotated[str | None, typer.Option(help="Named harness/model preset saved by configure.")] = None,
+             preset: Annotated[str | None, typer.Option(help="Named preset override. Omit to use the configured default preset.")] = None,
              harness: HarnessName | None = None, model: str | None = None, provider: str | None = None,
              run_id: str | None = None, portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None) -> None:
     """Evaluate independent decisions over a ticker/date grid without simulating order fills.
@@ -193,7 +193,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
         end: Last analysis date.
         every: Calendar-day spacing between cells.
         config: Optional TOML configuration.
-        preset: Named harness/model selections.
+        preset: Named harness/model selections, otherwise the configured default preset.
         harness: Native harness override.
         model: Native model override.
         provider: Pi provider override.

@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from open_trading_agents import backtest, cli
 from open_trading_agents.cli import HarnessName, app, configured
-from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, save_preset
+from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, default_config_path, save_preset, set_default_preset
 
 runner = CliRunner()
 
@@ -106,11 +106,32 @@ def test_preset_overrides_global_models_before_explicit_cli_flags(tmp_path: Path
     assert path.read_text() == original
 
 
+def test_explicit_preset_and_cli_flags_override_default_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve default, named override, and command-line selectors without rewriting the default selection."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    save_preset("daily", Settings(harness=HarnessSettings(model="daily-model"), deep=HarnessSettings(model="daily-manager")))
+    save_preset("other", Settings(harness=HarnessSettings(kind="claude", model="other-model")))
+    path = default_config_path()
+    set_default_preset(path, "daily")
+    original = path.read_text()
+    default = configured(None, None, None, None)
+    assert default.model_settings().model == "daily-model"
+    assert default.model_settings(True).model == "daily-manager"
+    explicit = configured(None, None, None, None, preset="other")
+    assert explicit.model_settings().kind == "claude" and explicit.model_settings().model == "other-model"
+    overridden = configured(None, HarnessName.codex, "one-run-model", "local")
+    for deep in (False, True):
+        assert overridden.model_settings(deep) == HarnessSettings(kind="codex", model="one-run-model", provider="local")
+    assert path.read_text() == original
+
+
 @pytest.mark.parametrize("command", ["analyze", "backtest"])
-def test_new_runs_use_the_requested_preset(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Route named selections into both execution paths without changing native credentials."""
+@pytest.mark.parametrize("explicit", [False, True])
+def test_new_runs_use_the_requested_preset(command: str, explicit: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route default and explicitly named selections into both execution paths without changing native credentials."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     save_preset("local", Settings(harness=HarnessSettings(kind="pi", provider="local", model="selected-model")))
+    set_default_preset(default_config_path(), "local")
     received: list[Settings] = []
 
     def workflow(ticker: str, trade_date: str, settings: Settings, portfolio: Portfolio | None) -> Settings:
@@ -128,7 +149,8 @@ def test_new_runs_use_the_requested_preset(command: str, tmp_path: Path, monkeyp
     monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: None)
     monkeypatch.setattr(backtest, "run_backtest", sweep)
     options = ["--headless"] if command == "analyze" else ["--start", "2026-01-02", "--end", "2026-01-02"]
-    result = runner.invoke(app, [command, "NVDA", "--preset", "local", *options])
+    preset = ["--preset", "local"] if explicit else []
+    result = runner.invoke(app, [command, "NVDA", *preset, *options])
     assert result.exit_code == 0, result.output
     assert len(received) == 1
     assert received[0].harness == HarnessSettings(kind="pi", provider="local", model="selected-model")

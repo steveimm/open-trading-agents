@@ -13,6 +13,7 @@ from open_trading_agents.config import (
     preset_path,
     save_configuration,
     save_preset,
+    set_default_preset,
 )
 
 
@@ -102,3 +103,65 @@ def test_invalid_or_missing_presets_do_not_fall_back_silently(tmp_path: Path, mo
     preset_path("invalid").write_text('state_dir = "../other"\n[harness]\nkind = "pi"\n')
     with pytest.raises(ValueError, match="harness selections only"):
         load_settings(preset="invalid")
+
+
+def test_default_preset_changes_runtime_choices_without_rewriting_base_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apply the selected default only to new runs and retain editable configuration choices."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = default_config_path()
+    path.parent.mkdir()
+    path.write_text('# application preferences\nresearch_rounds = 3\n[harness]\nkind = "pi"\nmodel = "base" # saved choice\n'
+                    '[deep]\nmodel = "base-manager"\n[data]\nweb_search_backend = "yahoo"\n')
+    path.chmod(0o640)
+    selected = Settings(harness=HarnessSettings(kind="claude", model="default-model"))
+    save_preset("daily", selected)
+    raw = set_default_preset(path, "daily")
+    assert raw.default_preset == "daily"
+    assert raw.harness.model == "base" and raw.deep is not None and raw.deep.model == "base-manager"
+    stored = path.read_text()
+    assert '# application preferences' in stored and '# saved choice' in stored
+    assert path.stat().st_mode & 0o777 == 0o640
+    runtime = load_settings(use_default_preset=True)
+    assert runtime.harness == selected.harness and runtime.quick is None and runtime.deep is None
+    assert runtime.research_rounds == 3 and runtime.data == {"web_search_backend": "yahoo"}
+    assert runtime.default_preset == "daily"
+    assert load_settings().harness.model == "base"
+    assert path.read_text() == stored
+    preset_path("daily").unlink()
+    restored = Settings.model_validate(runtime.model_dump(mode="json"))
+    assert restored.harness == selected.harness
+
+
+def test_default_preset_can_be_cleared_and_invalid_selection_preserves_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject missing or malformed preset files before persisting a default and allow reverting to base choices."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = default_config_path()
+    save_configuration(path, HarnessSettings(model="base-model"), None, None)
+    save_preset("daily", Settings(harness=HarnessSettings(model="selected-model")))
+    set_default_preset(path, "daily")
+    original = path.read_text()
+    with pytest.raises(ValueError, match="Unknown preset 'missing'"):
+        set_default_preset(path, "missing")
+    preset_path("invalid").write_text('[harness]\nkind = "unknown"\n')
+    with pytest.raises(ValueError):
+        set_default_preset(path, "invalid")
+    assert path.read_text() == original
+    cleared = set_default_preset(path, None)
+    assert cleared.default_preset is None
+    assert "default_preset" not in tomllib.loads(path.read_text())
+    assert load_settings(use_default_preset=True).harness.model == "base-model"
+
+
+def test_missing_default_has_an_actionable_error_but_explicit_preset_still_works(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never silently change the runtime when a default is deleted, while allowing an explicit replacement."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = default_config_path()
+    path.parent.mkdir()
+    path.write_text('default_preset = "removed"\n[harness]\nkind = "pi"\nmodel = "base-model"\n')
+    with pytest.raises(ValueError, match="Default preset 'removed'.*configure.*--preset"):
+        load_settings(use_default_preset=True)
+    save_preset("replacement", Settings(harness=HarnessSettings(kind="codex", model="replacement-model")))
+    explicit = load_settings(preset="replacement", use_default_preset=True)
+    assert explicit.harness.kind == "codex" and explicit.harness.model == "replacement-model"
+    assert explicit.default_preset == "removed"
+    assert load_settings().harness.model == "base-model"

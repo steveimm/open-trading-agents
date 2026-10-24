@@ -133,6 +133,7 @@ class Portfolio(BaseModel):
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     state_dir: Path = Field(default_factory=application_dir)
+    default_preset: str | None = None
     harness: HarnessSettings = Field(default_factory=HarnessSettings)
     quick: HarnessSettings | None = None
     deep: HarnessSettings | None = None
@@ -149,6 +150,23 @@ class Settings(BaseModel):
     web_research: bool = True
     social_screening: bool = False
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("default_preset")
+    @classmethod
+    def validate_default_preset(cls, value: str | None) -> str | None:
+        """Validate a stored preset name without requiring its file during run resume.
+
+        Args:
+            value: Optional default preset name.
+
+        Returns:
+            The validated name, or None when no default is selected.
+        """
+        if value is not None:
+            value = value.strip() or None
+        if value is not None:
+            preset_path(value)
+        return value
 
     @model_validator(mode="after")
     def resolve_model_tiers(self) -> Settings:
@@ -194,12 +212,34 @@ class Settings(BaseModel):
         return (self.deep if deep else self.quick) or self.harness
 
 
-def load_settings(path: Path | None = None, preset: str | None = None) -> Settings:
+def _preset_selections(name: str) -> dict[str, Any]:
+    """Read and validate a complete named harness selection.
+
+    Args:
+        name: Preset selected explicitly or configured as the default.
+
+    Returns:
+        All three harness tiers, including None for inherited tiers.
+    """
+    selected = preset_path(name)
+    if not selected.is_file():
+        available = ", ".join(list_presets()) or "none"
+        raise ValueError(f"Unknown preset {name!r}. Available presets: {available}")
+    with selected.open("rb") as handle:
+        selections = tomllib.load(handle)
+    if "harness" not in selections or set(selections) - {"harness", "quick", "deep"}:
+        raise ValueError(f"Preset {name!r} must contain harness selections only, including [harness].")
+    Settings.model_validate(selections)
+    return {tier: selections.get(tier) for tier in ("harness", "quick", "deep")}
+
+
+def load_settings(path: Path | None = None, preset: str | None = None, use_default_preset: bool = False) -> Settings:
     """Read application settings and optionally replace all harness tier selections.
 
     Args:
         path: An explicit configuration file, otherwise the global default file.
         preset: Optional saved default, working-agent, and decision-manager selections.
+        use_default_preset: Apply the configured default when no explicit preset is given.
 
     Returns:
         Validated settings, with relative state paths based on the config file.
@@ -209,17 +249,18 @@ def load_settings(path: Path | None = None, preset: str | None = None) -> Settin
     if path is not None or source.exists():
         with source.open("rb") as handle:
             values = tomllib.load(handle)
-    if preset is not None:
-        selected = preset_path(preset)
-        if not selected.is_file():
-            available = ", ".join(list_presets()) or "none"
-            raise ValueError(f"Unknown preset {preset!r}. Available presets: {available}")
-        with selected.open("rb") as handle:
-            selections = tomllib.load(handle)
-        if "harness" not in selections or set(selections) - {"harness", "quick", "deep"}:
-            raise ValueError(f"Preset {preset!r} must contain harness selections only, including [harness].")
-        values.update({name: selections.get(name) for name in ("harness", "quick", "deep")})
     settings = Settings.model_validate(values)
+    selected = preset
+    if selected is None and use_default_preset:
+        selected = settings.default_preset
+    if selected is not None:
+        try:
+            values.update(_preset_selections(selected))
+        except ValueError as exc:
+            if preset is None:
+                raise ValueError(f"Default preset {selected!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default, or pass --preset NAME.") from exc
+            raise
+        settings = Settings.model_validate(values)
     settings.state_dir = settings.state_dir.expanduser()
     if not settings.state_dir.is_absolute():
         settings.state_dir = source.resolve().parent / settings.state_dir
@@ -330,6 +371,32 @@ def save_preset(name: str, settings: Settings, overwrite: bool = False) -> Path:
     Settings.model_validate(document.unwrap())
     _write_document(path, document, overwrite=overwrite)
     return path
+
+
+def set_default_preset(path: Path, name: str | None) -> Settings:
+    """Select the preset used by new runs without changing the saved harness choices.
+
+    Args:
+        path: Application configuration file to update.
+        name: Existing preset name, or None to use the configuration's own choices.
+
+    Returns:
+        Updated application settings without applying the selected preset.
+
+    Raises:
+        ValueError: The named preset or existing configuration is invalid.
+        OSError: The configuration cannot be written.
+    """
+    path = path.expanduser().resolve()
+    document = _configuration_document(path)
+    if name is None:
+        document.pop("default_preset", None)
+    else:
+        _preset_selections(name)
+        document["default_preset"] = name
+    Settings.model_validate(document.unwrap())
+    _write_document(path, document)
+    return load_settings(path)
 
 
 def save_harness_selection(
