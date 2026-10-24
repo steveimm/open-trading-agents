@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -66,6 +66,7 @@ class Workflow:
         self.recorder: EventRecorder | None = None
         self.sink: EventSink | None = None
         self.active_steps: dict[str, str] = {}
+        self.conversation_turns: dict[str, str] = {}
         self.screening_futures: set[Future[tuple[list[bool], str]]] = set()
         self.data_config = default_data_config()
         self.data_config["data_cache_dir"] = str(settings.state_dir / "cache")
@@ -132,6 +133,9 @@ class Workflow:
         Args:
             event: A workflow or harness event.
         """
+        conversation_turn = self.conversation_turns.get(event.agent)
+        if conversation_turn:
+            event = replace(event, data={**event.data, "conversation_turn_id": conversation_turn})
         if event.kind == "session" and event.data.get("session_id"):
             self.store.save_session(event.agent, event.data["session_id"])
         if event.data.get("prompt_accepted") and event.agent in self.active_steps:
@@ -310,17 +314,29 @@ class Workflow:
             The complete public discussion, with speaker and round attribution.
         """
         await self._event("stage_start", stage)
+        await self.emit(AgentEvent(
+            "conversation_input", "Input", stage, f"{self._instrument()}\n\n{evidence}",
+            data={"participants": [ROLES[key].name for key in keys], "total_rounds": rounds},
+            event_id=f"{self.run_id}:{stage}:input",
+        ))
         discussion: list[str] = []
         seen = dict.fromkeys(keys, 0)
         for round_number in range(1, rounds + 1):
             for turn_number, key in enumerate(keys, 1):
                 role = ROLES[key]
-                await self._event("turn_start", stage, role.name, round=round_number, turn=turn_number,
-                                  total_rounds=rounds, turns_per_round=len(keys))
+                step_key = f"{stage}:{round_number}:{key}"
                 additions = "\n\n".join(discussion[seen[key]:]) or "This is the opening turn."
                 prefix = f"{self._instrument()}\n\n{evidence}\n\n" if round_number == 1 else ""
                 prompt = f"{prefix}Round {round_number} of {rounds}.\nNew public contributions since your previous turn:\n\n{additions}\n\nGive your next argument."
-                text = await self._call(f"{stage}:{round_number}:{key}", key, prompt)
+                self.conversation_turns[role.name] = step_key
+                try:
+                    saved = self.store.step(step_key)
+                    if not saved or saved["status"] != "complete":
+                        await self._event("turn_start", stage, role.name, round=round_number, turn=turn_number,
+                                          total_rounds=rounds, turns_per_round=len(keys))
+                    text = await self._call(step_key, key, prompt)
+                finally:
+                    self.conversation_turns.pop(role.name, None)
                 discussion.append(f"### Round {round_number}: {role.name}\n\n{text}")
                 seen[key] = len(discussion)
                 self.outputs["Research Debate" if stage == "research" else "Risk Debate"] = "\n\n".join(discussion)

@@ -219,3 +219,80 @@ async def test_finished_stages_release_idle_cli_processes(tmp_path: Path) -> Non
                                                        research_rounds=2, memory_enabled=False), session_factory=factory)
     await workflow.run()
     assert live == set()
+
+
+async def test_debate_chat_input_is_shared_without_changing_native_prompts(tmp_path: Path) -> None:
+    """Expose one shared input and stable turns while retaining exact per-role submissions."""
+    calls: list[tuple[str, str]] = []
+    events: list[AgentEvent] = []
+
+    class NativeTurnHarness(FakeHarness):
+        async def prompt(self, text: str) -> AgentResult:
+            """Emit a native turn identifier that presentation grouping must preserve."""
+            native = AgentEvent("status", self.spec.agent, self.spec.stage, data={"turn_id": "native-turn-id"})
+            await self.emit(native)
+            assert native.data == {"turn_id": "native-turn-id"}
+            return await super().prompt(text)
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> NativeTurnHarness:
+        """Keep the existing native session behavior for the presentation-only change."""
+        return NativeTurnHarness(spec, emit, calls, [])
+
+    async def observe(event: AgentEvent) -> None:
+        """Collect the normalized event contract seen by the chat view."""
+        events.append(event)
+
+    settings = Settings(state_dir=tmp_path, analysts=("market", "news"), research_rounds=2, memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    await workflow.run(observe)
+    shared = [event for event in events if event.kind == "conversation_input"]
+    assert [event.stage for event in shared] == ["research", "risk"]
+    assert shared[0].agent == "Input"
+    assert shared[0].data == {"participants": ["Bull Researcher", "Bear Researcher"], "total_rounds": 2}
+    assert "Instrument: NVDA" in shared[0].text and "Market Analyst report" in shared[0].text
+    assert "Trader proposal" in shared[1].text and "Portfolio not supplied" in shared[1].text
+    turns = [event for event in events if event.kind == "turn_start" and event.stage == "research"]
+    assert [event.data["conversation_turn_id"] for event in turns] == [
+        "research:1:bull", "research:1:bear", "research:2:bull", "research:2:bear"
+    ]
+    for event in events:
+        if event.stage in {"research", "risk"} and event.kind in {"prompt", "text", "agent_start", "agent_end"}:
+            assert event.data["conversation_turn_id"].startswith(f"{event.stage}:")
+        if event.stage in {"research", "risk"} and event.data.get("turn_id"):
+            assert event.data["turn_id"] == "native-turn-id"
+            assert event.data["conversation_turn_id"] != event.data["turn_id"]
+    assert [(event.agent, event.text) for event in events if event.kind == "prompt"] == calls
+    bear_first = next(text for agent, text in calls if agent == "Bear Researcher")
+    assert "Market Analyst report" in bear_first and "Bull Researcher report" in bear_first
+
+
+async def test_debate_resume_reuses_chat_identity_without_restarting_completed_turns(tmp_path: Path) -> None:
+    """Keep completed bubbles once while allowing a failed turn to resume visibly."""
+    calls: list[tuple[str, str]] = []
+    failure = ["Bear Researcher"]
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Fail one debate attempt after the native harness accepted its input."""
+        return FakeHarness(spec, emit, calls, failure)
+
+    settings = Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    with pytest.raises(RuntimeError, match="interrupted provider"):
+        await workflow.run()
+    resumed = Workflow.resume(workflow.directory, session_factory=factory)
+    await resumed.run()
+    saved = RunStore(workflow.directory)
+    try:
+        recorded = saved.events()
+    finally:
+        saved.close()
+    shared = [event for event in recorded if event.kind == "conversation_input" and event.stage == "research"]
+    assert len(shared) == 1
+    assert shared[0].event_id == f"{workflow.run_id}:research:input"
+    turns = [event for event in recorded if event.kind == "turn_start" and event.stage == "research"]
+    assert sum(event.agent == "Bull Researcher" for event in turns) == 1
+    bear = [event for event in turns if event.agent == "Bear Researcher"]
+    assert len(bear) == 2
+    assert bear[0].event_id != bear[1].event_id
+    assert bear[0].data["conversation_turn_id"] == bear[1].data["conversation_turn_id"] == "research:1:bear"
+    assert sum(agent == "Bull Researcher" for agent, _ in calls) == 1
