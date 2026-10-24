@@ -76,6 +76,7 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         app.flush_events()
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
         assert "[done]" in str(app.query_one("#tab-analysis", Tab).label)
+        assert "Provider failed" in str(app.query_one("#run-error", Static).render())
 
 
 async def test_tabs_fullscreen_scroll_anchor_and_bottom_follow() -> None:

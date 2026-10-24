@@ -17,7 +17,7 @@ from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
 from open_trading_agents.chat import ChatView
 from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
-from open_trading_agents.transcript import Transcript, TranscriptView
+from open_trading_agents.transcript import Transcript, TranscriptView, literal_text
 from open_trading_agents.usage import format_usage as usage_label
 from open_trading_agents.usage import request_usage
 
@@ -67,6 +67,7 @@ class TradingApp(App[None]):
     CSS = """
     Screen { background: #0d131c; color: #d9e2ef; }
     #run-status { height: 2; padding: 0 1; background: #1a2635; }
+    #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
     #stage-tabs { height: 3; }
     #stage-tabs Tab.running { color: #e8b86d; text-style: bold; }
     #stage-tabs Tab.complete { color: #91d5ac; }
@@ -159,6 +160,7 @@ class TradingApp(App[None]):
             Tabs, analyst panes, chronological chats, and counters.
         """
         yield Static(id="run-status", markup=False)
+        yield Static(id="run-error", classes="hidden", markup=False)
         yield Tabs(*(Tab(label, id=f"tab-{stage}") for stage, label in STAGES), id="stage-tabs")
         yield Static(id="stage-status", markup=False)
         with ContentSwitcher(initial="stage-analysis", id="stages"):
@@ -255,6 +257,7 @@ class TradingApp(App[None]):
             activity.started = now
         if kind == "stage_start":
             self._finished, self._failure = None, None
+            self.query_one("#run-error", Static).add_class("hidden")
             self.stages[stage] = Activity(started=now, status="running")
         elif kind == "stage_end":
             self.stages[stage].finished, self.stages[stage].status = now, "complete"
@@ -287,14 +290,23 @@ class TradingApp(App[None]):
             activity.status, activity.finished = "error", now
             if agent == "Workflow":
                 self._failure, self._finished = event.text, now
+                banner = self.query_one("#run-error", Static)
+                banner.update(literal_text(event.text))
+                banner.remove_class("hidden")
                 for entry in self.agents.values():
                     if entry.started is not None and entry.finished is None:
                         entry.status, entry.finished = "stopped", now
                 for entry in self.stages.values():
                     if entry.status == "running":
                         entry.status, entry.finished = "failed", now
+                for view in self._render_views:
+                    if isinstance(view, ChatView):
+                        view.finish("stopped")
         elif kind == "run_end":
             self._finished = now
+            for view in self._render_views:
+                if isinstance(view, ChatView):
+                    view.finish("complete")
             if self.run_dir and self._report_task is None:
                 self._report_task = asyncio.create_task(self._load_completed_report())
         if kind in {"stage_start", "stage_end", "error", "run_end"}:
