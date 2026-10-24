@@ -372,6 +372,53 @@ def save_preset(name: str, settings: HarnessSettings, overwrite: bool = False) -
     return path
 
 
+def delete_preset(name: str, path: Path | None = None) -> Path:
+    """Delete one saved profile and clear its known default selections.
+
+    Args:
+        name: Name of the saved profile to delete.
+        path: Selected application config, also checked alongside the global config.
+
+    Returns:
+        The path of the deleted profile.
+
+    Raises:
+        ValueError: The name, selected configuration, or global configuration is invalid.
+        OSError: A file cannot be updated or removed.
+        RuntimeError: A failed deletion also prevents restoration of a modified config.
+    """
+    selected = preset_path(name)
+    if not selected.is_file():
+        raise ValueError(f"Unknown preset {name!r}.")
+    paths = dict.fromkeys(config.expanduser().resolve() for config in (path or default_config_path(), default_config_path()))
+    updates: list[tuple[Path, TOMLDocument, TOMLDocument]] = []
+    for config in paths:
+        if not config.exists():
+            continue
+        original = _configuration_document(config)
+        if original.get("default_preset", "").strip() == name:
+            updated = tomlkit.parse(tomlkit.dumps(original))
+            updated.pop("default_preset")
+            updates.append((config, original, updated))
+    changed: list[tuple[Path, TOMLDocument]] = []
+    try:
+        for config, original, updated in updates:
+            _write_document(config, updated)
+            changed.append((config, original))
+        selected.unlink()
+    except OSError as exc:
+        failed = []
+        for config, original in reversed(changed):
+            try:
+                _write_document(config, original)
+            except OSError:
+                failed.append(str(config))
+        if failed:
+            raise RuntimeError(f"Profile deletion failed and these configurations could not be restored: {', '.join(failed)}") from exc
+        raise
+    return selected
+
+
 def set_default_preset(path: Path, name: str | None) -> Settings:
     """Select the preset used by new runs without changing the saved harness choices.
 

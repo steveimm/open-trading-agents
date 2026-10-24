@@ -2,12 +2,15 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from tomlkit.toml_document import TOMLDocument
 
+from open_trading_agents import config as configuration
 from open_trading_agents.config import (
     HarnessSettings,
     Settings,
     application_dir,
     default_config_path,
+    delete_preset,
     list_presets,
     load_preset,
     load_settings,
@@ -170,3 +173,80 @@ def test_missing_default_can_be_repaired_without_loading_it(tmp_path: Path, monk
     assert runtime.harness.kind == "codex" and runtime.harness.model == "replacement-model"
     assert runtime.default_preset == "replacement"
     assert load_settings().harness.model == "base-model"
+
+
+def test_delete_profile_clears_global_and_selected_defaults_without_touching_other_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deleting a globally shared profile cannot leave either known config pointing to it."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    selected = save_preset("daily", HarnessSettings(model="delete-model"))
+    retained = save_preset("retained", HarnessSettings(kind="claude", model="keep-model"))
+    retained_text = retained.read_text()
+    global_config = default_config_path()
+    global_config.write_text('# keep preferences\ndefault_preset = "daily"\nrisk_rounds = 3\n[harness]\nmodel = "base"\n')
+    global_config.chmod(0o640)
+    custom = tmp_path / "project.toml"
+    custom.write_text('default_preset = " daily "\noutput_language = "Korean"\n[harness]\nkind = "codex"\n')
+    run_file = application_dir() / "runs" / "saved" / "report.md"
+    run_file.parent.mkdir(parents=True)
+    run_file.write_text("Saved analysis")
+
+    assert delete_preset("daily", custom) == selected
+    assert not selected.exists() and list_presets() == ("retained",)
+    assert retained.read_text() == retained_text and run_file.read_text() == "Saved analysis"
+    assert load_settings().default_preset is None and load_settings().risk_rounds == 3
+    assert load_settings(custom).default_preset is None and load_settings(custom).output_language == "Korean"
+    assert "# keep preferences" in global_config.read_text()
+    assert global_config.stat().st_mode & 0o777 == 0o640
+
+
+def test_delete_invalid_profile_preserves_another_default_and_does_not_create_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed saved profile can be removed without loading it or writing unrelated preferences."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    invalid = preset_path("invalid")
+    invalid.parent.mkdir(parents=True)
+    invalid.write_text("not valid TOML {{")
+    assert delete_preset("invalid") == invalid
+    assert not default_config_path().exists()
+    save_preset("kept", HarnessSettings())
+    set_default_preset(default_config_path(), "kept")
+    original = default_config_path().read_bytes()
+    invalid.write_text("another malformed profile")
+    delete_preset("invalid")
+    assert default_config_path().read_bytes() == original
+    with pytest.raises(ValueError, match="Unknown preset"):
+        delete_preset("missing")
+    with pytest.raises(ValueError, match="Preset names"):
+        delete_preset("../kept")
+    assert preset_path("kept").exists()
+
+
+@pytest.mark.parametrize("failure", ["config", "profile"])
+def test_failed_profile_deletion_restores_default_selections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    """A failed config update or unlink must retain the profile and both previous defaults."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    profile = save_preset("daily", HarnessSettings(model="saved"))
+    global_config = default_config_path()
+    custom = tmp_path / "project.toml"
+    for path in (global_config, custom):
+        set_default_preset(path, "daily")
+    before = {path: path.read_bytes() for path in (global_config, custom, profile)}
+    write_document = configuration._write_document
+    unlink = Path.unlink
+
+    def write(path: Path, document: TOMLDocument, overwrite: bool = True) -> None:
+        """Fail the second config write while allowing rollback of the first."""
+        if failure == "config" and path == global_config and "default_preset" not in document:
+            raise OSError("config unavailable")
+        return write_document(path, document, overwrite)
+
+    def remove(path: Path, missing_ok: bool = False) -> None:
+        """Fail only deletion of the selected profile, allowing atomic-write cleanup."""
+        if failure == "profile" and path == profile:
+            raise OSError("profile unavailable")
+        return unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(configuration, "_write_document", write)
+    monkeypatch.setattr(Path, "unlink", remove)
+    with pytest.raises(OSError, match="unavailable"):
+        delete_preset("daily", custom)
+    assert {path: path.read_bytes() for path in before} == before
