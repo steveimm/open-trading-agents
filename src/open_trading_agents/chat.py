@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import bisect
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from rich.segment import Segment
+from rich.spinner import Spinner
 from rich.style import Style
 from rich.text import Text
 from textual import events
-from textual.geometry import Size
+from textual.geometry import Region, Size
 from textual.strip import Strip
 
 from open_trading_agents.domain import AgentEvent
@@ -78,6 +80,7 @@ class ChatBubble:
     sections: list[ChatSection] = field(default_factory=list)
     round_number: int | None = None
     turn_number: int | None = None
+    collapsed: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,13 @@ class ChatPart:
     bubble: ChatBubble | None = None
     section: ChatSection | None = None
 
+    @property
+    def disclosure(self) -> ChatBubble | ChatSection | None:
+        """Return the expandable turn or section controlled by this header."""
+        if self.kind == "top":
+            return self.section or self.bubble
+        return self.section if self.kind == "detail" else None
+
 
 class ChatView(FollowScrollView):
     DEFAULT_CSS = """
@@ -95,15 +105,17 @@ class ChatView(FollowScrollView):
     ChatView:focus { background: #121c28; }
     """
 
-    def __init__(self, *, id: str | None = None, debate: bool = False) -> None:
+    def __init__(self, *, id: str | None = None, debate: bool = False, show_systems: bool = True) -> None:
         """Create an incremental conversation viewport with collapsible details.
 
         Args:
             id: Stable Textual widget identifier.
             debate: Whether shared input replaces repeated participant prompt displays.
+            show_systems: Whether system instructions appear inline instead of in separate panes.
         """
         super().__init__(id=id)
         self.debate = debate
+        self.show_systems = show_systems
         self.document = self
         self.bubbles: list[ChatBubble] = []
         self.systems: OrderedDict[str, ChatSection] = OrderedDict()
@@ -119,12 +131,19 @@ class ChatView(FollowScrollView):
         self._parts: list[ChatPart] = []
         self._bubble_headers: dict[ChatBubble, ChatPart] = {}
         self._offsets = [0]
-        self._detail_rows: dict[ChatSection, int] = {}
+        self._detail_rows: dict[ChatBubble | ChatSection, int] = {}
         self._cache: OrderedDict[tuple[TranscriptIndex, tuple[int, int]], Strip] = OrderedDict()
-        self._selected: ChatSection | None = None
+        self._selected: ChatBubble | ChatSection | None = None
         self._shared_input: ChatBubble | None = None
         self._dirty = True
         self._width = 0
+        self._activity_spinner = Spinner("dots")
+        self._activity_frame = self._activity_spinner.render(time.monotonic()).plain
+
+    @property
+    def has_details(self) -> bool:
+        """Return whether visible turn or section disclosures are available."""
+        return bool(self.bubbles or (self.show_systems and self.systems))
 
     @staticmethod
     def _turn_key(event: AgentEvent) -> str | None:
@@ -375,17 +394,20 @@ class ChatView(FollowScrollView):
                 section.index.sync(max(1, width - 4))
                 parts.append(ChatPart(f"body:{section.key}", "body", section.index.height, bubble, section))
 
-        for section in self.systems.values():
-            add_section(section, None)
-        if self.systems:
+        if self.show_systems:
+            for section in self.systems.values():
+                add_section(section, None)
+        if self.show_systems and self.systems:
             parts.append(ChatPart("system-gap", "gap", 1))
-        for bubble in self.bubbles:
+        for index, bubble in enumerate(self.bubbles):
             input_section = bubble.sections[0] if bubble.kind == "input" and bubble.sections else None
             parts.append(ChatPart(f"top:{bubble.key}", "top", 1, bubble, input_section))
-            for section in bubble.sections:
-                add_section(section, bubble, header=bubble.kind != "input")
+            if not bubble.collapsed:
+                for section in bubble.sections:
+                    add_section(section, bubble, header=bubble.kind != "input")
             parts.append(ChatPart(f"bottom:{bubble.key}", "bottom", 1, bubble))
-            parts.append(ChatPart(f"gap:{bubble.key}", "gap", 1, bubble))
+            if index < len(self.bubbles) - 1:
+                parts.append(ChatPart(f"gap:{bubble.key}", "gap", 1, bubble))
         self._parts = parts
         self._bubble_headers = {part.bubble: part for part in parts if part.kind == "top" and part.bubble is not None}
         visible_indexes = {part.section.index for part in parts if part.kind == "body" and part.section is not None}
@@ -397,8 +419,8 @@ class ChatView(FollowScrollView):
         lookup = {}
         for part in parts:
             lookup[part.key] = self._offsets[-1]
-            if part.kind in {"detail", "top"} and part.section is not None:
-                self._detail_rows[part.section] = self._offsets[-1]
+            if part.disclosure is not None:
+                self._detail_rows[part.disclosure] = self._offsets[-1]
             self._offsets.append(self._offsets[-1] + part.height)
         self._width, self._dirty = width, False
         self.virtual_size = Size(width, self._offsets[-1])
@@ -410,6 +432,32 @@ class ChatView(FollowScrollView):
             self.scroll_to(y=lookup[anchor[0]] + offset, animate=False, immediate=True)
         self.refresh()
         self.call_after_refresh(self.sync)
+
+    def refresh_activity(self, now: float | None = None) -> None:
+        """Animate visible active titles without reindexing or repainting their bodies.
+
+        Args:
+            now: Optional monotonic timestamp shared with the application's clock timer.
+        """
+        if not self.is_on_screen:
+            return
+        frame = self._activity_spinner.render(time.monotonic() if now is None else now).plain
+        if frame == self._activity_frame:
+            return
+        self._activity_frame = frame
+        rows: set[int] = set()
+        pinned = self._sticky_header()
+        if pinned is not None and pinned.bubble is not None and pinned.bubble.status == "streaming":
+            rows.add(0)
+        top, height = int(self.scroll_y), self.scrollable_content_region.height
+        index = max(0, bisect.bisect_left(self._offsets, top))
+        while index < len(self._parts) and self._offsets[index] < top + height:
+            part = self._parts[index]
+            if part.kind == "top" and part.bubble is not None and part.bubble.status == "streaming":
+                rows.add(self._offsets[index] - top)
+            index += 1
+        if rows:
+            self.refresh(*(Region(0, row, self.size.width, 1) for row in sorted(rows)))
 
     def _line(self, text: str, style: Style | str, width: int) -> Strip:
         """Render a bounded header line without interpreting rich markup.
@@ -449,13 +497,14 @@ class ChatView(FollowScrollView):
         Returns:
             A title row with role, round, turn and current streaming state.
         """
-        bubble, section = part.bubble, part.section
+        bubble, disclosure = part.bubble, part.disclosure
         assert bubble is not None
         color = "#e8b86d" if bubble.kind == "input" else "#668ab5"
         suffix = f" · {bubble.title}" if bubble.title else ""
-        active = f" · {bubble.status}" if bubble.status in {"streaming", "error", "stopped"} else ""
-        fold = f"{'▸' if section.collapsed else '▾'} " if section is not None else ""
-        style = "bold #f1e5b9 on #303547" if section is not None and section is self._selected else f"bold {color}"
+        state = self._activity_frame if bubble.status == "streaming" else "✓" if bubble.status == "complete" and bubble.kind == "agent" else bubble.status
+        active = f" · {state}" if bubble.status in {"streaming", "error", "stopped"} or state == "✓" else ""
+        fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
+        style = "bold #f1e5b9 on #303547" if disclosure is not None and disclosure is self._selected else f"bold {color}"
         title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
         title.truncate(max(1, width - 1))
         title.append("─" * max(0, width - title.cell_len - 1) + "╮")
@@ -506,14 +555,14 @@ class ChatView(FollowScrollView):
             return Strip.join([side, body, end]).adjust_cell_length(width, self.rich_style)
         return Strip.blank(width, self.rich_style)
 
-    def _toggle(self, section: ChatSection) -> None:
+    def _toggle(self, section: ChatBubble | ChatSection) -> None:
         """Toggle a detail while keeping the reader anchored.
 
         Args:
-            section: Selected input, system, reasoning, or tool section.
+            section: Selected participant turn, input, system, reasoning, or tool section.
         """
         pinned = self._sticky_header()
-        header_row = self._detail_rows.get(section) if pinned is not None and pinned.section is section else None
+        header_row = self._detail_rows.get(section) if pinned is not None and pinned.disclosure is section else None
         self.following = False
         self._selected = section
         section.collapsed = not section.collapsed
@@ -522,7 +571,7 @@ class ChatView(FollowScrollView):
         if header_row is not None:
             self.scroll_to(y=header_row, animate=False, immediate=True)
 
-    def _detail_is_visible(self, section: ChatSection) -> bool:
+    def _detail_is_visible(self, section: ChatBubble | ChatSection) -> bool:
         """Check whether a disclosure is visible rather than covered by the pinned title.
 
         Args:
@@ -532,7 +581,7 @@ class ChatView(FollowScrollView):
             Whether its natural or pinned header can be seen in the viewport.
         """
         pinned = self._sticky_header()
-        if pinned is not None and pinned.section is section:
+        if pinned is not None and pinned.disclosure is section:
             return True
         top = int(self.scroll_y) + int(pinned is not None)
         row = self._detail_rows.get(section, -1)
@@ -576,6 +625,8 @@ class ChatView(FollowScrollView):
         Args:
             agent: One role, or None to toggle all instruction sections.
         """
+        if not self.show_systems:
+            return
         sections = [self.systems[agent]] if agent in self.systems else list(self.systems.values()) if agent is None else []
         if not sections:
             return
@@ -598,16 +649,16 @@ class ChatView(FollowScrollView):
         if not (0 <= event.x < self.scrollable_content_region.width and 0 <= event.y < self.scrollable_content_region.height):
             return
         if int(event.y) == 0 and (header := self._sticky_header()) is not None:
-            if header.section is not None:
-                self._toggle(header.section)
+            if header.disclosure is not None:
+                self._toggle(header.disclosure)
             event.stop()
             return
         row = int(self.scroll_y) + int(event.y)
         index = bisect.bisect_right(self._offsets, row) - 1
         if 0 <= index < len(self._parts):
             part = self._parts[index]
-            if part.kind in {"detail", "top"} and part.section is not None:
-                self._toggle(part.section)
+            if part.disclosure is not None:
+                self._toggle(part.disclosure)
                 event.stop()
 
     def on_resize(self, event: events.Resize) -> None:
@@ -639,12 +690,15 @@ class ChatView(FollowScrollView):
             Role labels, section headers and expanded display content.
         """
         parts = []
-        for section in self.systems.values():
-            parts.append(section.title)
-            if not section.collapsed:
-                parts.append(section.document.plain())
+        if self.show_systems:
+            for section in self.systems.values():
+                parts.append(section.title)
+                if not section.collapsed:
+                    parts.append(section.document.plain())
         for bubble in self.bubbles:
             parts.append(bubble.agent)
+            if bubble.collapsed:
+                continue
             for section in bubble.sections:
                 if section.title and bubble.kind != "input":
                     parts.append(section.title)

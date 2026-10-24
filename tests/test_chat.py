@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from textual import events
 from textual.app import App, ComposeResult
 from textual.scrollbar import ScrollTo
 
 from open_trading_agents.chat import ChatView
 from open_trading_agents.domain import AgentEvent
-from open_trading_agents.transcript import Transcript, TranscriptView
+from open_trading_agents.transcript import Transcript, TranscriptIndex, TranscriptView
 
 
 class ChatTestApp(App[None]):
@@ -109,6 +110,8 @@ async def test_reasoning_and_tool_details_toggle_with_keyboard_and_mouse() -> No
         assert "Check the arithmetic" not in view.visible_plain()
         assert "python calc.py" not in view.visible_plain()
         view.navigate("home")
+        view.select_detail(1)
+        assert view._selected is view.bubbles[0]
         view.select_detail(1)
         view.toggle_selected()
         assert "Check the arithmetic" in view.visible_plain()
@@ -314,13 +317,14 @@ async def test_long_bubble_titles_stay_visible_and_switch_at_contribution_bounda
                          if part.kind == "body" and part.bubble is not None and part.bubble.agent == "Bull Researcher")
         view.scroll_to(y=view._offsets[bull_body] + 10, animate=False, immediate=True)
         first = "".join(segment.text for segment in view.render_line(0))
-        assert "Bull Researcher" in first and "Round 1/2" in first and "Turn 1" in first and "streaming" in first
+        assert "Bull Researcher" in first and "Round 1/2" in first and "Turn 1" in first
+        assert view._activity_frame in first and "streaming" not in first
         body = "".join(segment.text for segment in view.render_line(1))
         assert "line 11" in body
         data = {"conversation_turn_id": "research:1:1", "round": 1, "turn": 1, "total_rounds": 2}
         view.consume(AgentEvent("agent_end", "Bull Researcher", "research", data=data))
         view.sync()
-        assert "streaming" not in "".join(segment.text for segment in view.render_line(0))
+        assert "✓" in "".join(segment.text for segment in view.render_line(0))
         await pilot.resize_terminal(80, 20)
         await pilot.pause()
         assert "Bull Researcher" in "".join(segment.text for segment in view.render_line(0))
@@ -381,10 +385,110 @@ async def test_sticky_input_clicks_and_covered_details_use_visible_header_target
         assert not view._detail_is_visible(reasoning)
         await pilot.click("#chat", offset=(4, 0))
         assert reasoning.collapsed
-        view.select_detail(-1)
+        bull = next(bubble for bubble in view.bubbles if bubble.agent == "Bull Researcher")
+        assert bull.collapsed and view._selected is bull
+        assert "Bull text" not in view.visible_plain()
+        await pilot.click("#chat", offset=(4, 0))
+        assert not bull.collapsed and reasoning.collapsed
+        view.select_detail(1)
         assert view._selected is reasoning
         assert view._detail_is_visible(reasoning)
         row = view._detail_rows[reasoning] - int(view.scroll_y)
         assert row > 0
         view.toggle_selected()
         assert not reasoning.collapsed
+
+
+async def test_turn_disclosure_retains_streamed_content_and_nested_detail_states() -> None:
+    """Collapse a running turn, retain new output, and restore independently expanded tool details."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 30)) as pilot:
+        for event in (
+            AgentEvent("turn_start", "Aggressive Analyst", "risk", data={"round": 3, "turn": 1, "total_rounds": 3}),
+            AgentEvent("reasoning", "Aggressive Analyst", "risk", "Check evidence.", {"message_id": "thinking"}),
+            AgentEvent("tool_start", "Aggressive Analyst", "risk", '{"expression":"2+2"}', {"tool": "calculate", "tool_call_id": "one"}),
+            AgentEvent("tool_result", "Aggressive Analyst", "risk", '{"result":4}', {"tool_call_id": "one"}),
+            AgentEvent("text", "Aggressive Analyst", "risk", "Initial position", {"message_id": "output"}),
+        ):
+            view.consume(event)
+        view.sync()
+        await pilot.pause()
+        view.navigate("home")
+        bubble = view.bubbles[0]
+        view.select_detail(1)
+        assert view._selected is bubble
+        view.toggle_selected()
+        assert bubble.collapsed
+        assert view.visible_plain() == "Aggressive Analyst"
+        assert view.virtual_size.height == 2
+        assert "▸ Aggressive Analyst" in "".join(segment.text for segment in view.render_line(0))
+        view.consume(AgentEvent("text", "Aggressive Analyst", "risk", " after verification", {"message_id": "output"}))
+        view.consume(AgentEvent("agent_end", "Aggressive Analyst", "risk", data={"output": "Initial position after verification"}))
+        view.sync()
+        assert bubble.collapsed and view.virtual_size.height == 2
+        assert "Initial position after verification" in view.plain()
+        assert "Initial position" not in view.visible_plain()
+        assert "✓" in "".join(segment.text for segment in view.render_line(0))
+        view.toggle_selected()
+        assert not bubble.collapsed and "Initial position after verification" in view.visible_plain()
+        assert "Check evidence." not in view.visible_plain() and '{"result":4}' not in view.visible_plain()
+        view.select_detail(1)
+        view.select_detail(1)
+        tool = view._selected
+        view.toggle_selected()
+        assert '{"result":4}' in view.visible_plain()
+        view.navigate("home")
+        await pilot.click("#chat", offset=(4, 0))
+        assert bubble.collapsed and tool is not None and not tool.collapsed
+        await pilot.click("#chat", offset=(4, 0))
+        assert not bubble.collapsed and '{"result":4}' in view.visible_plain()
+
+
+async def test_activity_animation_repaints_headers_without_reindexing_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Animate both a pinned active turn and its collapsed header while retaining cached output."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 24)) as pilot:
+        view.consume(AgentEvent("text", "Bull Researcher", "research", "Evidence\n" * 100, {"message_id": "output"}))
+        view.sync()
+        await pilot.pause()
+        view.navigate("home")
+        view.scroll_to(y=20, animate=False, immediate=True)
+        parts, offsets = view._parts, tuple(view._offsets)
+        revisions = [section.document.revision for section in view.bubbles[0].sections]
+
+        def forbid_sync(index: TranscriptIndex, width: int) -> bool:
+            """Fail if an animation tick tries to wrap historical output again."""
+            raise AssertionError("Animation reindexed transcript content")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(TranscriptIndex, "sync", forbid_sync)
+            now = time.monotonic()
+            view.refresh_activity(now)
+            first = "".join(segment.text for segment in view.render_line(0))
+            view.refresh_activity(now + 0.1)
+            second = "".join(segment.text for segment in view.render_line(0))
+            assert first != second and "Bull Researcher" in second and "streaming" not in second
+            assert view._parts is parts and tuple(view._offsets) == offsets
+            assert [section.document.revision for section in view.bubbles[0].sections] == revisions
+        await pilot.click("#chat", offset=(4, 0))
+        assert view.bubbles[0].collapsed
+        first = "".join(segment.text for segment in view.render_line(0))
+        view.refresh_activity(now + 0.2)
+        assert first != "".join(segment.text for segment in view.render_line(0))
+
+
+async def test_separate_system_panes_do_not_duplicate_inline_content_or_disclosures() -> None:
+    """Retain complete system source while dedicating the debate chat to shared inputs and turns."""
+    view = ChatView(id="chat", debate=True, show_systems=False)
+    async with ChatTestApp(view).run_test(size=(100, 30)):
+        view.consume(AgentEvent("system", "Bull Researcher", "research", "Separate system guidance"))
+        view.sync()
+        assert not view.has_details
+        assert "Separate system guidance" in view.plain()
+        assert not view.visible_plain() and not view._parts
+        view.consume(AgentEvent("text", "Bull Researcher", "research", "Public argument"))
+        view.sync()
+        assert view.has_details
+        assert view.visible_plain() == "Bull Researcher\nPublic argument"
+        assert all(section not in view._detail_rows for section in view.systems.values())
+        assert view._parts[-1].kind == "bottom"
