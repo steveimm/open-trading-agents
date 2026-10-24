@@ -213,10 +213,11 @@ def load_ohlcv(symbol: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataF
         data = downloaded
 
     data = _clean_dataframe(data)
-
     data = data[data["Date"] <= as_of_dt]
+    if data.empty:
+        raise NoMarketDataError(symbol, canonical, f"no price rows on or before {as_of_date}")
 
-    if not data.empty and pd.isna(data["Close"].iloc[-1]):
+    if pd.isna(data["Close"].iloc[-1]):
         settled = data["Close"].notna().to_numpy().nonzero()[0]
         if settled.size == 0:
             raise NoMarketDataError(symbol, canonical, "no bar in range has a closing price")

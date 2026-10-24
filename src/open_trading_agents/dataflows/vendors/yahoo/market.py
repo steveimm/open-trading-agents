@@ -15,6 +15,7 @@ from open_trading_agents.dataflows.vendors.yahoo.common import raise_for_empty, 
 from open_trading_agents.dataflows.vendors.yahoo.ohlcv import _assert_ohlcv_not_stale, load_ohlcv
 
 logger = logging.getLogger(__name__)
+MISSING_OBSERVATION = "N/A: No observation available for this date"
 
 
 def get_YFin_data_online(
@@ -149,7 +150,7 @@ def get_stock_stats_indicators_window(
             if date_str in indicator_data:
                 indicator_value = indicator_data[date_str]
             else:
-                indicator_value = "N/A: Not a trading day (weekend or holiday)"
+                indicator_value = MISSING_OBSERVATION
 
             date_values.append((date_str, indicator_value))
             current_dt = current_dt - relativedelta(days=1)
@@ -259,4 +260,4 @@ def get_stock_stats(
         indicator_value = matching_rows[indicator].values[0]
         return indicator_value
     else:
-        return "N/A: Not a trading day (weekend or holiday)"
+        return MISSING_OBSERVATION

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from io import StringIO
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -181,6 +182,44 @@ def test_market_evidence_preserves_small_prices_and_signed_indicators(monkeypatc
     assert "| Close | 0.004234567891 |" in report
     assert "| 2024-03-15 | 0.004234567891 |" in report
     assert "| tiny_indicator | -2.5e-08 |" in report
+
+
+def test_historical_window_without_price_rows_is_explicitly_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a provider window whose observations all fall after the requested cutoff.
+
+    Args:
+        tmp_path: Isolated market-data cache.
+        monkeypatch: Replace provider requests with a newer observation window.
+    """
+    frame = pd.DataFrame(
+        {"Open": [100.0], "High": [102.0], "Low": [99.0], "Close": [101.0], "Volume": [1000]},
+        index=pd.DatetimeIndex(["2024-03-15"], name="Date"),
+    )
+    ticker = Mock()
+    ticker.history.return_value = frame
+    monkeypatch.setattr(ohlcv.yf, "Ticker", Mock(return_value=ticker))
+
+    with run_config({"data_cache_dir": str(tmp_path)}), pytest.raises(NoMarketDataError, match="no price rows on or before"):
+        ohlcv.load_ohlcv("NVDA", "2020-03-02")
+
+
+def test_missing_indicator_observation_does_not_claim_a_market_holiday(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Describe an absent weekday observation without inventing a calendar explanation.
+
+    Args:
+        monkeypatch: Supply an indicator series with a missing weekday.
+    """
+    monkeypatch.setattr(market, "_get_stock_stats_bulk", Mock(return_value={"2024-03-14": "100.5"}))
+
+    report = market.get_stock_stats_indicators_window("NVDA", "close_50_sma", "2024-03-15", 1)
+
+    assert "2024-03-15: N/A: No observation available for this date" in report
+    assert "2024-03-14: 100.5" in report
+    assert "weekend" not in report and "holiday" not in report
+
+    frame = pd.DataFrame({"Date": pd.to_datetime(["2024-03-14"]), "Close": [100.5]})
+    monkeypatch.setattr(market, "load_ohlcv", Mock(return_value=frame))
+    assert market.get_stock_stats("NVDA", "close_50_sma", "2024-03-15") == market.MISSING_OBSERVATION
 
 
 def test_http_failure_does_not_retain_secret_in_request_or_context(monkeypatch: pytest.MonkeyPatch) -> None:
