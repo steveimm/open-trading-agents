@@ -69,7 +69,8 @@ async def test_stage_tabs_distinguish_running_complete_and_failed(monkeypatch: p
         app.flush_events()
         await pilot.pause()
         assert app.active_stage == "analysis"
-        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
+        assert str(app.query_one("#tab-analysis", Tab).label) == "Analysis"
+        assert re.fullmatch(r"Analysis · \d{2}:\d{2}", str(app.query_one("#stage-status", Static).render()))
         running_tab = app.query_one("#tab-research", Tab)
         start = app._running_spinner.start_time
         assert start is not None
@@ -90,7 +91,7 @@ async def test_stage_tabs_distinguish_running_complete_and_failed(monkeypatch: p
         assert str(running_tab.render()).startswith("Research Debate ")
         assert "[run]" not in str(running_tab.render())
         assert not relabelled
-        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
+        assert str(app.query_one("#tab-analysis", Tab).label) == "Analysis"
         assert app.query_one("#tab-analysis", Tab).has_class("complete")
         assert app.query_one("#tab-research", Tab).has_class("running")
         app.refresh_clocks()
@@ -101,7 +102,7 @@ async def test_stage_tabs_distinguish_running_complete_and_failed(monkeypatch: p
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
         app._refresh_tabs(start + 1)
         assert "[failed]" in str(running_tab.label)
-        assert "✓" in str(app.query_one("#tab-analysis", Tab).label)
+        assert str(app.query_one("#tab-analysis", Tab).label) == "Analysis"
         assert "Provider failed" in str(app.query_one("#run-error", Static).render())
 
 

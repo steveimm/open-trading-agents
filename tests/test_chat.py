@@ -318,13 +318,14 @@ async def test_long_bubble_titles_stay_visible_and_switch_at_contribution_bounda
         view.scroll_to(y=view._offsets[bull_body] + 10, animate=False, immediate=True)
         first = "".join(segment.text for segment in view.render_line(0))
         assert "Bull Researcher" in first and "Round 1/2" in first and "Turn 1" in first
-        assert view._activity_frame in first and "streaming" not in first
+        assert f"Turn 1 {view._activity_frame}" in first and "streaming" not in first
         body = "".join(segment.text for segment in view.render_line(1))
         assert "line 11" in body
         data = {"conversation_turn_id": "research:1:1", "round": 1, "turn": 1, "total_rounds": 2}
         view.consume(AgentEvent("agent_end", "Bull Researcher", "research", data=data))
         view.sync()
-        assert "✓" in "".join(segment.text for segment in view.render_line(0))
+        finished_title = "".join(segment.text for segment in view.render_line(0)).split("─", 1)[0].rstrip()
+        assert finished_title == "╭ ▾ Bull Researcher · Round 1/2 · Turn 1"
         await pilot.resize_terminal(80, 20)
         await pilot.pause()
         assert "Bull Researcher" in "".join(segment.text for segment in view.render_line(0))
@@ -428,7 +429,8 @@ async def test_turn_disclosure_retains_streamed_content_and_nested_detail_states
         assert bubble.collapsed and view.virtual_size.height == 2
         assert "Initial position after verification" in view.plain()
         assert "Initial position" not in view.visible_plain()
-        assert "✓" in "".join(segment.text for segment in view.render_line(0))
+        finished_title = "".join(segment.text for segment in view.render_line(0)).split("─", 1)[0].rstrip()
+        assert finished_title == "╭ ▸ Aggressive Analyst · Round 3/3 · Turn 1"
         view.toggle_selected()
         assert not bubble.collapsed and "Initial position after verification" in view.visible_plain()
         assert "Check evidence." not in view.visible_plain() and '{"result":4}' not in view.visible_plain()

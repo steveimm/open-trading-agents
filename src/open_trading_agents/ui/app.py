@@ -449,7 +449,7 @@ class TradingApp(App[None]):
         if not self.is_running:
             return
         frame = self._running_spinner.render(time.monotonic() if now is None else now).plain
-        suffixes = {"running": f" {frame}", "complete": " ✓", "failed": " [failed]"}
+        suffixes = {"running": f" {frame}", "failed": " [failed]"}
         for stage, label in STAGES:
             status = self.stages[stage].status
             indicator = suffixes.get(status, "")
@@ -519,7 +519,7 @@ class TradingApp(App[None]):
         self._refresh_tabs(now)
         frame = self._running_spinner.render(now).plain
         self._refresh_terminal_title(frame)
-        statuses = {"running": frame, "complete": "✓", "using tool": f"{frame} tool"}
+        status_suffixes = {"running": f" {frame}", "complete": "", "using tool": f" {frame} tool"}
         for view in self._render_views:
             if isinstance(view, ChatView) and view.is_on_screen:
                 view.refresh_activity(now)
@@ -535,7 +535,8 @@ class TradingApp(App[None]):
         compact = self.screen.has_class("compact")
         self._status_widgets["run-status"].update(" · ".join(header))
         stage = self.stages[self.active_stage]
-        stage_text = f"{STAGES[self.stage_index][1]} · {statuses.get(stage.status, stage.status)} · {duration(stage.elapsed(now))}"
+        stage_suffix = status_suffixes.get(stage.status, f" · {stage.status}")
+        stage_text = f"{STAGES[self.stage_index][1]}{stage_suffix} · {duration(stage.elapsed(now))}"
         participants = self._stage_agents[self.active_stage]
         if self.active_stage not in {"analysis", "reports"} and participants:
             name = self.current_speakers.get(self.active_stage, participants[-1])
@@ -558,8 +559,9 @@ class TradingApp(App[None]):
             name = self._memory_agents[-1]
             activity = self.agents[name]
             values = [value for (agent, _), value in self.usage.items() if agent in self._memory_agents]
+            suffix = status_suffixes.get(activity.status, f" · {activity.status}")
             self._status_widgets["memory-status"].update(
-                f"{name} · {statuses.get(activity.status, activity.status)} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
+                f"{name}{suffix} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
         self._status_widgets["usage"].update(usage_label(list(self.usage.values()), compact=compact))
         self._refresh_shortcuts()
 

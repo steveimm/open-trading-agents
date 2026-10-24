@@ -38,7 +38,7 @@ For a custom output directory, pass its run folder instead, for example `resume 
 
 ## Reading the interface
 
-Stage tabs show progress. Debate prompts occupy the left column, with the conversation on the right. Left/Right selects a debate pane, Up/Down scrolls it, and `f` toggles fullscreen. System prompts are available before the agents' turns begin.
+Running stage tabs and agent turns show an animated loading indicator that disappears when they finish. Debate prompts occupy the left column, with the conversation on the right. Left/Right selects a debate pane, Up/Down scrolls it, and `f` toggles fullscreen. System prompts are available before the agents' turns begin.
 
 The terminal tab/window title shows the ticker and an animated activity indicator while a run is active. The activity indicator disappears after completion. Failed or cancelled runs show a status label. On exit, the app clears its title and restores the previous one where the terminal supports title restoration. Headless and JSON-event output contain no title-control sequences.
 

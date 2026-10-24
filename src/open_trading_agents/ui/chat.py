@@ -505,8 +505,9 @@ class ChatView(FollowScrollView):
         assert bubble is not None
         color = "#e8b86d" if bubble.kind == "input" else "#668ab5"
         suffix = f" · {bubble.title}" if bubble.title else ""
-        state = self._activity_frame if bubble.status == "streaming" else "✓" if bubble.status == "complete" and bubble.kind == "agent" else bubble.status
-        active = f" · {state}" if bubble.status in {"streaming", "error", "stopped"} or state == "✓" else ""
+        active = f" {self._activity_frame}" if bubble.status == "streaming" else ""
+        if bubble.status in {"error", "stopped"}:
+            active = f" · {bubble.status}"
         fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
         style = "bold #f1e5b9 on #303547" if disclosure is not None and disclosure is self._selected else f"bold {color}"
         title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
