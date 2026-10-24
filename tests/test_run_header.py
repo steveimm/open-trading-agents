@@ -61,6 +61,7 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(tmp_path: P
         harness=HarnessSettings(kind="pi", model="unused-shared-model"),
         quick=HarnessSettings(kind="pi", provider="local", model="selected-worker", effort="low"),
         deep=HarnessSettings(kind="claude", model="selected-manager", effort="high"),
+        output_language="Korean",
     )
     result = RunResult("fixture", tmp_path, "Hold", {})
     report_dir = tmp_path / "reports"
@@ -82,3 +83,4 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(tmp_path: P
     assert received["ticker"] == "NVDA"
     assert received["working_config"] == settings.model_settings().runtime()
     assert received["decision_config"] == settings.model_settings(True).runtime()
+    assert received["output_language"] == settings.output_language
