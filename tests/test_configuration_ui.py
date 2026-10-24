@@ -78,6 +78,53 @@ def test_configure_saves_one_profile_with_effort_and_no_role_assignments(wizard:
     assert "Working agents" not in result.output and "Decision manager" not in result.output
 
 
+@pytest.mark.parametrize("confirmation", [None, "cancel"])
+def test_delete_profile_requires_confirmation_and_does_not_discover_models(
+    wizard: Path, monkeypatch: pytest.MonkeyPatch, confirmation: str | None,
+) -> None:
+    """Reject or cancel deletion without changing the saved profile or its default selection."""
+    path = save_preset("daily", HarnessSettings(kind="pi", model="saved", effort="high"))
+    wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\n')
+    before = {file: file.read_bytes() for file in (wizard, path)}
+
+    def unexpected(settings: HarnessSettings) -> ModelCatalog:
+        """Deletion must not start native model discovery."""
+        raise AssertionError("Unexpected discovery during deletion")
+
+    monkeypatch.setattr(configuration_ui, "discover_models", unexpected)
+    answers = [1, 0, confirmation] if confirmation is None else [1, 0]
+    shown = select_choices(monkeypatch, answers)
+    result = runner.invoke(cli.app, ["configure"])
+    assert result.exit_code == (0 if confirmation is None else 1), result.output
+    assert shown[0] == ("Configuration", ["Create or update profile", "Delete saved profile"])
+    assert "saved" in shown[1][1][0] and "high" in shown[1][1][0]
+    assert shown[2][0] == "Delete saved profile 'daily'?"
+    assert {file: file.read_bytes() for file in before} == before
+
+
+def test_configure_deletes_an_invalid_default_profile_after_confirmation(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow recovery from an unreadable profile and clear its default before the next run."""
+    path = preset_path("broken")
+    path.parent.mkdir(parents=True)
+    path.write_text("invalid TOML {{")
+    wizard.write_text('default_preset = "broken"\noutput_language = "Korean"\n[harness]\nkind = "pi"\n')
+    shown = select_choices(monkeypatch, [1, 0, 0])
+    result = runner.invoke(cli.app, ["configure"])
+    assert result.exit_code == 0, result.output
+    assert "Unreadable profile" in shown[1][1][0]
+    assert "Deleted profile: broken" in result.output
+    assert not path.exists()
+    assert load_settings().default_preset is None
+    assert load_settings().output_language == "Korean"
+    assert "Harness" not in [label for label, _ in shown]
+
+
+def test_delete_profile_empty_menu_does_not_create_files(wizard: Path) -> None:
+    """An empty profile directory does not need a picker or create configuration state."""
+    configuration_ui.delete_profile_interactively(wizard)
+    assert not wizard.parent.exists()
+
+
 def test_configure_preserves_manually_configured_role_tiers(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Updating a profile does not erase explicit unattended-run tiers or unrelated settings."""
     wizard.parent.mkdir(parents=True)
@@ -97,7 +144,7 @@ def test_saving_another_profile_keeps_the_existing_default(wizard: Path, monkeyp
     previous = save_preset("daily", HarnessSettings(kind="claude", model="stable-model"))
     contents = previous.read_text()
     wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\n')
-    select_choices(monkeypatch, [None, 1, 1, None, 0, None])
+    select_choices(monkeypatch, [None, None, 1, 1, None, 0, None])
     result = runner.invoke(cli.app, ["configure"], input="experiment\n")
     assert result.exit_code == 0, result.output
     assert load_settings().default_preset == "daily"
@@ -113,7 +160,7 @@ def test_replacing_selected_profile_updates_its_default_status(
     """The final choice can retain or clear the selected profile's default marker."""
     save_preset("daily", HarnessSettings(kind="pi", provider="local", model="small"))
     wizard.write_text('default_preset = "daily"\n[harness]\nkind="pi"\nprovider="local"\nmodel="small"\n')
-    select_choices(monkeypatch, [None, None, 2, None, 0, 0, answer])
+    select_choices(monkeypatch, [None, None, None, 2, None, 0, 0, answer])
     result = runner.invoke(cli.app, ["configure"], input="daily\n")
     assert result.exit_code == 0, result.output
     assert load_settings().default_preset == expected
@@ -213,7 +260,7 @@ def test_run_selects_independent_profiles_without_changing_saved_files(wizard: P
     assert selected.quick == working and selected.deep == decision
     assert original.quick is None and original.deep is None
     assert [label for label, _ in shown] == ["Working agents", "Decision manager"]
-    assert "alpha (default)" in shown[0][1][0]
+    assert shown[0][1][0].startswith("alpha ·")
     assert " / low" in shown[0][1][0] and " / high" in shown[1][1][2]
     assert {path: path.read_bytes() for path in paths} == before
     assert not wizard.exists()

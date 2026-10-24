@@ -9,6 +9,7 @@ import typer
 from open_trading_agents.config import (
     HarnessSettings,
     Settings,
+    delete_preset,
     list_presets,
     load_preset,
     load_settings,
@@ -21,19 +22,20 @@ from open_trading_agents.config import (
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
 
 _MENU_STYLE = questionary.Style([
-    ("highlighted", "fg:#74b9ff bold noinherit"),
+    ("selected", "noinherit noreverse"),
+    ("highlighted", "noinherit noreverse"),
     ("pointer", "fg:#74b9ff bold noinherit"),
     ("answer", "fg:#74b9ff"),
 ])
 
 
 def _choose(label: str, choices: list[str], default: int = 0) -> int:
-    """Choose from a keyboard menu with the current value initially highlighted.
+    """Choose from a keyboard menu with an explicit default label and movable pointer.
 
     Args:
         label: Name of the selection.
         choices: Human-readable choices in display order.
-        default: Initially highlighted index, accepted by pressing Enter.
+        default: Initially selected index, marked with a suffix and accepted by Enter.
 
     Returns:
         The selected zero-based index.
@@ -41,7 +43,8 @@ def _choose(label: str, choices: list[str], default: int = 0) -> int:
     Raises:
         typer.Abort: The user cancels or terminal input closes.
     """
-    options = [questionary.Choice(title, value=index) for index, title in enumerate(choices)]
+    options = [questionary.Choice(f"{title} (default)" if index == default and not title.endswith(" (default)") else title, value=index)
+               for index, title in enumerate(choices)]
     try:
         selected = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
@@ -60,7 +63,7 @@ def _confirm(label: str, default: bool = False) -> bool:
 
     Args:
         label: Decision presented to the user.
-        default: Initially highlighted answer.
+        default: Initially selected answer.
 
     Returns:
         Whether the user selected Yes.
@@ -256,8 +259,7 @@ def _agent_profile(label: str, current: HarnessSettings, profiles: dict[str, Har
         selections.append(current)
     preferred = None
     for name, profile in profiles.items():
-        suffix = " (default)" if name == default_preset else ""
-        labels.append(f"{name}{suffix} · {_describe(profile)}")
+        labels.append(f"{name} · {_describe(profile)}")
         if name == default_preset and profile == current:
             preferred = len(selections)
         selections.append(profile)
@@ -316,15 +318,44 @@ def _preset() -> tuple[str, bool] | None:
             return None
 
 
+def delete_profile_interactively(path: Path) -> None:
+    """Choose a saved profile and confirm its removal before changing any files.
+
+    Args:
+        path: Selected application configuration, whose default is cleared if needed.
+    """
+    names = list_presets()
+    if not names:
+        typer.echo("No saved profiles to delete.")
+        return
+    labels = []
+    for name in names:
+        try:
+            description = _describe(load_preset(name))
+        except (ValueError, OSError):
+            description = "Unreadable profile"
+        labels.append(f"{name} · {description}")
+    name = names[_choose("Saved profile to delete", labels)]
+    typer.echo("Default selections for this profile will also be cleared.")
+    if not _confirm(f"Delete saved profile '{name}'?"):
+        typer.echo("Deletion cancelled.")
+        return
+    delete_preset(name, path)
+    typer.echo(f"Deleted profile: {name}")
+
+
 def configure_interactively(path: Path) -> None:
     """Configure one reusable agent profile without assigning run-specific roles.
 
     Args:
         path: Application configuration file to create or update.
     """
+    if list_presets() and _choose("Configuration", ["Create or update profile", "Delete saved profile"]) == 1:
+        delete_profile_interactively(path)
+        return
     settings = load_settings(path) if path.exists() else Settings()
     catalogs: dict[str, ModelCatalog] = {}
-    typer.echo("Current choices start highlighted. Ctrl+C cancels setup.")
+    typer.echo("Defaults are marked (default). Ctrl+C cancels setup.")
     typer.echo("\nAgent profile")
     harness = _runtime(settings.harness, catalogs)
     preset = _preset()
