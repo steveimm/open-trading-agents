@@ -115,11 +115,6 @@ def build_verified_market_snapshot(
 
     lines += [
         "",
-        "Use this snapshot as the source of truth for exact OHLCV, price-level, "
-        "and indicator-value claims. If another tool output conflicts with it, "
-        "flag the discrepancy rather than inventing a reconciled number. Do not "
-        "claim historical validation, support/resistance bounces, or exact "
-        "percentage moves unless directly supported by tool output with concrete "
-        "dates and prices.",
+        "Use this snapshot as the source of truth for exact OHLCV, price-level, and indicator-value claims. If another tool output conflicts with it, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless directly supported by tool output with concrete dates and prices.",
     ]
     return "\n".join(lines)

@@ -165,8 +165,16 @@ def write_transcript(path: Path, events: list[AgentEvent], append: bool = False)
             handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
 
 
-def write_reports(directory: Path, ticker: str, trade_date: str, outputs: dict[str, str], rating: str,
-                  settings: dict[str, Any], events: list[AgentEvent], include_html: bool = True) -> Path:
+def write_reports(
+    directory: Path,
+    ticker: str,
+    trade_date: str,
+    outputs: dict[str, str],
+    rating: str,
+    settings: dict[str, Any],
+    events: list[AgentEvent],
+    include_html: bool = True,
+) -> Path:
     """Write individual reports, combined reports, and a local event transcript.
 
     Args:

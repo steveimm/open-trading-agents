@@ -148,10 +148,17 @@ class TradingApp(App[None]):
         Binding("ctrl+c,q", "stop", "Quit", priority=True),
     ]
 
-    def __init__(self, run: Callable[[EventSink], Awaitable[object]] | None = None, *,
-                 selected_analysts: tuple[str, ...] = tuple(ANALYSTS), ticker: str = "", run_dir: Path | None = None,
-                 working_config: HarnessConfig | None = None, decision_config: HarnessConfig | None = None,
-                 output_language: str = "English") -> None:
+    def __init__(
+        self,
+        run: Callable[[EventSink], Awaitable[object]] | None = None,
+        *,
+        selected_analysts: tuple[str, ...] = tuple(ANALYSTS),
+        ticker: str = "",
+        run_dir: Path | None = None,
+        working_config: HarnessConfig | None = None,
+        decision_config: HarnessConfig | None = None,
+        output_language: str = "English",
+    ) -> None:
         """Create stage views without starting native model work.
 
         Args:

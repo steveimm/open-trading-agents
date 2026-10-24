@@ -232,9 +232,15 @@ def select_research_depth(settings: Settings) -> Settings:
     return settings.model_copy(update={"research_rounds": research, "risk_rounds": risk})
 
 
-def _agent_profile(label: str, current: HarnessSettings, profiles: dict[str, HarnessSettings], default_preset: str | None,
-                   catalogs: dict[str, ModelCatalog], same_as: HarnessSettings | None = None,
-                   inherit_working: bool = False) -> HarnessSettings:
+def _agent_profile(
+    label: str,
+    current: HarnessSettings,
+    profiles: dict[str, HarnessSettings],
+    default_preset: str | None,
+    catalogs: dict[str, ModelCatalog],
+    same_as: HarnessSettings | None = None,
+    inherit_working: bool = False,
+) -> HarnessSettings:
     """Select a saved profile or configure a runtime for one role group.
 
     Args:

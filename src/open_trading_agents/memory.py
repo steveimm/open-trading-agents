@@ -99,19 +99,23 @@ def fetch_returns(ticker: str, trade_date: str, holding_days: int = 5, benchmark
     """
     if isinstance(holding_days, bool) or not isinstance(holding_days, int) or holding_days < 1:
         raise ValueError("holding_days must be a positive integer")
+
     start = datetime.strptime(trade_date, "%Y-%m-%d")
     end = start + timedelta(days=round((holding_days + 1) * 7 / 5) + 7)
     stock = _by_day(get_closes(ticker, trade_date, end.strftime("%Y-%m-%d")))
     stock = stock[stock.index > start]
     bench_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
     bench = _by_day(get_closes(benchmark, bench_start, end.strftime("%Y-%m-%d")))
+
     if len(stock) <= holding_days:
         return None, None, None, None
     entry, exit_date = stock.index[0], stock.index[holding_days]
     if bench.empty or bench.index[0] > entry or bench.index[-1] < exit_date:
         return None, None, None, None
+
     raw_return = float(stock.iloc[holding_days] / stock.iloc[0] - 1)
     benchmark_return = float(bench.asof(exit_date) / bench.asof(entry) - 1)
+
     return raw_return, raw_return - benchmark_return, holding_days, exit_date.strftime("%Y-%m-%d")
 
 
@@ -262,9 +266,7 @@ class MemoryLog:
             Plain text describing the measured window and reflection.
         """
         header = (
-            f"{entry['trade_date']} | {entry['ticker']} | {entry['rating']} | "
-            f"{entry['holding_days']} trading days | raw {entry['raw_return']:+.2%} | "
-            f"alpha vs {entry['benchmark']} {entry['alpha_return']:+.2%} | known {entry['resolution_date']}"
+            f"{entry['trade_date']} | {entry['ticker']} | {entry['rating']} | {entry['holding_days']} trading days | raw {entry['raw_return']:+.2%} | alpha vs {entry['benchmark']} {entry['alpha_return']:+.2%} | known {entry['resolution_date']}"
         )
         decision = f"\nDecision:\n{entry['decision']}" if include_decision else ""
         return f"{header}{decision}\nReflection:\n{entry['reflection']}"

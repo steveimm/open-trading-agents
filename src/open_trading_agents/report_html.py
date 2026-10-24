@@ -183,16 +183,14 @@ def render_report(ticker: str, trade_date: str, rating: str, details: list[tuple
     contents, body = [], []
     for section_index, (heading, _folder, entries) in enumerate(parts, 1):
         agent_links = "".join(
-            f'<li><a href="#s{section_index}-{index}"><span class="bar" aria-hidden="true"></span>'
-            f'<span class="label">{escape(name)}</span></a></li>'
+            f'<li><a href="#s{section_index}-{index}"><span class="bar" aria-hidden="true"></span><span class="label">{escape(name)}</span></a></li>'
             for index, (name, _filename, _text) in enumerate(entries, 1)
         )
         numeral, separator, name = heading.partition(". ")
         if not separator:
             numeral, name = "+", heading
         contents.append(
-            f'<li><a href="#s{section_index}"><span class="num">{escape(numeral)}</span>'
-            f'<span class="label">{escape(name)}</span></a><ul>{agent_links}</ul></li>'
+            f'<li><a href="#s{section_index}"><span class="num">{escape(numeral)}</span><span class="label">{escape(name)}</span></a><ul>{agent_links}</ul></li>'
         )
         body.append(f'<section id="s{section_index}"><h2>{escape(heading)}</h2>')
         for index, (name, _filename, text) in enumerate(entries, 1):

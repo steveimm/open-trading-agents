@@ -266,6 +266,7 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
     if path is not None or source.exists():
         with source.open("rb") as handle:
             values = tomllib.load(handle)
+
     settings = Settings.model_validate(values)
     if use_default_preset and settings.default_preset is not None:
         try:
@@ -274,9 +275,11 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
             raise ValueError(f"Default preset {settings.default_preset!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default profile.") from exc
         values.update(harness=profile, quick=None, deep=None)
         settings = Settings.model_validate(values)
+
     settings.state_dir = settings.state_dir.expanduser()
     if not settings.state_dir.is_absolute():
         settings.state_dir = source.resolve().parent / settings.state_dir
+
     return settings
 
 
@@ -321,7 +324,12 @@ def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) 
             temporary.unlink(missing_ok=True)
 
 
-def _set_harness_tables(document: TOMLDocument, harness: HarnessSettings, quick: HarnessSettings | None, deep: HarnessSettings | None) -> None:
+def _set_harness_tables(
+    document: TOMLDocument,
+    harness: HarnessSettings,
+    quick: HarnessSettings | None,
+    deep: HarnessSettings | None,
+) -> None:
     """Replace tier choices while retaining comments on existing configuration fields.
 
     Args:

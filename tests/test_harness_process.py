@@ -38,24 +38,8 @@ def child_stopped(pid: int) -> bool:
 @pytest.mark.parametrize("parent_ignores_term", [False, True])
 async def test_forced_shutdown_stops_only_owned_parent_and_child(tmp_path: Path, parent_ignores_term: bool) -> None:
     """Kill a stubborn native process tree after giving stdin EOF a chance to finish."""
-    child_script = tmp_path / "child.py"
-    child_script.write_text('''import os,signal,sys,time
-from pathlib import Path
-signal.signal(signal.SIGTERM,signal.SIG_IGN)
-Path(sys.argv[1]).write_text(str(os.getpid()))
-while True:time.sleep(60)
-''')
-    parent_script = tmp_path / "parent.py"
-    parent_script.write_text('''import json,os,signal,subprocess,sys,time
-from pathlib import Path
-if sys.argv[3]=='True':signal.signal(signal.SIGTERM,signal.SIG_IGN)
-child=subprocess.Popen([sys.executable,sys.argv[1],sys.argv[2]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-while not Path(sys.argv[2]).exists():time.sleep(0.01)
-for line in sys.stdin:
- request=json.loads(line)
- print(json.dumps({'id':request['id'],'result':{'child':child.pid,'group':os.getpgrp()}}),flush=True)
-while True:time.sleep(60)
-''')
+    child_script = Path(__file__).with_name("fixtures") / "stubborn_child.py"
+    parent_script = Path(__file__).with_name("fixtures") / "stubborn_parent.py"
     marker = tmp_path / "child.pid"
 
     async def emit(event: AgentEvent) -> None:

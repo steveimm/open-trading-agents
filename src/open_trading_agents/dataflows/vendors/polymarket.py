@@ -76,9 +76,7 @@ def get_prediction_markets(topic: str, limit: int | None = None, as_of_date: str
     """
     if is_historical(as_of_date):
         return (
-            f"Prediction-market odds are withheld for {as_of_date}. Polymarket serves "
-            f"only live odds on open markets, with no historical vintage, so serving "
-            f"them would put post-decision information into a {as_of_date} analysis."
+            f"Prediction-market odds are withheld for {as_of_date}. Polymarket serves only live odds on open markets, with no historical vintage, so serving them would put post-decision information into a {as_of_date} analysis."
         )
     if limit is None:
         limit = DEFAULT_LIMIT
@@ -88,8 +86,7 @@ def get_prediction_markets(topic: str, limit: int | None = None, as_of_date: str
     except requests.RequestException as e:
         logger.warning("Polymarket search failed for %r: %s", topic, e)
         return (
-            f"Polymarket data is currently unavailable (network error: {e}). "
-            f"Proceed without prediction-market signal for '{topic}'."
+            f"Polymarket data is currently unavailable (network error: {e}). Proceed without prediction-market signal for '{topic}'."
         )
 
     now = datetime.now(UTC)
@@ -97,17 +94,15 @@ def get_prediction_markets(topic: str, limit: int | None = None, as_of_date: str
     candidates.sort(key=lambda m: m.get("volumeNum") or 0, reverse=True)
 
     header = (
-        f'## Polymarket prediction markets: "{topic}"\n'
-        f"Live, market-implied probabilities (higher traded volume = deeper, "
-        f"more reliable). A probability is the crowd's priced odds of the event, "
-        f"not a forecast you should take as certain.\n\n"
+        f'''## Polymarket prediction markets: "{topic}"
+Live, market-implied probabilities (higher traded volume = deeper, more reliable). A probability is the crowd\'s priced odds of the event, not a forecast you should take as certain.
+
+'''
     )
 
     if not candidates:
         return header + (
-            f"No open prediction markets matched '{topic}'. Polymarket coverage "
-            f"is concentrated in macro, political, geopolitical, and crypto "
-            f"events; a specific equity may have none."
+            f"No open prediction markets matched '{topic}'. Polymarket coverage is concentrated in macro, political, geopolitical, and crypto events; a specific equity may have none."
         )
 
     lines = []

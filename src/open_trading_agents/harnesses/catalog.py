@@ -117,7 +117,11 @@ async def _read_output(process: asyncio.subprocess.Process) -> str:
 
 
 async def _rpc(
-    process: asyncio.subprocess.Process, identifier: int, method: str, params: dict[str, Any], budget: int,
+    process: asyncio.subprocess.Process,
+    identifier: int,
+    method: str,
+    params: dict[str, Any],
+    budget: int,
 ) -> tuple[dict[str, Any], int]:
     """Read one correlated native metadata response with a bounded output budget.
 

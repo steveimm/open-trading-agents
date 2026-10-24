@@ -138,12 +138,11 @@ def _assert_ohlcv_not_stale(
         raise NoMarketDataError(
             symbol,
             canonical,
-            f"latest row is {latest.date()}, {stale_days} days before the "
-            f"requested {requested.date()} (stale) — refusing to use it",
+            f"latest row is {latest.date()}, {stale_days} days before the requested {requested.date()} (stale) — refusing to use it",
         )
 
 
-def _cache_is_fresh(data_file: str, as_of_dt: pd.Timestamp, now: pd.Timestamp | None) -> bool:
+def _cache_is_fresh(data_file: str, as_of_dt: pd.Timestamp, now: pd.Timestamp) -> bool:
     """Whether the symbol's cached download can serve this request.
 
     The file holds the download made on the day it was written, so it serves
@@ -159,15 +158,22 @@ def _cache_is_fresh(data_file: str, as_of_dt: pd.Timestamp, now: pd.Timestamp | 
 
 
 def load_ohlcv(symbol: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataFrame:
-    """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
+    """Read cached Yahoo history and exclude observations after the analysis cutoff.
 
-    Downloads 5 years of data up to today and caches per symbol. On
-    subsequent calls the cache is reused. Rows after as_of_date are
-    filtered out so backtests never see future prices.
+    Args:
+        symbol: Instrument ticker or supported alias.
+        as_of_date: Inclusive cutoff in YYYY-MM-DD format.
+        fill_gaps: Fill numeric gaps after dropping rows without a close. False
+            retains the remaining values exactly as reported.
 
-    ``fill_gaps`` carries prices forward over gaps so indicators compute on a
-    continuous series. Pass ``False`` to read the values as the vendor reported
-    them, leaving a cell that was never reported empty.
+    Returns:
+        A normalized OHLCV frame with a Date column. Downloads cover the latest
+        five years relative to today and are cached per symbol.
+
+    Raises:
+        NoMarketDataError: No usable rows remain by the cutoff or the latest close is stale.
+        VendorUnavailableError: Yahoo cannot provide a usable response.
+        ValueError: The symbol or requested date cannot be parsed.
     """
 
     canonical = normalize_symbol(symbol)

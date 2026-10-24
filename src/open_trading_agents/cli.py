@@ -37,8 +37,13 @@ class HarnessName(StrEnum):
     claude = "claude"
 
 
-def configured(path: Path | None, harness: HarnessName | None, model: str | None, provider: str | None,
-               effort: str | None = None) -> Settings:
+def configured(
+    path: Path | None,
+    harness: HarnessName | None,
+    model: str | None,
+    provider: str | None,
+    effort: str | None = None,
+) -> Settings:
     """Load application choices while leaving provider credentials with the harness.
 
     Args:
@@ -55,8 +60,13 @@ def configured(path: Path | None, harness: HarnessName | None, model: str | None
     return runtime_overrides(load_settings(path, use_default_preset=True), harness, model, provider, effort)
 
 
-def runtime_overrides(settings: Settings, harness: HarnessName | None, model: str | None, provider: str | None,
-                      effort: str | None = None) -> Settings:
+def runtime_overrides(
+    settings: Settings,
+    harness: HarnessName | None,
+    model: str | None,
+    provider: str | None,
+    effort: str | None = None,
+) -> Settings:
     """Apply explicit runtime flags to every agent tier after interactive selection.
 
     Args:
@@ -200,8 +210,11 @@ def run(
 
 
 @app.command()
-def resume(directory: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
-           headless: bool = False, events: bool = False) -> None:
+def resume(
+    directory: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    headless: bool = False,
+    events: bool = False,
+) -> None:
     """Continue a saved run using its original inputs and native session identifiers.
 
     Args:
@@ -218,14 +231,19 @@ def resume(directory: Annotated[Path, typer.Argument(exists=True, file_okay=Fals
 
 
 @app.command()
-def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instruments.")],
-             start: Annotated[str, typer.Option(help="First analysis date, YYYY-MM-DD.")],
-             end: Annotated[str, typer.Option(help="Last analysis date, YYYY-MM-DD.")],
-             every: Annotated[int, typer.Option(min=1)] = 1,
-             config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-             harness: HarnessName | None = None, model: str | None = None, provider: str | None = None,
-             effort: Annotated[str | None, typer.Option(help="Native reasoning or thinking effort override.")] = None,
-             run_id: str | None = None, portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None) -> None:
+def backtest(
+    tickers: Annotated[str, typer.Argument(help="Comma-separated instruments.")],
+    start: Annotated[str, typer.Option(help="First analysis date, YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Last analysis date, YYYY-MM-DD.")],
+    every: Annotated[int, typer.Option(min=1)] = 1,
+    config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    harness: HarnessName | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+    effort: Annotated[str | None, typer.Option(help="Native reasoning or thinking effort override.")] = None,
+    run_id: str | None = None,
+    portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+) -> None:
     """Evaluate independent decisions over a ticker/date grid without simulating order fills.
 
     Args:

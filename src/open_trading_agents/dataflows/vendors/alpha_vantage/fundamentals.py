@@ -4,21 +4,16 @@ from open_trading_agents.dataflows.date_window import withhold_live_profile, wit
 from open_trading_agents.dataflows.vendors.alpha_vantage.common import _make_api_request
 
 
-def get_fundamentals(ticker: str, as_of_date: str = None) -> str:
-    """
-    Retrieve comprehensive fundamental data for a given ticker symbol using Alpha Vantage.
-
-    OVERVIEW serves only present-day values and carries no historical vintage, so
-    a past ``as_of_date`` withholds it rather than leaking post-decision figures
-    into a backtest (#1300); so are the statement endpoints below, which carry
-    no filing date.
+def get_fundamentals(ticker: str, as_of_date: str | None = None) -> str:
+    """Retrieve a current company overview or explain why a historical one is unavailable.
 
     Args:
-        ticker (str): Ticker symbol of the company
-        as_of_date (str): Analysis date, yyyy-mm-dd
+        ticker: Company ticker symbol.
+        as_of_date: Analysis cutoff, or None for the current view.
 
     Returns:
-        str: Company overview data including financial ratios and key metrics
+        Provider overview data, or a withholding notice because the endpoint
+        provides no historical vintage.
     """
     withheld = withhold_live_profile(as_of_date, ticker)
     if withheld:
@@ -31,25 +26,55 @@ def get_fundamentals(ticker: str, as_of_date: str = None) -> str:
     return _make_api_request("OVERVIEW", params)
 
 
-def get_balance_sheet(ticker: str, freq: str = "quarterly", as_of_date: str = None) -> str:
-    """Retrieve balance sheet data for a given ticker symbol using Alpha Vantage."""
+def get_balance_sheet(ticker: str, freq: str = "quarterly", as_of_date: str | None = None) -> str:
+    """Retrieve current balance sheets from Alpha Vantage.
+
+    Args:
+        ticker: Company ticker symbol.
+        freq: Requested frequency. This provider returns both annual and quarterly reports.
+        as_of_date: Analysis cutoff, or None for the current view.
+
+    Returns:
+        Provider statement data, or a notice withholding undated historical data.
+    """
     withheld = withhold_undated_statements(as_of_date, ticker, "Balance Sheet")
     if withheld:
         return withheld
+
     return _make_api_request("BALANCE_SHEET", {"symbol": ticker})
 
 
-def get_cashflow(ticker: str, freq: str = "quarterly", as_of_date: str = None) -> str:
-    """Retrieve cash flow statement data for a given ticker symbol using Alpha Vantage."""
+def get_cashflow(ticker: str, freq: str = "quarterly", as_of_date: str | None = None) -> str:
+    """Retrieve current cash-flow statements from Alpha Vantage.
+
+    Args:
+        ticker: Company ticker symbol.
+        freq: Requested frequency. This provider returns both annual and quarterly reports.
+        as_of_date: Analysis cutoff, or None for the current view.
+
+    Returns:
+        Provider statement data, or a notice withholding undated historical data.
+    """
     withheld = withhold_undated_statements(as_of_date, ticker, "Cash Flow")
     if withheld:
         return withheld
+
     return _make_api_request("CASH_FLOW", {"symbol": ticker})
 
 
-def get_income_statement(ticker: str, freq: str = "quarterly", as_of_date: str = None) -> str:
-    """Retrieve income statement data for a given ticker symbol using Alpha Vantage."""
+def get_income_statement(ticker: str, freq: str = "quarterly", as_of_date: str | None = None) -> str:
+    """Retrieve current income statements from Alpha Vantage.
+
+    Args:
+        ticker: Company ticker symbol.
+        freq: Requested frequency. This provider returns both annual and quarterly reports.
+        as_of_date: Analysis cutoff, or None for the current view.
+
+    Returns:
+        Provider statement data, or a notice withholding undated historical data.
+    """
     withheld = withhold_undated_statements(as_of_date, ticker, "Income Statement")
     if withheld:
         return withheld
+
     return _make_api_request("INCOME_STATEMENT", {"symbol": ticker})

@@ -11,38 +11,7 @@ from open_trading_agents.harnesses import open_session
 @pytest.mark.parametrize("effort", [None, "high"])
 async def test_codex_persistent_turns_and_cumulative_usage(tmp_path: Path, effort: str | None) -> None:
     """Verify JSON-RPC initialization, native tool events, and usage deduplication."""
-    script = tmp_path / "codex_fixture.py"
-    script.write_text('''import json,os,sys
-n=0
-for line in sys.stdin:
- r=json.loads(line);method=r.get('method');result={}
- if method=='initialized':continue
- if method=='config/read':result={'config':{'mcp_servers':{'ambient':{}}}}
- if method=='thread/start':
-  assert 'environments' not in r['params']
-  assert r['params']['sandbox']=='workspace-write'
-  assert r['params']['config']['mcp_servers']['ambient']['enabled'] is False
-  result={'thread':{'id':'thread1'},'model':'native-default','modelProvider':'native-provider'}
- if method=='turn/start':
-  effort=os.environ['EXPECTED_EFFORT']
-  assert ('effort' in r['params'])==bool(effort)
-  if effort:assert r['params']['effort']==effort
-  n+=1;tid=f'turn{n}';result={'turn':{'id':tid}}
- print(json.dumps({'id':r['id'],'result':result}),flush=True)
- if method=='turn/start':
-  total={'inputTokens':100*n,'outputTokens':10*n,'cachedInputTokens':30*n,'reasoningOutputTokens':2*n,'totalTokens':110*n}
-  events=[('turn/started',{'turn':{'id':tid}}),
-   ('model/rerouted',{'threadId':'thread1','turnId':tid,'fromModel':'native-default','toModel':'native-rerouted','reason':'highRiskCyberActivity'}),
-   ('item/agentMessage/delta',{'itemId':tid,'delta':'hello'}),
-   ('item/reasoning/summaryTextDelta',{'itemId':'r','delta':'consider'}),
-   ('item/started',{'item':{'type':'mcpToolCall','id':'tool','tool':'get_news','arguments':{'symbol':'NVDA'}}}),
-   ('item/completed',{'item':{'type':'mcpToolCall','id':'tool','tool':'get_news','result':{'content':[]}}}),
-   ('thread/tokenUsage/updated',{'turnId':tid,'tokenUsage':{'total':total}}),
-   ('thread/tokenUsage/updated',{'turnId':tid,'tokenUsage':{'total':total}}),
-   ('item/completed',{'item':{'type':'agentMessage','id':tid,'text':str(n)}}),
-   ('turn/completed',{'turn':{'id':tid,'status':'completed'}})]
-  for method,params in events:print(json.dumps({'method':method,'params':params}),flush=True)
-''')
+    script = Path(__file__).with_name("fixtures") / "codex_cli.py"
     events: list[AgentEvent] = []
 
     async def emit(event: AgentEvent) -> None:
@@ -57,6 +26,7 @@ for line in sys.stdin:
         assert (await session.prompt("second")).text == "2"
     finally:
         await session.close()
+
     assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
     assert [event.data for event in events if event.kind == "model"] == [
         {"harness": "codex", "provider": "native-provider", "model": "native-default"},

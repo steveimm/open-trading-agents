@@ -8,6 +8,7 @@ import os
 import time
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -123,16 +124,25 @@ def _span_index(fact: dict, spans: tuple[tuple[int, int], ...]) -> int | None:
 
 
 def _as_of(
-    facts: dict, tags: tuple[str, ...], as_of_date: str, spans: tuple[tuple[int, int], ...], forms: tuple[str, ...] = ()
-) -> tuple[dict, str]:
-    """({(period end, span index): value}, unit) for the tags the filer reports, as known then.
+    facts: dict[str, Any],
+    tags: tuple[str, ...],
+    as_of_date: str,
+    spans: tuple[tuple[int, int], ...],
+    forms: tuple[str, ...] = (),
+) -> tuple[dict[tuple[str, int], float], str]:
+    """Select the latest eligible filing for each period and duration category.
 
-    A period reported more than once takes its latest filing on or before the
-    date, so an amendment counts from the day it was filed and not before. The
-    unit comes from the filing: most lines are USD, earnings per share are
-    USD/shares, and scaling those alike would print a real figure as zero. A
-    duration fact (revenue, cash flow) must cover one of ``spans``; an instant
-    fact (a balance) has no span and serves any.
+    Args:
+        facts: A filer's US-GAAP facts keyed by XBRL tag.
+        tags: Alternative tags for the same statement row, in priority order.
+        as_of_date: Latest filing date allowed, in YYYY-MM-DD format.
+        spans: Inclusive duration ranges in days. Instant facts use index zero.
+        forms: Form prefixes required to establish period coverage, or an empty
+            tuple to allow all forms. Eligible later amendments replace earlier values.
+
+    Returns:
+        Values keyed by period end and span index, and their filing-reported unit.
+        Values remain unscaled so the caller can distinguish USD from per-share units.
     """
     values: dict[tuple[str, int], float] = {}
     chosen_unit = "USD"
@@ -158,8 +168,24 @@ def _as_of(
     return dict(sorted(values.items())), chosen_unit
 
 
-def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -> str:
-    """Format SEC facts filed by the requested date into a financial statement."""
+def _statement(kind: str, ticker: str, freq: str, as_of_date: str | None, title: str) -> str:
+    """Render a financial statement from SEC facts filed by the requested cutoff.
+
+    Args:
+        kind: Statement definition key in the supported XBRL mappings.
+        ticker: US filer ticker used to find its CIK.
+        freq: Quarterly reporting when set to quarterly, otherwise annual reporting.
+        as_of_date: Latest filing date allowed, or None for today.
+        title: Human-readable statement heading.
+
+    Returns:
+        A dated CSV statement, with USD amounts scaled to millions and other
+        reported units identified on their rows.
+
+    Raises:
+        NoMarketDataError: The filer, US-GAAP facts, or eligible periods are absent.
+        VendorUnavailableError: SEC cannot provide a usable response.
+    """
     as_of_date = as_of_date or datetime.now().strftime("%Y-%m-%d")
     cik = cik_for(ticker)
     if cik is None:
@@ -188,8 +214,10 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
         raise NoMarketDataError(ticker, ticker, f"no {freq} {title.lower()} filed by {as_of_date}")
 
     header = (
-        f"# {title} for {ticker.upper()} ({freq}), USD in millions unless the row says otherwise\n"
-        f"# SEC EDGAR facts filed on or before {as_of_date}, at the values filed then\n\n"
+        f"""# {title} for {ticker.upper()} ({freq}), USD in millions unless the row says otherwise
+# SEC EDGAR facts filed on or before {as_of_date}, at the values filed then
+
+"""
     )
     rows = [",".join([""] + [end + names[index] for end, index in periods])]
     for label, (values, unit) in lines.items():

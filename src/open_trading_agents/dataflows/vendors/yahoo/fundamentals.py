@@ -25,13 +25,17 @@ _MAIN_UNIT = {"GBp": "GBP", "GBX": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
 
 def get_fundamentals(
     ticker: Annotated[str, "ticker symbol of the company"],
-    as_of_date: Annotated[str, "analysis date in YYYY-MM-DD format"] = None,
+    as_of_date: Annotated[str | None, "analysis date in YYYY-MM-DD format"] = None,
 ) -> str:
-    """Get company fundamentals overview from yfinance.
+    """Read a current company profile while preserving quote and reporting currencies.
 
-    ``Ticker.info`` is a present-day snapshot with no historical vintage, so a
-    past ``as_of_date`` withholds it through the shared point-in-time guard
-    (``date_window.withhold_live_profile``, #1300).
+    Args:
+        ticker: Company ticker symbol or supported alias.
+        as_of_date: Analysis cutoff, or None for the current view.
+
+    Returns:
+        Available profile fields, or a withholding notice for historical dates
+        because Yahoo's company profile has no historical vintage.
     """
     canonical = normalize_symbol(ticker)
 
@@ -110,7 +114,7 @@ def _statement(ticker: str, freq: str, as_of_date: str | None, title: str, quart
 def get_balance_sheet(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    as_of_date: Annotated[str, "current date in YYYY-MM-DD format"] = None,
+    as_of_date: Annotated[str | None, "current date in YYYY-MM-DD format"] = None,
 ) -> str:
     """Get balance sheet data from yfinance."""
     return _statement(ticker, freq, as_of_date, "Balance Sheet", "quarterly_balance_sheet", "balance_sheet")
@@ -119,7 +123,7 @@ def get_balance_sheet(
 def get_cashflow(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    as_of_date: Annotated[str, "current date in YYYY-MM-DD format"] = None,
+    as_of_date: Annotated[str | None, "current date in YYYY-MM-DD format"] = None,
 ) -> str:
     """Get cash flow data from yfinance."""
     return _statement(ticker, freq, as_of_date, "Cash Flow", "quarterly_cashflow", "cashflow")
@@ -128,7 +132,7 @@ def get_cashflow(
 def get_income_statement(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    as_of_date: Annotated[str, "current date in YYYY-MM-DD format"] = None,
+    as_of_date: Annotated[str | None, "current date in YYYY-MM-DD format"] = None,
 ) -> str:
     """Get income statement data from yfinance."""
     return _statement(ticker, freq, as_of_date, "Income Statement", "quarterly_income_stmt", "income_stmt")

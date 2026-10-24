@@ -115,9 +115,7 @@ def get_news_yfinance(
 
     if not feed:
         return (
-            f"<Yahoo Finance news unavailable for {start_date}..{end_date}: Yahoo search "
-            f"returns only a sample of recent articles about {canonical}, so this is not "
-            f"an absence of {subject}>"
+            f"<Yahoo Finance news unavailable for {start_date}..{end_date}: Yahoo search returns only a sample of recent articles about {canonical}, so this is not an absence of {subject}>"
         )
     gap = coverage_gap(
         (a["pub_date"] for a in articles),

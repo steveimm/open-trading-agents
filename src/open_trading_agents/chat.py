@@ -323,6 +323,7 @@ class ChatView(FollowScrollView):
             self._outputs.pop(key, None)
             self._argument_deltas.discard(key)
             self._finished_tools.discard(key)
+
         section = self._tools.get(key)
         name = str(event.data.get("tool") or event.data.get("name") or event.data.get("tool_name") or "Tool")
         if section is None:
@@ -331,6 +332,7 @@ class ChatView(FollowScrollView):
             bubble.sections.append(section)
         elif name != "Tool":
             section.title = name
+
         value = tool_text(event)
         if kind == "tool_start":
             if event.data.get("delta"):
@@ -345,6 +347,7 @@ class ChatView(FollowScrollView):
                 self._finished_tools.add(key)
             if event.data.get("is_error"):
                 section.kind = "error"
+
         arguments = self._arguments.get(key, "")
         result = self._outputs.get(key, "")
         source = f"Arguments\n{arguments}" if arguments else ""
@@ -353,6 +356,7 @@ class ChatView(FollowScrollView):
             prefix = "\n\n" if source else ""
             source += f"{prefix}Result\n{result}"
             shown += f"{prefix}Result\n{tool_preview(result)}"
+
         section.replace(source, shown)
 
     def _anchor(self) -> tuple[str, int, int] | None:

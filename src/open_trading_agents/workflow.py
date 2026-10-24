@@ -39,8 +39,15 @@ class RunResult:
 
 
 class Workflow:
-    def __init__(self, ticker: str, trade_date: str, settings: Settings, portfolio: Portfolio | None = None,
-                 run_id: str | None = None, session_factory: SessionFactory = open_session) -> None:
+    def __init__(
+        self,
+        ticker: str,
+        trade_date: str,
+        settings: Settings,
+        portfolio: Portfolio | None = None,
+        run_id: str | None = None,
+        session_factory: SessionFactory = open_session,
+    ) -> None:
         """Prepare a resumable financial research run without contacting any provider.
 
         Args:
@@ -175,11 +182,13 @@ class Workflow:
         saved = self.store.step(key)
         if saved and saved["status"] == "complete":
             return saved["output"]
+
         role = ROLES[role_key]
         name = session_name or role.name
         harness = self.settings.model_settings(role.deep)
         prior_session = self.store.session(name)
         await self._event("agent_start", role.stage, name)
+
         if name not in self.sessions:
             workspace = self.directory / "agents" / "".join(c if c.isalnum() else "_" for c in name)
             tools = role.tools
@@ -188,20 +197,42 @@ class Workflow:
             instructions = system_prompt(role, self.settings.output_language)
             if role_key in SCHEMAS:
                 instructions += f"\n\n{decision_format(role_key)}"
-            spec = AgentSpec(name, role.stage, instructions, workspace,
-                             workspace / "sessions", self.store.session(name), tools,
-                             (sys.executable, "-m", "open_trading_agents.tools", "--context", str(self.context_file),
-                              "--tools", ",".join(tools)) if tools else (),
-                             max_tool_rounds=self.settings.max_tool_rounds, allow_execution=self.settings.allow_execution)
+
+            tool_command = ()
+            if tools:
+                tool_command = (
+                    sys.executable,
+                    "-m",
+                    "open_trading_agents.tools",
+                    "--context",
+                    str(self.context_file),
+                    "--tools",
+                    ",".join(tools),
+                )
+            spec = AgentSpec(
+                agent=name,
+                stage=role.stage,
+                system_prompt=instructions,
+                workspace=workspace,
+                session_dir=workspace / "sessions",
+                session_id=prior_session,
+                tools=tools,
+                tool_server_command=tool_command,
+                max_tool_rounds=self.settings.max_tool_rounds,
+                allow_execution=self.settings.allow_execution,
+            )
             self.sessions[name] = await self.session_factory(harness.runtime(), spec, self.emit)
             if self.sessions[name].session_id:
                 self.store.save_session(name, self.sessions[name].session_id)
+
         if saved and prior_session and self.store.metadata(f"delivered:{key}", False):
             supplied = "Continue the unfinished task in this conversation. Reuse completed tool evidence and return its requested final output."
         else:
             supplied = saved["prompt"] if saved else prompt
+
         self.store.begin_step(key, name, prompt)
         self.active_steps[name] = key
+
         try:
             result = await self.sessions[name].prompt(supplied)
             if result.stop_reason not in ("stop", "end_turn", "completed") or not result.text.strip():
@@ -213,9 +244,11 @@ class Workflow:
             self.active_steps.pop(name, None)
             if not any(row["agent"] == name and row["harness"] == harness.kind for row in self.runtime_agents):
                 await self._event("model", role.stage, name, harness=harness.kind, provider=None, model=None)
+
         self.store.save_session(name, result.session_id)
         self.store.finish_step(key, result.text)
         await self._event("agent_end", role.stage, name, output=result.text)
+
         return result.text
 
     async def _release_session(self, name: str) -> None:

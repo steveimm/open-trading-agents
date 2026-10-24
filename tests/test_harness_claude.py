@@ -12,26 +12,7 @@ from open_trading_agents.harnesses import open_session
 @pytest.mark.parametrize("effort", [None, "high"])
 async def test_claude_raw_stream_usage_avoids_final_and_cumulative_duplicates(tmp_path: Path, streamed_output: int, effort: str | None) -> None:
     """Count complete provider messages once despite repeated assistant and result counters."""
-    script = tmp_path / "claude_fixture.py"
-    script.write_text('''import json,os,sys
-effort=os.environ['EXPECTED_EFFORT']
-assert ('--effort' in sys.argv)==bool(effort)
-if effort:assert sys.argv[sys.argv.index('--effort')+1]==effort
-n=0
-for line in sys.stdin:
- r=json.loads(line)
- if r['type']!='user':continue
- n+=1;mid=f'message{n}'
- events=[{'type':'user','uuid':r['uuid'],'message':r['message']},{'type':'system','subtype':'init','session_id':r['session_id'],'model':'native-default'},
-  {'type':'stream_event','event':{'type':'message_start','message':{'id':mid,'model':'native-default','usage':{'input_tokens':70,'output_tokens':0,'cache_read_input_tokens':30}}}},
-  {'type':'stream_event','event':{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'hello'}}},
-  {'type':'stream_event','event':{'type':'message_delta','usage':{'output_tokens':int(os.environ['STREAM_OUTPUT'])}}},
-  {'type':'stream_event','event':{'type':'message_stop'}},
-  {'type':'assistant','message':{'id':mid,'content':[{'type':'text','text':str(n)}],'usage':{'input_tokens':0,'output_tokens':0}}},
-  {'type':'result','subtype':'success','is_error':False,'result':str(n),'usage':{'input_tokens':70,'output_tokens':10,'cache_read_input_tokens':30},
-   'modelUsage':{'native-default':{'inputTokens':70*n},'auxiliary-model':{'inputTokens':10*n}}}]
- for event in events:print(json.dumps(event),flush=True)
-''')
+    script = Path(__file__).with_name("fixtures") / "claude_cli.py"
     events: list[AgentEvent] = []
 
     async def emit(event: AgentEvent) -> None:
@@ -46,6 +27,7 @@ for line in sys.stdin:
         assert (await session.prompt("second")).text == "2"
     finally:
         await session.close()
+
     assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 2
     assert [event.data for event in events if event.kind == "model"] == [
         {"harness": "claude", "provider": None, "model": "native-default"},

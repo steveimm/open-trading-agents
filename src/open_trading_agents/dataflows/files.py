@@ -14,17 +14,24 @@ from typing import BinaryIO
 logger = logging.getLogger(__name__)
 
 
-def replace_file(path: str | Path, write: Callable[[str], None]) -> None:
-    """Write ``path`` through a uniquely named temp file beside it, then move it into place.
+def replace_file(path: str | Path, write: Callable[[str], object]) -> None:
+    """Replace a cache file atomically using a uniquely named neighboring temporary file.
 
-    A reader sees the old file or the new one, never a partial write, and two
-    writers of the same path (tool calls run concurrently) never share a temp file.
-    ``write`` receives the temp path and creates the file, so it gets the usual
-    permissions. The file is a cache: where another reader holds it open (Windows),
-    the old one stays and the write is skipped.
+    Permission errors preserve the existing cache and log a skipped update.
+
+    Args:
+        path: Cache destination whose parent directory already exists.
+        write: Callback that creates and populates the supplied temporary path.
+            Its return value is ignored.
+
+    Raises:
+        Exception: The write or replacement fails for a reason other than a
+            permission error. Temporary files are removed before propagation.
+
     """
     path = Path(path)
     temp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+
     try:
         write(str(temp))
         os.replace(temp, path)
@@ -38,13 +45,18 @@ def replace_file(path: str | Path, write: Callable[[str], None]) -> None:
 
 @contextmanager
 def locked(path: str | Path, wait: bool = True) -> Iterator[bool]:
-    """Hold ``path`` for one writer at a time, across threads and processes.
+    """Coordinate writers across threads and processes with an adjacent lock file.
 
-    For a file read, changed and written back: without the lock, two writers
-    each read the same text and the second write drops the first's change. The
-    lock is taken on a ``.lock`` file beside ``path``. Yields whether it is
-    held: with ``wait=False`` a lock someone else holds is not waited for, and
-    the block runs holding nothing.
+    Args:
+        path: Resource name used to derive its .lock file.
+        wait: Whether to wait for another writer to release the lock.
+
+    Yields:
+        True while the lock is held. A nonblocking attempt can yield False,
+        in which case the caller must skip the protected work.
+
+    Raises:
+        OSError: The lock file cannot be opened or the platform lock operation fails.
     """
     with open(f"{path}.lock", "a+b") as handle:
         hold = _hold_windows if os.name == "nt" else _hold_posix

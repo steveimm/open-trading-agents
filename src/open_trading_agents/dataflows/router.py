@@ -165,9 +165,15 @@ def get_category_for_method(method: str) -> str:
     raise ValueError(f"Method '{method}' not found in any category")
 
 
-def get_vendor(category: str, method: str = None) -> str:
-    """Get the configured vendor for a data category or specific tool method.
-    Tool-level configuration takes precedence over category-level.
+def get_vendor(category: str, method: str | None = None) -> str:
+    """Resolve a tool override before its category's configured vendor chain.
+
+    Args:
+        category: Financial-data category to resolve.
+        method: Optional method whose tool-specific override takes precedence.
+
+    Returns:
+        A comma-separated vendor chain, or default when no chain is configured.
     """
     config = get_config()
 
@@ -182,9 +188,7 @@ def get_vendor(category: str, method: str = None) -> str:
 def vendor_unavailable(method: str, error: Exception) -> str:
     """What a call returns when every vendor was throttled or unreachable."""
     return (
-        f"DATA_UNAVAILABLE: no configured vendor could serve {method} right now "
-        f"({error}). This says nothing about the instrument; report the "
-        f"data as unavailable and do not estimate or fabricate values."
+        f"DATA_UNAVAILABLE: no configured vendor could serve {method} right now ({error}). This says nothing about the instrument; report the data as unavailable and do not estimate or fabricate values."
     )
 
 
@@ -194,15 +198,26 @@ def no_data_available(error: NoMarketDataError) -> str:
 
     reason = f" ({error.detail})" if error.detail else ""
     return (
-        f"NO_DATA_AVAILABLE: No usable market data for '{error.symbol}'{resolved} from "
-        f"any configured vendor{reason}. The symbol may be invalid, delisted, "
-        f"not covered, or the vendor returned stale data. Do not estimate or "
-        f"fabricate values — report that data is unavailable for this symbol."
+        f"NO_DATA_AVAILABLE: No usable market data for '{error.symbol}'{resolved} from any configured vendor{reason}. The symbol may be invalid, delisted, not covered, or the vendor returned stale data. Do not estimate or fabricate values — report that data is unavailable for this symbol."
     )
 
 
 def route_to_vendor(method: str, *args: Any, **kwargs: Any) -> str:
-    """Route method calls to appropriate vendor implementation with fallback support."""
+    """Try the configured provider chain without silently adding unconfigured sources.
+
+    Args:
+        method: Registered financial-data method to invoke.
+        args: Positional arguments accepted by that method's adapters.
+        kwargs: Keyword arguments accepted by those adapters.
+
+    Returns:
+        Provider evidence, or an explicit notice distinguishing unavailable
+        providers from missing instrument data.
+
+    Raises:
+        ValueError: The method or its configured provider selection is unsupported.
+        Exception: Every required provider fails without a data-availability result.
+    """
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
     primary_vendors = [v.strip() for v in vendor_config.split(",")]
@@ -268,8 +283,7 @@ def route_to_vendor(method: str, *args: Any, **kwargs: Any) -> str:
         if category in OPTIONAL_CATEGORIES:
             logger.warning("Optional %s unavailable for %s: %s", category, method, first_error)
             return (
-                f"DATA_UNAVAILABLE: optional {category} could not be retrieved "
-                f"({first_error}). Proceed without it; do not fabricate values."
+                f"DATA_UNAVAILABLE: optional {category} could not be retrieved ({first_error}). Proceed without it; do not fabricate values."
             )
         raise first_error
 

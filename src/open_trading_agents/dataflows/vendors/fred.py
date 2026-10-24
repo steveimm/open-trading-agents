@@ -99,9 +99,7 @@ def _resolve_series_id(indicator: str) -> str:
 
     if not candidate or len(candidate) > 30 or any(c.isspace() for c in candidate):
         raise ValueError(
-            f"'{indicator}' is not a known macro alias or a valid FRED series ID. "
-            f"Use an alias (e.g. 'cpi', 'unemployment', '10y_treasury') or a raw "
-            f"FRED series ID (e.g. 'CPIAUCSL')."
+            f"'{indicator}' is not a known macro alias or a valid FRED series ID. Use an alias (e.g. 'cpi', 'unemployment', '10y_treasury') or a raw FRED series ID (e.g. 'CPIAUCSL')."
         )
     return candidate
 
@@ -195,19 +193,17 @@ def get_macro_data(
     points = [(o["date"], o["value"]) for o in observations if o.get("value") not in (".", None, "")]
 
     header = (
-        f"## FRED: {title} ({series_id})\n"
-        f"- Units: {units}\n"
-        f"- Frequency: {frequency}"
-        f"{f' ({seasonal})' if seasonal else ''}\n"
-        f"- Window: {start_date} to {as_of_date}\n"
+        f"""## FRED: {title} ({series_id})
+- Units: {units}
+- Frequency: {frequency}{(f' ({seasonal})' if seasonal else '')}
+- Window: {start_date} to {as_of_date}
+"""
     )
 
     if not points:
         return header + (
-            f"\nNo observations for {series_id} in this window at the {pit} "
-            f"vintage. The series may report less frequently than the window "
-            f"(try a longer look_back_days), or have no vintage published by "
-            f"then (unpublished as of {pit}, or before ALFRED coverage begins)."
+            f"""
+No observations for {series_id} in this window at the {pit} vintage. The series may report less frequently than the window (try a longer look_back_days), or have no vintage published by then (unpublished as of {pit}, or before ALFRED coverage begins)."""
         )
 
     first_date, first_val = points[0]
@@ -217,9 +213,9 @@ def get_macro_data(
         base = float(first_val)
         pct = f" ({delta / base * 100:+.2f}%)" if base != 0 else ""
         summary = (
-            f"\n**Latest:** {last_val} ({last_date}) | "
-            f"**Change from {first_date} to {last_date}:** {delta:+.2f}{pct}, "
-            f"from {first_val}\n"
+            f"""
+**Latest:** {last_val} ({last_date}) | **Change from {first_date} to {last_date}:** {delta:+.2f}{pct}, from {first_val}
+"""
         )
     except ValueError:
         summary = f"\n**Latest:** {last_val} ({last_date})\n"

@@ -142,9 +142,6 @@ def fetch_stocktwits_messages(
     bull_pct = round(100 * bullish / total) if total else 0
     bear_pct = round(100 * bearish / total) if total else 0
     summary = (
-        f"Bullish: {bullish} ({bull_pct}%) · "
-        f"Bearish: {bearish} ({bear_pct}%) · "
-        f"Unlabeled: {unlabeled} · "
-        f"Total: {total} most-recent messages"
+        f"Bullish: {bullish} ({bull_pct}%) · Bearish: {bearish} ({bear_pct}%) · Unlabeled: {unlabeled} · Total: {total} most-recent messages"
     )
     return (f"{note}\n\n" if note else "") + summary + "\n\n" + "\n".join(lines)
