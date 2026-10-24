@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from io import StringIO
 from typing import Any
 from unittest.mock import Mock
 
@@ -15,7 +16,7 @@ from open_trading_agents.dataflows.errors import NoMarketDataError, VendorUnavai
 from open_trading_agents.dataflows.symbols import normalize_symbol, safe_ticker_component
 from open_trading_agents.dataflows.vendors import fred, polymarket, reddit, sec_edgar, stocktwits
 from open_trading_agents.dataflows.vendors.alpha_vantage import common as alpha
-from open_trading_agents.dataflows.vendors.yahoo import ohlcv, snapshot
+from open_trading_agents.dataflows.vendors.yahoo import market, ohlcv, snapshot
 
 
 @pytest.mark.parametrize(
@@ -146,6 +147,40 @@ def test_verified_snapshot_excludes_future_prices(monkeypatch: pytest.MonkeyPatc
     assert "99999" not in result and "2024-03-18" not in result
     with pytest.raises(NoMarketDataError, match="stale"):
         ohlcv._assert_ohlcv_not_stale(frame, "2024-06-01", "NVDA")
+
+
+def test_market_evidence_preserves_small_prices_and_signed_indicators(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep source precision across price CSV and the verified snapshot used by agents.
+
+    Args:
+        monkeypatch: Replace market requests with deterministic local observations.
+    """
+    frame = pd.DataFrame(
+        {
+            "Open": [0.004012345678, 0.004123456789],
+            "High": [0.0042, 0.0043],
+            "Low": [0.0039, 0.0040],
+            "Close": [0.0041, 0.004234567891],
+            "Volume": [1000, 1200],
+        },
+        index=pd.DatetimeIndex(["2024-03-14", "2024-03-15"], name="Date"),
+    )
+    ticker = Mock()
+    ticker.history.return_value = frame.copy()
+    monkeypatch.setattr(market.yf, "Ticker", Mock(return_value=ticker))
+
+    csv = market.get_YFin_data_online("DOGE-USD", "2024-03-14", "2024-03-15")
+    observations = pd.read_csv(StringIO(csv), comment="#", index_col="Date")
+    for field in ("Open", "High", "Low", "Close"):
+        assert observations[field].tolist() == pytest.approx(frame[field].tolist(), rel=0, abs=1e-15)
+
+    rows = frame.reset_index()
+    rows["tiny_indicator"] = [-1.5e-8, -2.5e-8]
+    monkeypatch.setattr(snapshot, "load_ohlcv", Mock(return_value=rows))
+    report = snapshot.build_verified_market_snapshot("DOGE-USD", "2024-03-15", indicators=("tiny_indicator",))
+    assert "| Close | 0.004234567891 |" in report
+    assert "| 2024-03-15 | 0.004234567891 |" in report
+    assert "| tiny_indicator | -2.5e-08 |" in report
 
 
 def test_http_failure_does_not_retain_secret_in_request_or_context(monkeypatch: pytest.MonkeyPatch) -> None:

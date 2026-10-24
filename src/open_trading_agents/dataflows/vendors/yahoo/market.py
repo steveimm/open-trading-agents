@@ -22,35 +22,37 @@ def get_YFin_data_online(
     start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
     end_date: Annotated[str, "End date in yyyy-mm-dd format"],
 ) -> str:
-    """Fetch an inclusive OHLCV window, rejecting absent or stale vendor data."""
+    """Fetch an inclusive OHLCV window without rounding the source prices.
+
+    Args:
+        symbol: Instrument symbol or supported alias.
+        start_date: First date to include, in YYYY-MM-DD format.
+        end_date: Last date to include, in YYYY-MM-DD format.
+
+    Returns:
+        CSV observations with the requested window and record count.
+
+    Raises:
+        NoMarketDataError: The source has no usable or sufficiently recent prices.
+    """
     datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-
     canonical = normalize_symbol(symbol)
 
     end_inclusive = (end_dt + relativedelta(days=1)).strftime("%Y-%m-%d")
     data = yf_retry(lambda: yf.Ticker(canonical).history(start=start_date, end=end_inclusive))
-
     if data is None or data.empty:
         raise_for_empty(symbol, canonical, f"rows between {start_date} and {end_date}")
 
     if data.index.tz is not None:
         data.index = data.index.tz_localize(None)
-
     _assert_ohlcv_not_stale(data, end_date, symbol, canonical)
 
-    numeric_columns = ["Open", "High", "Low", "Close", "Adj Close"]
-    for col in numeric_columns:
-        if col in data.columns:
-            data[col] = data[col].round(2)
-
-    csv_string = data.to_csv()
-
     label = canonical if canonical == symbol.upper() else f"{canonical} (from {symbol})"
-    header = f"# Stock data for {label} from {start_date} to {end_date}\n"
-    header += f"# Total records: {len(data)}\n\n"
+    return f"""# Stock data for {label} from {start_date} to {end_date}
+# Total records: {len(data)}
 
-    return header + csv_string
+{data.to_csv()}"""
 
 
 def get_stock_stats_indicators_window(

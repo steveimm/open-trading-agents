@@ -49,17 +49,19 @@ def _verified_rows(symbol: str, as_of_date: str) -> pd.DataFrame:
 
 
 def _fmt(value: Any) -> str:
-    """Format a numeric value while retaining an explicit missing-data marker."""
+    """Render source precision while retaining an explicit missing-data marker.
+
+    Args:
+        value: A scalar price, indicator, timestamp, or missing value.
+
+    Returns:
+        The scalar's text representation, a calendar date, or N/A.
+    """
     if value is None or pd.isna(value):
         return "N/A"
     if isinstance(value, pd.Timestamp):
         return value.strftime("%Y-%m-%d")
-    if isinstance(value, bool):
-        return str(value)
-    if isinstance(value, (int,)):
-        return str(value)
-    if isinstance(value, float):
-        return f"{value:.2f}"
+
     return str(value)
 
 
