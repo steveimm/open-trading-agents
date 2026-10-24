@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import tempfile
 import tomllib
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
+import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from open_trading_agents.dataflows.symbols import normalize_symbol
@@ -19,6 +23,19 @@ class HarnessSettings(BaseModel):
     model: str | None = None
     provider: str | None = None
     extra_args: tuple[str, ...] = ()
+
+    @field_validator("model", "provider")
+    @classmethod
+    def normalize_selector(cls, value: str | None) -> str | None:
+        """Interpret an empty selector as the native harness default.
+
+        Args:
+            value: Optional provider or model selection.
+
+        Returns:
+            The trimmed selection, or None for native defaults.
+        """
+        return (value.strip() or None) if value is not None else None
 
     def runtime(self) -> HarnessConfig:
         """Create the immutable CLI connection configuration.
@@ -157,6 +174,78 @@ def load_settings(path: Path | None = None) -> Settings:
     if not settings.state_dir.is_absolute():
         settings.state_dir = path.resolve().parent / settings.state_dir
     return settings
+
+
+def save_harness_selection(
+    path: Path,
+    tier: Literal["default", "quick", "deep"] = "default",
+    harness: Literal["pi", "codex", "claude"] | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+) -> Settings:
+    """Persist harness choices while preserving unrelated TOML settings and comments.
+
+    Args:
+        path: Application configuration file to create or update.
+        tier: Shared defaults, working agents, or decision managers.
+        harness: Optional native harness selection.
+        model: Optional model selection, with an empty string selecting native defaults.
+        provider: Optional provider selection, with an empty string selecting native defaults.
+
+    Returns:
+        The validated settings saved to disk.
+
+    Raises:
+        ValueError: The existing or resulting configuration is invalid.
+        OSError: The configuration cannot be written.
+    """
+    if tier not in ("default", "quick", "deep"):
+        raise ValueError(f"unknown configuration tier: {tier}")
+    path = path.expanduser().resolve()
+    document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    settings = Settings.model_validate(document.unwrap())
+    name = "harness" if tier == "default" else tier
+    current = getattr(settings, name) or settings.harness
+    kind = harness or current.kind
+    if kind == "claude" and provider is not None and provider.strip():
+        raise ValueError("Claude Code selects its provider through its native configuration. Omit --provider.")
+    if name not in document:
+        document[name] = tomlkit.table()
+    selected = document[name]
+
+    if harness is not None and harness != current.kind:
+        for key in ("model", "provider", "command", "extra_args"):
+            selected.pop(key, None)
+        if name != "harness" and harness == settings.harness.kind:
+            selected.update(model="", provider="", command=[], extra_args=[])
+        if name == "harness":
+            for child_name in ("quick", "deep"):
+                child = document.get(child_name)
+                if child is not None and "kind" not in child:
+                    for key in ("model", "provider", "command", "extra_args"):
+                        child.pop(key, None)
+    if harness is not None:
+        selected["kind"] = harness
+    for key, value in (("model", model), ("provider", provider)):
+        if value is not None:
+            selected[key] = value.strip()
+    Settings.model_validate(document.unwrap())
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(tomlkit.dumps(document))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return load_settings(path)
 
 
 def load_portfolio(path: Path | None) -> Portfolio | None:

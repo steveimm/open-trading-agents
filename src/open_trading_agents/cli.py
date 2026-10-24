@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from click import Choice
 from dotenv import load_dotenv
 from rich.console import Console
 
-from open_trading_agents.config import HarnessSettings, Settings, load_portfolio, load_settings
+from open_trading_agents.config import HarnessSettings, Settings, load_portfolio, load_settings, save_harness_selection
 from open_trading_agents.domain import AgentEvent
 from open_trading_agents.workflow import RunResult, Workflow
 
@@ -26,6 +27,12 @@ class HarnessName(StrEnum):
     pi = "pi"
     codex = "codex"
     claude = "claude"
+
+
+class ModelTier(StrEnum):
+    default = "default"
+    quick = "quick"
+    deep = "deep"
 
 
 def configured(path: Path | None, harness: HarnessName | None, model: str | None, provider: str | None) -> Settings:
@@ -201,6 +208,44 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
             raise typer.Exit(1)
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Backtest failed: {exc}", style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
+@app.command(help="Save harness and model choices. Omit selection flags for interactive setup.")
+def configure(
+    config: Annotated[Path, typer.Option(dir_okay=False, help="Application configuration file to create or update.")] = Path("tradingagents.toml"),
+    tier: Annotated[ModelTier, typer.Option(help="Default, working-agent (quick), or decision-manager (deep) settings.")] = ModelTier.default,
+    harness: Annotated[HarnessName | None, typer.Option()] = None,
+    model: Annotated[str | None, typer.Option(help='Native model selector. Pass "" to use native defaults.')] = None,
+    provider: Annotated[str | None, typer.Option(help='Native pi or Codex provider selector. Pass "" to use native defaults.')] = None,
+) -> None:
+    """Save harness and model choices, prompting when no selection flags are supplied.
+
+    Args:
+        config: Destination TOML configuration file.
+        tier: Settings shared by all agents, working agents, or decision managers.
+        harness: Native harness selection.
+        model: Native model selector, or an empty string to reset it.
+        provider: Native provider selector, or an empty string to reset it.
+    """
+    config = config.expanduser()
+    interactive = harness is None and model is None and provider is None
+    if interactive and not sys.stdin.isatty():
+        raise typer.BadParameter("provide --harness, --model or --provider when input is not interactive")
+    try:
+        if interactive:
+            settings = load_settings(config) if config.exists() else Settings()
+            current = getattr(settings, "harness" if tier == ModelTier.default else tier.value) or settings.harness
+            typer.echo(f"Current {tier.value}: {current.kind} / {current.provider or 'native provider'} / {current.model or 'native model'}")
+            harness = HarnessName(typer.prompt("Harness", default=current.kind, type=Choice([item.value for item in HarnessName])))
+            provider = typer.prompt("Provider (blank uses native default)", default="", show_default=False) if harness != HarnessName.claude else ""
+            model = typer.prompt("Model (blank uses native default)", default="", show_default=False)
+        settings = save_harness_selection(config, tier.value, harness.value if harness is not None else None, model, provider)
+        selected = getattr(settings, "harness" if tier == ModelTier.default else tier.value) or settings.harness
+        typer.echo(f"Saved {tier.value}: {selected.kind} / {selected.provider or 'native provider'} / {selected.model or 'native model'}")
+        typer.echo(f"Config: {config.expanduser().resolve()}")
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(f"Configuration failed: {exc}", style="red", markup=False)
         raise typer.Exit(1) from exc
 
 
