@@ -99,6 +99,14 @@ class HarnessSettings(BaseModel):
         """
         return HarnessConfig(**self.model_dump())
 
+    def profile_identity(self) -> tuple[str, str | None, str | None, str | None]:
+        """Return the public selectors that identify a reusable agent profile.
+
+        Returns:
+            Harness, provider, model, and effort, without execution configuration.
+        """
+        return self.kind, self.provider, self.model, self.effort
+
 
 class Position(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -156,6 +164,7 @@ class Settings(BaseModel):
     quick: HarnessSettings | None = None
     deep: HarnessSettings | None = None
     agents: dict[str, HarnessSettings] = Field(default_factory=dict)
+    agent_presets: dict[str, str] = Field(default_factory=dict)
     analysts: tuple[Literal["market", "social", "news", "fundamentals"], ...] = ("market", "social", "news", "fundamentals")
     research_rounds: int = Field(default=1, ge=1, le=20)
     risk_rounds: int = Field(default=1, ge=1, le=20)
@@ -202,16 +211,16 @@ class Settings(BaseModel):
 
         return self
 
-    @field_validator("agents")
+    @field_validator("agents", "agent_presets")
     @classmethod
-    def validate_agent_roles(cls, value: dict[str, HarnessSettings]) -> dict[str, HarnessSettings]:
+    def validate_agent_roles(cls, value: dict[str, HarnessSettings] | dict[str, str]) -> dict[str, HarnessSettings] | dict[str, str]:
         """Reject role names that the workflow cannot dispatch.
 
         Args:
-            value: Independent role selections keyed by canonical role name.
+            value: Runtime overrides or saved profile labels keyed by canonical role name.
 
         Returns:
-            Validated role selections.
+            Role selections or labels with valid workflow keys.
 
         Raises:
             ValueError: A supplied role is not part of the workflow.
@@ -219,6 +228,22 @@ class Settings(BaseModel):
         unknown = value.keys() - ROLES.keys()
         if unknown:
             raise ValueError(f"Unknown agent roles: {', '.join(sorted(unknown))}. Valid roles: {', '.join(ROLES)}.")
+
+        return value
+
+    @field_validator("agent_presets")
+    @classmethod
+    def validate_agent_preset_names(cls, value: dict[str, str]) -> dict[str, str]:
+        """Validate saved display labels without consulting mutable preset files.
+
+        Args:
+            value: Selected preset names retained for each role in this run.
+
+        Returns:
+            Labels whose preset names follow the supported syntax.
+        """
+        for name in value.values():
+            preset_path(name)
 
         return value
 
@@ -348,12 +373,21 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
 
     settings = _settings_from_config(values)
     if use_default_preset and settings.default_preset is not None:
+        name = settings.default_preset
         try:
-            profile = load_preset(settings.default_preset)
+            profile = load_preset(name)
         except ValueError as exc:
-            raise ValueError(f"Default preset {settings.default_preset!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default profile.") from exc
+            raise ValueError(f"Default preset {name!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default profile.") from exc
         values.update(harness=profile, quick=None, deep=None)
         settings = Settings.model_validate(values)
+        settings.agent_presets = {}
+        for role in ROLES:
+            try:
+                selected = settings.model_settings(role=role)
+            except ValueError:
+                continue
+            if selected.profile_identity() == profile.profile_identity():
+                settings.agent_presets[role] = name
 
     return settings
 

@@ -10,8 +10,10 @@ from rich.spinner import Spinner
 from rich.style import Style
 from rich.text import Text
 from textual import events
-from textual.geometry import Region, Size
+from textual.geometry import Offset, Region, Size
 from textual.strip import Strip
+from textual.timer import Timer
+from textual.widget import Widget
 
 from open_trading_agents.analysis.models import AgentEvent
 from open_trading_agents.ui.transcript import (
@@ -23,6 +25,48 @@ from open_trading_agents.ui.transcript import (
     tool_preview,
     tool_text,
 )
+
+
+@dataclass(frozen=True)
+class AgentPresentation:
+    label: str
+    details: str
+
+
+class TitleTooltip:
+    def __init__(self, widget: Widget) -> None:
+        """Manage title-only tooltip timing for a widget with custom mouse hit detection.
+
+        Args:
+            widget: Widget whose title supplies the active tooltip content.
+        """
+        self.widget = widget
+        self.details: str | None = None
+        self.timer: Timer | None = None
+
+    def update(self, details: str | None, restart: bool = False) -> None:
+        """Refresh native tooltip timing when the pointer moves between titles in one widget.
+
+        Args:
+            details: One agent's configuration, or None outside a title.
+            restart: Whether mouse movement should restart the hover delay.
+        """
+        if details == self.details and not restart:
+            return
+        if self.timer is not None:
+            self.timer.stop()
+            self.timer = None
+        self.details = details
+        self.widget.tooltip = Text(details) if details is not None else None
+        if details is not None and not self.widget.app._disable_tooltips:
+            # Textual hides visible tooltips on movement within the same widget.
+            self.timer = self.widget.set_timer(self.widget.app.TOOLTIP_DELAY, self._show)
+
+    def _show(self) -> None:
+        """Display the still-hovered title through Textual's tooltip lifecycle."""
+        self.timer = None
+        if self.details is not None and self.widget.mouse_hover and self.widget.is_on_screen:
+            self.widget.screen._handle_tooltip_timer(self.widget)
 
 
 @dataclass(eq=False)
@@ -105,17 +149,30 @@ class ChatView(FollowScrollView):
     ChatView:focus { background: #121c28; }
     """
 
-    def __init__(self, *, id: str | None = None, debate: bool = False, show_systems: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        id: str | None = None,
+        debate: bool = False,
+        show_systems: bool = True,
+        agent_presentations: dict[str, AgentPresentation] | None = None,
+        show_profile_labels: bool = True,
+    ) -> None:
         """Create an incremental conversation viewport with collapsible details.
 
         Args:
             id: Stable Textual widget identifier.
             debate: Whether shared input replaces repeated participant prompt displays.
             show_systems: Whether system instructions appear inline instead of in separate panes.
+            agent_presentations: Shared role names mapped to compact labels and hover details.
+            show_profile_labels: Whether titles include the profile label as well as the agent name.
         """
         super().__init__(id=id)
         self.debate = debate
         self.show_systems = show_systems
+        self.agent_presentations = agent_presentations if agent_presentations is not None else {}
+        self.show_profile_labels = show_profile_labels
+        self._title_tooltip = TitleTooltip(self)
         self.document = self
         self.bubbles: list[ChatBubble] = []
         self.systems: OrderedDict[str, ChatSection] = OrderedDict()
@@ -491,6 +548,42 @@ class ChatView(FollowScrollView):
                 return self._bubble_headers.get(part.bubble)
         return None
 
+    def _presentation(self, agent: str) -> AgentPresentation | None:
+        """Resolve a role's presentation, including independently numbered supporting sessions.
+
+        Args:
+            agent: Exact display name of the contributing agent.
+
+        Returns:
+            The matching presentation, or None when no configuration was provided.
+        """
+        if agent in self.agent_presentations:
+            return self.agent_presentations[agent]
+        for base in ("Reflection", "Sentiment Screening"):
+            if agent.startswith(f"{base} "):
+                return self.agent_presentations.get(base)
+        return None
+
+    def _title_text(self, part: ChatPart) -> str:
+        """Build the visible title shared by rendering and title-only hover detection.
+
+        Args:
+            part: Bubble title and its optional disclosure.
+
+        Returns:
+            The title before its horizontal border fill.
+        """
+        bubble, disclosure = part.bubble, part.disclosure
+        assert bubble is not None
+        presentation = self._presentation(bubble.agent) if bubble.kind == "agent" else None
+        profile = f" · {presentation.label}" if presentation is not None and self.show_profile_labels else ""
+        suffix = f" · {bubble.title}" if bubble.title else ""
+        active = f" {self._activity_frame}" if bubble.status == "streaming" else ""
+        if bubble.status in {"error", "stopped"}:
+            active = f" · {bubble.status}"
+        fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
+        return f"╭ {fold}{bubble.agent}{profile}{suffix}{active} "
+
     def _title_line(self, part: ChatPart, width: int) -> Strip:
         """Render a bubble title identically in its natural or pinned position.
 
@@ -504,16 +597,69 @@ class ChatView(FollowScrollView):
         bubble, disclosure = part.bubble, part.disclosure
         assert bubble is not None
         color = "#e8b86d" if bubble.kind == "input" else "#668ab5"
-        suffix = f" · {bubble.title}" if bubble.title else ""
-        active = f" {self._activity_frame}" if bubble.status == "streaming" else ""
-        if bubble.status in {"error", "stopped"}:
-            active = f" · {bubble.status}"
-        fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
         style = "bold #f1e5b9 on #303547" if disclosure is not None and disclosure is self._selected else f"bold {color}"
-        title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
+        title = Text(self._title_text(part), style=style)
         title.truncate(max(1, width - 1))
         title.append("─" * max(0, width - title.cell_len - 1) + "╮")
         return Strip(title.render(self.app.console)).apply_style(self.app.console.get_style(title.style)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
+
+    def _title_presentation_at(self, offset: Offset) -> AgentPresentation | None:
+        """Find the agent title under the pointer, accounting for a pinned header.
+
+        Args:
+            offset: Pointer position in terminal coordinates.
+
+        Returns:
+            Details for the title under the pointer, or None for content and inputs.
+        """
+        region = self.scrollable_content_region
+        if offset not in region:
+            return None
+        position = offset - region.offset
+        part = self._sticky_header() if position.y == 0 else None
+        if part is None:
+            row = int(self.scroll_y) + position.y
+            index = bisect.bisect_right(self._offsets, row) - 1
+            if not 0 <= index < len(self._parts) or self._parts[index].kind != "top":
+                return None
+            part = self._parts[index]
+        if part.bubble is None or part.bubble.kind != "agent":
+            return None
+        title_width = min(Text(self._title_text(part)).cell_len - 1, region.width - 1)
+        return self._presentation(part.bubble.agent) if 2 <= position.x < title_width else None
+
+    def _refresh_title_tooltip(self) -> None:
+        """Update the hovered title after scrolling or resizing without moving the pointer."""
+        presentation = self._title_presentation_at(self.app.mouse_position) if self.mouse_hover and self.is_on_screen else None
+        self._title_tooltip.update(presentation.details if presentation is not None else None)
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Show only the configuration belonging to the title under the mouse.
+
+        Args:
+            event: Pointer movement within this chat viewport.
+        """
+        presentation = self._title_presentation_at(event.screen_offset)
+        self._title_tooltip.update(presentation.details if presentation is not None else None, restart=True)
+
+    def on_leave(self, event: events.Leave) -> None:
+        """Clear title details when the pointer leaves this viewport.
+
+        Args:
+            event: Pointer departure from this widget.
+        """
+        self._title_tooltip.update(None)
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Update pinned-title hover details when the conversation scrolls under the pointer.
+
+        Args:
+            old_value: Previous vertical scroll offset.
+            new_value: New vertical scroll offset.
+        """
+        super().watch_scroll_y(old_value, new_value)
+        if self.is_mounted:
+            self.call_after_refresh(self._refresh_title_tooltip)
 
     def render_line(self, y: int) -> Strip:
         """Render one visible bubble row using bounded section caches.
@@ -677,6 +823,7 @@ class ChatView(FollowScrollView):
         self.sync()
         self._follow_after_resize()
         self.call_after_refresh(self._follow_after_resize)
+        self.call_after_refresh(self._refresh_title_tooltip)
 
     def plain(self) -> str:
         """Return all retained input, output and detail text for verification.

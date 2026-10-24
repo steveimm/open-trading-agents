@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.control import Control
 from rich.spinner import Spinner
+from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -21,7 +22,7 @@ from open_trading_agents.analysis.models import ANALYSTS, STAGES, AgentEvent, Ev
 from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.reporting.usage import format_usage as usage_label
 from open_trading_agents.reporting.usage import request_usage
-from open_trading_agents.ui.chat import ChatView
+from open_trading_agents.ui.chat import AgentPresentation, ChatView, TitleTooltip
 from open_trading_agents.ui.transcript import Transcript, TranscriptView, literal_text
 
 DEBATE_ROLES = {
@@ -69,37 +70,91 @@ def duration(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{second:02}" if hours else f"{minutes:02}:{second:02}"
 
 
-def _model_selection(config: HarnessConfig) -> str:
-    """Describe the harness, model, and effort selected for a role.
+def _agent_presentation(name: str, config: HarnessConfig, preset: str | None) -> AgentPresentation:
+    """Build one role's panel label and public hover details.
 
     Args:
+        name: Agent's display name.
         config: Effective runtime configuration for the role.
+        preset: Saved preset selected for this role, if known.
 
     Returns:
-        One sanitized line of model settings.
+        A short preset or model label with role-specific configuration details.
     """
-    values = (config.kind, config.model or "Harness default", config.effort or "Harness default")
-    return " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
+    label = preset or config.model or "Harness default"
+    details = [name]
+    if preset:
+        details.append(f"Preset: {preset}")
+    details.extend([f"Harness: {config.kind}", f"Model: {config.model or 'Harness default'}",
+                    f"Effort: {config.effort or 'Harness default'}"])
+    return AgentPresentation(" ".join(literal_text(label).splitlines()),
+                             "\n".join(" ".join(literal_text(value).splitlines()) for value in details))
 
 
-def model_configuration(working: HarnessConfig | None, decision: HarnessConfig | None) -> str:
-    """Describe the selected native runtimes without displaying commands or environment values.
+class AgentStatus(Static):
+    def __init__(self, name: str, presentation: AgentPresentation | None, *, id: str) -> None:
+        """Attach one analyst's hover details to its title row.
 
-    Args:
-        working: Runtime used by analysts, debaters, and the trader.
-        decision: Runtime used by decision managers.
+        Args:
+            name: Initial analyst label.
+            presentation: Public configuration details for this analyst.
+            id: Stable status widget identifier.
+        """
+        super().__init__(name, id=id, classes="agent-status", markup=False)
+        self.presentation = presentation
+        self._title_tooltip = TitleTooltip(self)
 
-    Returns:
-        One line for shared choices, or separate working and manager lines.
-    """
-    choices = {}
-    for label, config in (("Working", working), ("Manager", decision)):
-        if config is None:
-            continue
-        choices[label] = _model_selection(config)
-    if len(choices) == 2 and choices["Working"] == choices["Manager"]:
-        return f"Agents · {choices['Working']}"
-    return "\n".join(f"{label} · {value}" for label, value in choices.items())
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Show configuration on the analyst title, excluding its usage row.
+
+        Args:
+            event: Pointer movement within the status widget.
+        """
+        position = event.screen_offset - self.content_region.offset
+        title = str(self.render()).splitlines()[0]
+        inside = position.y == 0 and 0 <= position.x < min(Text(title).cell_len, self.content_region.width)
+        self._title_tooltip.update(self.presentation.details if inside and self.presentation else None, restart=True)
+
+    def on_leave(self, event: events.Leave) -> None:
+        """Hide configuration when the pointer leaves the analyst title.
+
+        Args:
+            event: Pointer departure from this widget.
+        """
+        self._title_tooltip.update(None)
+
+
+class AgentPromptView(TranscriptView):
+    def __init__(self, document: Transcript, presentation: AgentPresentation | None, *, id: str) -> None:
+        """Attach one debate role's hover details to its prompt border title.
+
+        Args:
+            document: Agent system instructions.
+            presentation: Public configuration details for this agent.
+            id: Stable prompt pane identifier.
+        """
+        super().__init__(document, id=id)
+        self.presentation = presentation
+        self._title_tooltip = TitleTooltip(self)
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        """Show configuration only over the prompt's visible border title.
+
+        Args:
+            event: Pointer movement within the prompt pane.
+        """
+        position = event.screen_offset - self.region.offset
+        title_width = min(Text(str(self.border_title)).cell_len, max(0, self.region.width - 4))
+        inside = position.y == 0 and 2 <= position.x < 2 + title_width
+        self._title_tooltip.update(self.presentation.details if inside and self.presentation else None, restart=True)
+
+    def on_leave(self, event: events.Leave) -> None:
+        """Hide configuration when the pointer leaves the prompt title.
+
+        Args:
+            event: Pointer departure from this widget.
+        """
+        self._title_tooltip.update(None)
 
 
 class TradingApp(App[None]):
@@ -107,7 +162,6 @@ class TradingApp(App[None]):
     CSS = """
     Screen { background: #0d131c; color: #d9e2ef; overflow: hidden hidden; }
     #run-status { height: 1; padding: 0 1; background: #1a2635; }
-    #model-config { height: auto; padding: 0 1; background: #1a2635; color: #a9bcd3; }
     #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
     #stage-tabs { height: 3; }
     #stage-tabs Tab.running { color: #e8b86d; text-style: bold; }
@@ -168,9 +222,8 @@ class TradingApp(App[None]):
         selected_analysts: tuple[str, ...] = tuple(ANALYSTS),
         ticker: str = "",
         run_dir: Path | None = None,
-        working_config: HarnessConfig | None = None,
-        decision_config: HarnessConfig | None = None,
         agent_configs: dict[str, HarnessConfig] | None = None,
+        agent_presets: dict[str, str] | None = None,
         output_language: str = "English",
     ) -> None:
         """Create stage views without starting native model work.
@@ -180,16 +233,16 @@ class TradingApp(App[None]):
             selected_analysts: Analyst keys shown in the initial grid.
             ticker: Instrument shown in the run header.
             run_dir: Saved run location used to load the completed report.
-            working_config: Selected working-agent harness, provider, model, and effort.
-            decision_config: Selected decision-manager harness, provider, model, and effort.
-            agent_configs: Effective per-role settings keyed by display name when individual assignments are used.
+            agent_configs: Effective per-role settings keyed by display name.
+            agent_presets: Selected saved preset names keyed by display name.
             output_language: Run language used to build the initial debate system prompts.
         """
         super().__init__()
         self.run_callback, self.selected_analysts, self.ticker, self.run_dir = run, selected_analysts, ticker, run_dir
-        self._model_config_text = model_configuration(working_config, decision_config)
-        self._agent_config_text = {name: _model_selection(config) for name, config in (agent_configs or {}).items()}
-        self._displayed_model_config_text = ""
+        self._agent_presentations = {
+            name: _agent_presentation(name, config, (agent_presets or {}).get(name))
+            for name, config in (agent_configs or {}).items()
+        }
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -197,9 +250,15 @@ class TradingApp(App[None]):
         self.stages = {stage: Activity() for stage, _ in STAGES}
         self.usage: dict[tuple[str, str], Usage] = {}
         self.current_speakers: dict[str, str] = {}
-        self.agent_views = {ANALYSTS.get(key, key): ChatView(id=f"analyst-{index}") for index, key in enumerate(selected_analysts)}
-        self.stage_views = {stage: ChatView(debate=stage in DEBATE_STAGES, show_systems=stage not in DEBATE_STAGES, id=f"transcript-{stage}")
-                            for stage, _ in STAGES[1:] if stage != "reports"}
+        self.agent_views = {
+            ANALYSTS.get(key, key): ChatView(agent_presentations=self._agent_presentations, show_profile_labels=False, id=f"analyst-{index}")
+            for index, key in enumerate(selected_analysts)
+        }
+        self.stage_views = {
+            stage: ChatView(debate=stage in DEBATE_STAGES, show_systems=stage not in DEBATE_STAGES,
+                            agent_presentations=self._agent_presentations, id=f"transcript-{stage}")
+            for stage, _ in STAGES[1:] if stage != "reports"
+        }
         self.prompt_views: dict[str, dict[str, TranscriptView]] = {}
         for stage, roles in DEBATE_ROLES.items():
             self.prompt_views[stage] = {}
@@ -207,16 +266,17 @@ class TradingApp(App[None]):
                 name = ROLES[key].name
                 document = Transcript()
                 document.append(system_prompt(ROLES[key], output_language), "#a9bcd3")
-                view = TranscriptView(document, id=f"system-{stage}-{key}")
+                presentation = self._agent_presentations.get(name)
+                view = AgentPromptView(document, presentation, id=f"system-{stage}-{key}")
                 view.add_class("prompt-pane")
-                view.border_title = name
+                view.border_title = f"{name} · {presentation.label}" if presentation else name
                 view.following = False
                 self.prompt_views[stage][name] = view
             self.stage_views[stage].add_class("debate-transcript")
         self._prompt_targets = {view: (stage, name) for stage, views in self.prompt_views.items() for name, view in views.items()}
         self._debate_focus = {stage: len(views) for stage, views in self.prompt_views.items()}
         self._debate_fullscreen: dict[str, ChatView | TranscriptView | None] = {stage: None for stage in DEBATE_STAGES}
-        self.memory_view = ChatView(id="memory-transcript")
+        self.memory_view = ChatView(agent_presentations=self._agent_presentations, id="memory-transcript")
         self.report_document = Transcript()
         self.report_view = TranscriptView(self.report_document, id="transcript-reports")
         self._render_views = [*self.agent_views.values(), *self.stage_views.values(), *self._prompt_targets, self.memory_view, self.report_view]
@@ -246,12 +306,6 @@ class TradingApp(App[None]):
             Tabs, analyst panes, chronological chats, and counters.
         """
         yield Static(id="run-status", markup=False)
-        self._displayed_model_config_text = self._current_model_configuration()
-        configuration = Static(self._displayed_model_config_text, id="model-config",
-                               classes="" if self._displayed_model_config_text else "hidden", markup=False)
-        assignments = "\n".join(f"{name} · {value}" for name, value in self._agent_config_text.items())
-        configuration.tooltip = Content(assignments or self._model_config_text)
-        yield configuration
         yield Static(id="run-error", classes="hidden", markup=False)
         yield Tabs(*(Tab(label, id=f"tab-{stage}") for stage, label in STAGES), id="stage-tabs")
         yield Static(id="stage-status", markup=False)
@@ -261,7 +315,7 @@ class TradingApp(App[None]):
                 for index, key in enumerate(self.selected_analysts):
                     name = ANALYSTS.get(key, key)
                     with Vertical(id=f"pane-{index}", classes="agent-pane selected" if index == 0 else "agent-pane"):
-                        yield Static(name, id=f"agent-status-{index}", classes="agent-status", markup=False)
+                        yield AgentStatus(name, self._agent_presentations.get(name), id=f"agent-status-{index}")
                         yield self.agent_views[name]
             for stage, _ in STAGES[1:]:
                 if stage in DEBATE_STAGES:
@@ -530,52 +584,6 @@ class TradingApp(App[None]):
             self._driver.write(str(Control.title("")) + "\x1b[23;0t")
             self._driver.flush()
 
-    def _current_model_configuration(self) -> str:
-        """Describe the selected role while retaining grouped settings for ordinary runs.
-
-        Returns:
-            The current role's configuration, or the shared working/manager description.
-        """
-        if not self._agent_config_text:
-            return self._model_config_text
-
-        name: str | None = None
-        if self.memory_view.has_focus and self.memory_view.is_on_screen and self._memory_agents:
-            latest = self._memory_agents[-1]
-            name = next((ROLES[key].name for key in ("reflection", "screening")
-                         if latest == ROLES[key].name or latest.startswith(ROLES[key].name + " ")), None)
-        if name is None and self.active_stage == "analysis" and self.selected_analysts:
-            key = self.selected_analysts[self.selected_agent]
-            name = ANALYSTS.get(key, key)
-        elif name is None and self.active_stage == "reports":
-            name = ROLES["portfolio_manager"].name
-        elif name is None:
-            view = self._active_view()
-            if view in self._prompt_targets:
-                name = self._prompt_targets[view][1]
-            else:
-                participants = self._stage_agents[self.active_stage]
-                name = self.current_speakers.get(self.active_stage) or (participants[-1] if participants else None)
-                if name is None:
-                    name = next((role.name for role in ROLES.values() if role.stage == self.active_stage), None)
-
-        description = self._agent_config_text.get(name) if name is not None else None
-        return f"{name} · {description}" if description is not None else self._model_config_text
-
-    def _refresh_model_configuration(self) -> None:
-        """Update the role header only when selection or active speaker changes."""
-        if not self._agent_config_text or "model-config" not in self._status_widgets:
-            return
-
-        text = self._current_model_configuration()
-        if text == self._displayed_model_config_text:
-            return
-
-        self._displayed_model_config_text = text
-        widget = self._status_widgets["model-config"]
-        widget.set_class(not text, "hidden")
-        widget.update(text)
-
     def refresh_clocks(self) -> None:
         """Refresh clocks and counters without re-rendering historical chat content."""
         if not self.is_running or not self._status_widgets or not self._status_widgets["run-status"].is_attached:
@@ -584,7 +592,6 @@ class TradingApp(App[None]):
         self._refresh_tabs(now)
         frame = self._running_spinner.render(now).plain
         self._refresh_terminal_title(frame)
-        self._refresh_model_configuration()
         status_suffixes = {"running": f" {frame}", "complete": "", "using tool": f" {frame} tool"}
         for view in self._render_views:
             if isinstance(view, ChatView) and view.is_on_screen:
@@ -619,8 +626,15 @@ class TradingApp(App[None]):
             activity = self.agents[name]
             values = [value for (agent, _), value in self.usage.items() if agent == name]
             label = name.removesuffix(" Analyst") if compact else name
-            self._status_widgets[f"agent-status-{index}"].update(
-                f"{label} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
+            elapsed = duration(activity.elapsed(now))
+            status = self._status_widgets[f"agent-status-{index}"]
+            if presentation := self._agent_presentations.get(name):
+                available = max(0, status.content_region.width - Text(f"{label} ·  · {elapsed}").cell_len)
+                profile = Text(presentation.label)
+                profile.truncate(available, overflow="crop")
+                if profile.plain:
+                    label += f" · {profile.plain}"
+            status.update(f"{label} · {elapsed}\n{usage_label(values, compact=compact)}")
         if self._memory_agents:
             name = self._memory_agents[-1]
             activity = self.agents[name]
@@ -827,7 +841,6 @@ class TradingApp(App[None]):
         self.query_one("#stage-analysis", Grid).set_class(self.fullscreen, "full-grid")
         if self.selected_analysts:
             self._active_view().focus()
-        self._refresh_model_configuration()
         self.call_after_refresh(self._refresh_shortcuts)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
@@ -847,7 +860,6 @@ class TradingApp(App[None]):
             if event.widget in views:
                 self._debate_focus[stage] = views.index(event.widget)
                 break
-        self.call_after_refresh(self._refresh_model_configuration)
         self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:

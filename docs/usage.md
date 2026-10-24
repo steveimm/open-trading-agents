@@ -40,7 +40,7 @@ For a custom output directory, pass its run folder instead, for example `resume 
 
 Running stage tabs and agent turns show an animated loading indicator that disappears when they finish. Debate prompts occupy the left column, with the conversation on the right. Left/Right selects a debate pane, Up/Down scrolls it, and `f` toggles fullscreen. System prompts are available before the agents' turns begin.
 
-With individual agent assignments, the model header follows the selected analyst, focused debate prompt, or current speaker. Its tooltip lists the configuration for every role.
+Each agent's panel title shows its selected preset name, or the model name for a custom configuration. Hover the title to see that agent's harness, model, and effort. Preset names are saved with the run and retained on resume.
 
 The terminal tab/window title shows the ticker and an animated activity indicator while a run is active. The activity indicator disappears after completion. Failed or cancelled runs show a status label. On exit, the app clears its title and restores the previous one where the terminal supports title restoration. Headless and JSON-event output contain no title-control sequences.
 

@@ -314,6 +314,8 @@ def test_run_selects_independent_profiles_without_changing_saved_files(wizard: P
     selected = configuration_ui.select_agent_settings(original)
 
     assert selected.model_settings() == alternate and selected.model_settings(True) == working
+    assert selected.agent_presets["market"] == selected.agent_presets["bull"] == "beta"
+    assert selected.agent_presets["research_manager"] == selected.agent_presets["portfolio_manager"] == "alpha"
     assert selected.agents == {}
     assert original.agents == {"news": override}
     assert original.quick is None and original.deep is None
@@ -353,6 +355,7 @@ def test_manager_can_inherit_or_select_an_equal_independent_profile(
 
     assert selected.model_settings() == next_profile
     assert selected.model_settings(True) == (original_profile if independent else next_profile)
+    assert selected.agent_presets["research_manager"] == ("alpha-copy" if independent else "beta")
     editors = [choices for label, choices in shown if label == "Simple agent configuration"]
     assert editors[1][1] == f"Decision manager · {'alpha-copy' if independent else 'alpha (default)'}"
     assert editors[-1][1] == f"Decision manager · {'alpha-copy' if independent else 'beta'}"
@@ -451,6 +454,9 @@ def test_advanced_run_selection_edits_multiple_roles_without_saving(wizard: Path
     assert selected.model_settings(role="research_manager") == working
     assert selected.model_settings(role="portfolio_manager") == decision
     assert selected.model_settings(role="reflection") == reflection
+    assert selected.agent_presets["market"] == "zeta"
+    assert selected.agent_presets["research_manager"] == "alpha"
+    assert "reflection" not in selected.agent_presets
     assert selected.model_settings() == working
     assert selected.model_settings(True) == decision
     assert shown[0] == ("Agent configuration", ["Simple", "Advanced"])

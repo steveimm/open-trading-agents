@@ -1,15 +1,18 @@
 import pytest
-from textual.widgets import Static
+from textual.widgets import Static, Tooltip
 
-from open_trading_agents.analysis.models import STAGES, AgentEvent
+from open_trading_agents.analysis.models import STAGES, AgentEvent, HarnessConfig
+from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.ui.app import TradingApp
 
 
 @pytest.mark.parametrize("stage,size", [("research", (160, 44)), ("risk", (80, 24))])
 async def test_debate_transcript_fullscreen_retains_scrollback_and_collapsed_turns(stage: str, size: tuple[int, int]) -> None:
     """Expand the conversation alone and restore prompt panes without moving the reader or discarding content."""
-    app = TradingApp()
-    async with app.run_test(size=size) as pilot:
+    profiles = {role.name: HarnessConfig(kind="pi", model=f"{key}-model") for key, role in ROLES.items()}
+    app = TradingApp(agent_configs=profiles)
+    app.TOOLTIP_DELAY = 0.01
+    async with app.run_test(size=size, tooltips=True) as pilot:
         for _ in range([key for key, _ in STAGES].index(stage)):
             await pilot.press("tab")
         first_agent, second_agent = list(app.prompt_views[stage])[:2]
@@ -33,6 +36,13 @@ async def test_debate_transcript_fullscreen_retains_scrollback_and_collapsed_tur
         previous_width = chat.size.width
         assert not chat.following and app._active_view() is chat
 
+        title_offset = chat.scrollable_content_region.offset - chat.region.offset
+        await pilot.hover(chat, offset=(title_offset.x + 4, title_offset.y))
+        await pilot.pause(0.03)
+        tooltip = app.screen.query_one(Tooltip)
+        assert tooltip.display and profiles[second_agent].model in str(tooltip.render())
+        assert profiles[first_agent].model not in str(tooltip.render())
+
         await pilot.press("f")
         await pilot.pause()
         assert app._debate_fullscreen[stage] is chat
@@ -42,6 +52,10 @@ async def test_debate_transcript_fullscreen_retains_scrollback_and_collapsed_tur
         assert chat.region.x == 0 and chat.region.right == size[0]
         assert "".join(segment.text for segment in chat.render_line(1)).strip(" │") == previous_line
         assert earlier.collapsed and not chat.following
+        title_offset = chat.scrollable_content_region.offset - chat.region.offset
+        await pilot.hover(chat, offset=(title_offset.x + 4, title_offset.y))
+        await pilot.pause(0.03)
+        assert tooltip.display and profiles[second_agent].model in str(tooltip.render())
         assert not app.check_action("navigate", ("left",)) and not app.check_action("navigate", ("right",))
         await pilot.press("left", "right", "enter", "escape")
         assert app._active_view() is chat and chat.has_focus

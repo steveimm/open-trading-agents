@@ -9,7 +9,7 @@ from open_trading_agents.analysis.backtest import _manifest
 from open_trading_agents.analysis.models import AgentResult, AgentSpec, EventSink, HarnessConfig
 from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.analysis.workflow import Workflow
-from open_trading_agents.config import HarnessSettings, Settings, load_settings, save_preset
+from open_trading_agents.config import HarnessSettings, Settings, load_settings, preset_path, save_preset
 from open_trading_agents.reporting.reports import write_reports
 
 
@@ -84,6 +84,137 @@ def test_default_preset_precedes_effective_role_validation(tmp_path: Path, monke
     selected = settings.model_settings(role="bull")
     assert (selected.kind, selected.model, selected.provider) == ("pi", "selected-worker", "local-provider")
     assert settings.model_dump()["agents"] == {"bull": {"provider": "local-provider"}}
+
+
+def test_default_preset_labels_only_roles_with_matching_public_selectors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Name the applied default profile without guessing names for overridden runtimes.
+
+    Args:
+        tmp_path: Isolated preset and configuration storage.
+        monkeypatch: Scoped home-directory replacement.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    profile = HarnessSettings(kind="pi", provider="local", model="worker", effort="high")
+    save_preset("daily", profile)
+    save_preset("another-identical-profile", profile)
+    path = tmp_path / ".open-trading-agents" / "config.toml"
+    path.write_text('''default_preset = "daily"
+[agents.market]
+command = ["custom-pi"]
+extra_args = ["--custom"]
+[agents.bull]
+model = "different-model"
+[agents.bear]
+effort = "low"
+[agents.trader]
+provider = "different-provider"
+[agents.portfolio_manager]
+kind = "codex"
+''')
+
+    settings = load_settings(path, use_default_preset=True)
+    unmatched = {"bull", "bear", "trader", "portfolio_manager"}
+    assert settings.agent_presets == {role: "daily" for role in ROLES if role not in unmatched}
+    assert settings.model_settings(role="market").command == ("custom-pi",)
+    assert settings.model_settings(role="market").profile_identity() == profile.profile_identity()
+    assert settings.model_settings(role="bull").model == "different-model"
+    assert load_settings(path).agent_presets == {}
+
+
+def test_preset_labeling_does_not_validate_roles_before_runtime_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leave an invalid inherited provider available for a later explicit harness override.
+
+    Args:
+        tmp_path: Isolated preset and configuration storage.
+        monkeypatch: Scoped home-directory replacement.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    save_preset("native", HarnessSettings(kind="claude"))
+    path = tmp_path / ".open-trading-agents" / "config.toml"
+    path.write_text('default_preset = "native"\n[agents.bull]\nprovider = "local"\n')
+
+    settings = load_settings(path, use_default_preset=True)
+
+    assert "bull" not in settings.agent_presets
+    assert settings.agents["bull"].provider == "local"
+    settings.harness = HarnessSettings(kind="pi", model="worker")
+    assert settings.model_settings(role="bull").provider == "local"
+
+
+@pytest.mark.parametrize("labels", [{"bullish": "daily"}, {"bull": "../outside"}, {"bull": ""}])
+def test_agent_preset_labels_require_valid_roles_and_names(labels: dict[str, str]) -> None:
+    """Reject invalid role metadata without requiring valid labels to reference existing files.
+
+    Args:
+        labels: An invalid role key or preset-name spelling.
+    """
+    with pytest.raises(ValidationError):
+        Settings(agent_presets=labels)
+
+    assert Settings(agent_presets={"bull": "missing-but-valid-profile"}).agent_presets == {"bull": "missing-but-valid-profile"}
+
+
+@pytest.mark.parametrize("remove_profile", [False, True])
+def test_exact_preset_labels_survive_resume_after_profiles_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remove_profile: bool,
+) -> None:
+    """Restore selected names and pinned runtimes independently of mutable profile files.
+
+    Args:
+        tmp_path: Isolated presets and run storage.
+        monkeypatch: Scoped home-directory replacement.
+        remove_profile: Whether saved profiles are deleted or replaced after the run starts.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    profile = HarnessSettings(kind="codex", model="original-model", effort="high")
+    for name in ("daily", "exact-alias"):
+        save_preset(name, profile)
+    settings = Settings(state_dir=tmp_path / "state", harness=profile, default_preset="daily",
+                        agent_presets={"market": "daily", "bull": "exact-alias"})
+    assert Settings.model_validate_json(settings.model_dump_json()).agent_presets == settings.agent_presets
+    workflow = Workflow("NVDA", "2026-01-02", settings)
+    workflow.store.save_session("Bull Researcher", "original-session")
+    workflow.store.close()
+
+    for name in ("daily", "exact-alias"):
+        if remove_profile:
+            preset_path(name).unlink()
+        else:
+            save_preset(name, HarnessSettings(kind="claude", model="replacement-model"), overwrite=True)
+
+    resumed = Workflow.resume(workflow.directory)
+    try:
+        assert resumed.settings.agent_presets == {"market": "daily", "bull": "exact-alias"}
+        assert resumed.settings.model_settings(role="bull") == profile
+        assert resumed.store.session("Bull Researcher") == "original-session"
+    finally:
+        resumed.store.close()
+
+
+def test_existing_run_preserves_original_labels_but_rejects_runtime_changes(tmp_path: Path) -> None:
+    """Ignore replacement display labels without allowing changed native execution settings.
+
+    Args:
+        tmp_path: Isolated run storage.
+    """
+    settings = Settings(state_dir=tmp_path, harness=HarnessSettings(model="pinned-model"), agent_presets={"bull": "original"})
+    workflow = Workflow("NVDA", "2026-01-02", settings, run_id="fixed")
+    workflow.store.close()
+    relabeled = settings.model_copy(update={"agent_presets": {"bull": "replacement", "market": "new-label"}})
+
+    resumed = Workflow("NVDA", "2026-01-02", relabeled, run_id="fixed")
+    try:
+        assert resumed.settings.agent_presets == {"bull": "original"}
+        assert resumed.store.metadata("input")["settings"]["agent_presets"] == {"bull": "original"}
+        assert relabeled.agent_presets == {"bull": "replacement", "market": "new-label"}
+    finally:
+        resumed.store.close()
+
+    changed = relabeled.model_copy(update={"harness": HarnessSettings(model="different-model")})
+    with pytest.raises(ValueError, match="inputs differ"):
+        Workflow("NVDA", "2026-01-02", changed, run_id="fixed")
 
 
 @pytest.mark.parametrize("kind", ["claude", "codex"])
@@ -221,6 +352,7 @@ def test_saved_inputs_without_role_overrides_remain_resumable(tmp_path: Path) ->
     workflow = Workflow("NVDA", "2026-01-02", settings)
     inputs = workflow.store.metadata("input")
     inputs["settings"].pop("agents")
+    inputs["settings"].pop("agent_presets")
     workflow.store.set_metadata("input", inputs)
     workflow.store.save_session("Bull Researcher", "existing-native-session")
     workflow.store.close()
@@ -228,6 +360,7 @@ def test_saved_inputs_without_role_overrides_remain_resumable(tmp_path: Path) ->
     resumed = Workflow.resume(workflow.directory)
     try:
         assert resumed.settings.agents == {}
+        assert resumed.settings.agent_presets == {}
         assert resumed.store.session("Bull Researcher") == "existing-native-session"
     finally:
         resumed.store.close()
@@ -240,12 +373,17 @@ def test_backtest_fingerprint_preserves_old_defaults_and_pins_role_overrides(tmp
         tmp_path: Isolated backtest storage.
     """
     settings = Settings(state_dir=tmp_path)
-    old_inputs = {"settings": settings.model_dump(mode="json", exclude={"agents"}), "portfolio": None}
+    old_inputs = {"settings": settings.model_dump(mode="json", exclude={"agents", "agent_presets"}), "portfolio": None}
     old_digest = hashlib.sha256(json.dumps(old_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"] == old_digest
+    settings.agent_presets = {"market": "display-label"}
     assert _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"] == old_digest
 
     settings.agents["bear"] = HarnessSettings(kind="claude", model="bear-model")
     selected = _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"]
+    old_inputs["settings"]["agents"] = settings.model_dump(mode="json")["agents"]
+    previous_role_digest = hashlib.sha256(json.dumps(old_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert selected == previous_role_digest
     assert selected != old_digest
     settings.agents["bear"].model = "different-bear-model"
     assert _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"] != selected

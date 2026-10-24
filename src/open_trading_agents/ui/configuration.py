@@ -278,13 +278,13 @@ def _preset_label(name: str, default_preset: str | None) -> str:
     return f"{name} (default)" if name == default_preset else name
 
 
-def _profile_label(
+def _matching_preset(
     settings: HarnessSettings,
     profiles: dict[str, HarnessSettings],
     name: str | None = None,
     default_preset: str | None = None,
-) -> str:
-    """Show a selected preset name, falling back to a compact runtime description.
+) -> str | None:
+    """Identify a matching preset while retaining the exact name explicitly chosen.
 
     Args:
         settings: Effective profile shown in the editor.
@@ -293,14 +293,57 @@ def _profile_label(
         default_preset: Saved default to mark and prefer when no explicit name was chosen.
 
     Returns:
+        A matching preset name, or None for a custom runtime.
+    """
+    identity = settings.profile_identity()
+    for candidate in (name, default_preset):
+        if candidate is not None and candidate in profiles and profiles[candidate].profile_identity() == identity:
+            return candidate
+
+    return next((key for key, profile in profiles.items() if profile.profile_identity() == identity), None)
+
+
+def _profile_label(
+    settings: HarnessSettings,
+    profiles: dict[str, HarnessSettings],
+    name: str | None = None,
+    default_preset: str | None = None,
+) -> str:
+    """Show a preset name and saved-default marker, or a compact custom runtime.
+
+    Args:
+        settings: Effective profile shown in the editor.
+        profiles: Available saved profiles.
+        name: Exact preset chosen during this editing session.
+        default_preset: Saved default to mark and prefer for matching selections.
+
+    Returns:
         A preset name or harness/model/effort summary.
     """
-    for candidate in (name, default_preset):
-        if candidate is not None and profiles.get(candidate) == settings:
-            return _preset_label(candidate, default_preset)
-
-    matched = next((key for key, profile in profiles.items() if profile == settings), None)
+    matched = _matching_preset(settings, profiles, name, default_preset)
     return _preset_label(matched, default_preset) if matched is not None else _describe(settings)
+
+
+def _remember_agent_presets(selected: Settings, profiles: dict[str, HarnessSettings], names: dict[str, str | None]) -> Settings:
+    """Save role labels alongside the run's effective settings without changing preset files.
+
+    Args:
+        selected: Completed run selections.
+        profiles: Presets available during the editor session.
+        names: Exact preset names explicitly chosen for individual roles.
+
+    Returns:
+        The run settings with available preset names captured for display and resume.
+    """
+    labels = {}
+    for key in ROLES:
+        preferred = names.get(key, selected.agent_presets.get(key))
+        name = _matching_preset(selected.model_settings(role=key), profiles, preferred, selected.default_preset)
+        if name is not None:
+            labels[key] = name
+
+    selected.agent_presets = labels
+    return selected
 
 
 def _agent_profile(
@@ -386,6 +429,7 @@ def _simple_agent_settings(
         Group assignments with individual overrides cleared for this run.
     """
     selected.agents = {}
+    selected.agent_presets = {}
     inherited_manager = selected.deep is None
     if inherited_manager:
         selected.deep = selected.model_settings().model_copy(deep=True)
@@ -400,7 +444,8 @@ def _simple_agent_settings(
                   for (key, label), profile in zip(groups, (working, manager), strict=True)]
         cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
         if cursor == len(groups):
-            return selected
+            role_names = {key: names.get("deep" if role.deep else "quick") for key, role in ROLES.items()}
+            return _remember_agent_presets(selected, profiles, role_names)
 
         key, label = groups[cursor]
         choice = _agent_profile(
@@ -450,7 +495,7 @@ def _advanced_agent_settings(
                   for key in roles]
         cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
         if cursor == len(roles):
-            return selected
+            return _remember_agent_presets(selected, profiles, names)
 
         key = roles[cursor]
         role = ROLES[key]

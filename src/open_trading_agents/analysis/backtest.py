@@ -160,7 +160,8 @@ def _manifest(tickers: list[str], dates: list[str], settings: Settings, portfoli
     Returns:
         A versioned grid and exact configuration fingerprint.
     """
-    inputs = {"settings": settings.model_dump(mode="json"), "portfolio": portfolio.model_dump(mode="json") if portfolio else None}
+    inputs = {"settings": settings.model_dump(mode="json", exclude={"agent_presets"}),
+              "portfolio": portfolio.model_dump(mode="json") if portfolio else None}
     if not settings.agents:
         inputs["settings"].pop("agents")
 

@@ -10,10 +10,11 @@ import pytest
 
 from open_trading_agents.analysis.backtest import iter_grid, run_backtest, summarize
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
-from open_trading_agents.config import Portfolio, Settings
+from open_trading_agents.config import HarnessSettings, Portfolio, Settings, load_settings, save_preset
 from open_trading_agents.dataflows.files import locked
 from open_trading_agents.persistence import memory
 from open_trading_agents.persistence.memory import MemoryLog
+from open_trading_agents.persistence.storage import RunStore
 
 
 class FixtureSession:
@@ -149,6 +150,56 @@ async def test_failed_cell_resumes_native_session_without_repeating_completed_ag
     assert len(trader_calls) == 2 and trader_calls[0][1] == trader_calls[1][1]
     assert "Continue the unfinished task" in trader_calls[1][0]
     assert second.summary.pending == 1
+
+
+async def test_named_default_can_resume_legacy_sweep_and_incomplete_cell(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """New display metadata must not change an existing experiment or its pinned role labels.
+
+    Args:
+        monkeypatch: Scoped home and offline market-return replacements.
+        tmp_path: Isolated presets, configuration, and sweep storage.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(memory, "fetch_returns", Mock(return_value=(None, None, None, None)))
+    save_preset("daily", HarnessSettings(model="pinned-model"))
+    path = tmp_path / ".open-trading-agents" / "config.toml"
+    path.write_text('default_preset = "daily"\nanalysts = ["market"]\n')
+    settings = load_settings(path, use_default_preset=True)
+    legacy = settings.model_copy(update={"agent_presets": {}})
+    calls: list[tuple[str, str, str]] = []
+    factory = _factory(calls, [True])
+    first = await run_backtest(["NVDA"], ["2024-03-15"], legacy, run_id="legacy", session_factory=factory)
+    assert len(first.failures) == 1
+    manifest = (first.directory / "manifest.json").read_bytes()
+
+    for directory in (first.directory / "runs").iterdir():
+        store = RunStore(directory)
+        try:
+            inputs = store.metadata("input")
+            inputs["settings"].pop("agent_presets")
+            store.set_metadata("input", inputs)
+        finally:
+            store.close()
+
+    current = load_settings(path, use_default_preset=True)
+    assert current.agent_presets["market"] == "daily"
+    second = await run_backtest(["NVDA"], ["2024-03-15"], current, run_id="legacy", session_factory=factory)
+
+    assert second.cells_run == 1 and second.failures == []
+    assert (second.directory / "manifest.json").read_bytes() == manifest
+    assert sum(agent == "Market Analyst" for agent, _, _ in calls) == 1
+    trader_sessions = [session for agent, _, session in calls if agent == "Trader"]
+    assert len(trader_sessions) == 2 and trader_sessions[0] == trader_sessions[1]
+    for directory in (second.directory / "runs").iterdir():
+        store = RunStore(directory)
+        try:
+            assert store.metadata("input")["settings"]["agent_presets"] == {}
+        finally:
+            store.close()
+    assert current.agent_presets["market"] == "daily"
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,8 @@ def runtime_overrides(
     overrides = {key: value for key, value in {"kind": harness, "model": model, "provider": provider, "effort": effort}.items()
                  if value is not None}
     if overrides:
+        named_profiles = {role: settings.model_settings(role=role).profile_identity() for role in settings.agent_presets}
+
         def apply(selection: HarnessSettings, inherited: HarnessSettings | None = None) -> HarnessSettings:
             """Override one profile while clearing incompatible harness-specific settings.
 
@@ -109,6 +111,10 @@ def runtime_overrides(
             if configured_tier:
                 setattr(settings, tier, apply(configured_tier))
         settings.agents = agents
+        settings.agent_presets = {
+            role: name for role, name in settings.agent_presets.items()
+            if settings.model_settings(role=role).profile_identity() == named_profiles[role]
+        }
     return settings
 
 
@@ -140,18 +146,16 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         from open_trading_agents.ui.app import TradingApp
 
         selected = tuple(key for key in workflow.settings.analysts if not (workflow.asset_type == "crypto" and key == "fundamentals"))
-        agent_configs = None
-        if workflow.settings.agents:
-            agent_configs = {role.name: workflow.settings.model_settings(role=key).runtime() for key, role in ROLES.items()}
+        agent_configs = {role.name: workflow.settings.model_settings(role=key).runtime() for key, role in ROLES.items()}
+        agent_presets = {ROLES[key].name: name for key, name in workflow.settings.agent_presets.items()}
 
         ui = TradingApp(
             workflow.run,
             selected_analysts=selected,
             ticker=workflow.ticker,
             run_dir=workflow.directory,
-            working_config=workflow.settings.model_settings().runtime(),
-            decision_config=workflow.settings.model_settings(deep=True).runtime(),
             agent_configs=agent_configs,
+            agent_presets=agent_presets,
             output_language=workflow.settings.output_language,
         )
         ui.run()

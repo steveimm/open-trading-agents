@@ -90,8 +90,11 @@ class Workflow:
         identity = {"ticker": self.ticker, "trade_date": self.trade_date, "settings": settings.model_dump(mode="json"),
                     "portfolio": portfolio.model_dump() if portfolio is not None else None}
         previous = self.store.metadata("input")
-        if previous and "agents" not in previous["settings"]:
-            previous["settings"]["agents"] = {}
+        if previous:
+            for field in ("agents", "agent_presets"):
+                previous["settings"].setdefault(field, {})
+            identity["settings"]["agent_presets"] = previous["settings"]["agent_presets"]
+            self.settings = settings.model_copy(update={"agent_presets": previous["settings"]["agent_presets"].copy()})
         if previous and previous != identity:
             self.store.close()
             raise ValueError("run inputs differ from the saved run; resume its original configuration or start a new run")

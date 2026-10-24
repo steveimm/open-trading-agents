@@ -6,9 +6,10 @@ import pytest
 from textual import events
 from textual.app import App, ComposeResult
 from textual.scrollbar import ScrollTo
+from textual.widgets import Tooltip
 
 from open_trading_agents.analysis.models import AgentEvent
-from open_trading_agents.ui.chat import ChatView
+from open_trading_agents.ui.chat import AgentPresentation, ChatView
 from open_trading_agents.ui.transcript import Transcript, TranscriptIndex, TranscriptView
 
 
@@ -21,6 +22,100 @@ class ChatTestApp(App[None]):
     def compose(self) -> ComposeResult:
         """Provide the isolated conversation viewport."""
         yield self.view
+
+
+async def test_agent_title_hover_tracks_each_speaker_and_pinned_scroll_position() -> None:
+    """Show one title's profile details across same-pane mouse moves and stationary-pointer scrolling."""
+    presentations = {
+        "Input": AgentPresentation("never shown", "Input must not have a profile tooltip"),
+        "Bull Researcher": AgentPresentation("bull-preset", "Bull Researcher\nModel: bull-model\nEffort: low"),
+        "Bear Researcher": AgentPresentation("bear-preset", "Bear Researcher\nModel: bear-model\nEffort: high"),
+    }
+    view = ChatView(id="chat", debate=True, agent_presentations=presentations)
+    view.styles.width = 80
+    app = ChatTestApp(view)
+    app.TOOLTIP_DELAY = 0.01
+
+    async with app.run_test(size=(100, 30), tooltips=True) as pilot:
+        view.consume(AgentEvent("conversation_input", "Input", "research", "Shared evidence"))
+        for turn, agent in enumerate(("Bull Researcher", "Bear Researcher"), 1):
+            data = {"round": 1, "turn": turn, "total_rounds": 1}
+            view.consume(AgentEvent("turn_start", agent, "research", data=data))
+            view.consume(AgentEvent("text", agent, "research", "Argument\nMore evidence", {"message_id": agent}))
+        view.sync()
+        view.navigate("home")
+        await pilot.pause()
+        tooltip = app.screen.query_one(Tooltip)
+        rows = {part.bubble.agent: view._offsets[index] for index, part in enumerate(view._parts)
+                if part.kind == "top" and part.bubble is not None}
+        title = "".join(segment.text for segment in view.render_line(rows["Bull Researcher"]))
+        assert "Bull Researcher · bull-preset · Round 1/1 · Turn 1" in title
+        assert f"Turn 1 {view._activity_frame}" in title
+
+        await pilot.hover(view, offset=(4, rows["Bull Researcher"]))
+        await pilot.pause(0.03)
+        assert tooltip.display and "bull-model" in str(tooltip.render())
+        assert "bear-model" not in str(tooltip.render())
+        await pilot.hover(view, offset=(55, rows["Bear Researcher"]))
+        await pilot.pause(0.03)
+        assert tooltip.display and "bear-model" in str(tooltip.render())
+        assert "bull-model" not in str(tooltip.render())
+
+        await pilot.hover(view, offset=(4, rows["Bear Researcher"] + 1))
+        await pilot.pause(0.03)
+        assert view.tooltip is None and not tooltip.display
+        await pilot.hover(view, offset=(4, rows["Input"]))
+        await pilot.pause(0.03)
+        assert view.tooltip is None and not tooltip.display
+        assert "never shown" not in "".join(segment.text for segment in view.render_line(rows["Input"]))
+        await pilot.hover(view, offset=(78, rows["Bull Researcher"]))
+        await pilot.pause(0.03)
+        assert view.tooltip is None and not tooltip.display
+
+        view.consume(AgentEvent("text", "Bear Researcher", "research", "\nLong evidence" * 80, {"message_id": "Bear Researcher"}))
+        view.sync()
+        await pilot.pause()
+        body_rows = {part.bubble.agent: view._offsets[index] for index, part in enumerate(view._parts)
+                     if part.kind == "body" and part.bubble is not None and part.bubble.kind == "agent"}
+        view.scroll_to(y=body_rows["Bear Researcher"] + 10, animate=False, immediate=True)
+        await pilot.hover(view, offset=(4, 0))
+        await pilot.pause(0.03)
+        assert tooltip.display and "bear-model" in str(tooltip.render())
+        view.scroll_to(y=body_rows["Bull Researcher"], animate=False, immediate=True)
+        await pilot.pause(0.03)
+        assert tooltip.display and "bull-model" in str(tooltip.render())
+        await pilot.click(view, offset=(4, 0))
+        assert next(bubble for bubble in view.bubbles if bubble.agent == "Bull Researcher").collapsed
+
+        await pilot.hover(app.screen, offset=(95, 0))
+        await pilot.pause(0.03)
+        assert view.tooltip is None and not tooltip.display
+
+
+@pytest.mark.parametrize("agent,base,show_label", [
+    ("Reflection 17", "Reflection", True),
+    ("Sentiment Screening 4", "Sentiment Screening", False),
+])
+async def test_supporting_agent_titles_resolve_base_profile_and_optional_labels(agent: str, base: str, show_label: bool) -> None:
+    """Use the supporting role's profile for numbered sessions while retaining tooltips when labels are suppressed."""
+    presentation = AgentPresentation("support-preset", f"{base}\nModel: supporting-model")
+    view = ChatView(id="chat", agent_presentations={base: presentation}, show_profile_labels=show_label)
+    app = ChatTestApp(view)
+    app.TOOLTIP_DELAY = 0.01
+
+    async with app.run_test(size=(100, 20), tooltips=True) as pilot:
+        view.consume(AgentEvent("text", agent, "analysis", "Supporting result"))
+        view.consume(AgentEvent("agent_end", agent, "analysis"))
+        view.sync()
+        await pilot.pause()
+        title = "".join(segment.text for segment in view.render_line(0))
+        assert ("support-preset" in title) is show_label
+        assert "✓" not in title and "complete" not in title
+
+        await pilot.hover(view, offset=(4, 0))
+        await pilot.pause(0.03)
+        tooltip = app.screen.query_one(Tooltip)
+        assert tooltip.display and "supporting-model" in str(tooltip.render())
 
 
 async def test_debate_bubbles_keep_shared_input_once_without_per_turn_inputs() -> None:

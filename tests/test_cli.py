@@ -335,10 +335,29 @@ def test_cli_flags_override_default_profile_for_both_roles(tmp_path: Path, monke
     assert default.model_settings().model == "daily-model"
     assert default.model_settings(True).model == "daily-model"
     assert default.model_settings(True).effort == "high"
+    assert set(default.agent_presets.values()) == {"daily"}
+    retained = configured(None, None, "daily-model", None)
+    assert retained.agent_presets == default.agent_presets
     overridden = configured(None, HarnessName.codex, "one-run-model", "local", "medium")
     for deep in (False, True):
         assert overridden.model_settings(deep) == HarnessSettings(kind="codex", model="one-run-model", provider="local", effort="medium")
+    assert overridden.agent_presets == {}
     assert path.read_text() == original
+
+
+def test_flags_only_remove_preset_labels_for_changed_role_profiles() -> None:
+    """Keep a preset label only when explicit flags leave that role's four selectors intact."""
+    settings = Settings(
+        harness=HarnessSettings(model="worker", effort="low"),
+        agents={"bull": HarnessSettings(effort="high")},
+        agent_presets={"market": "worker-low", "bull": "worker-high"},
+    )
+
+    updated = cli.runtime_overrides(settings, None, None, None, "high")
+
+    assert updated.model_settings(role="market").effort == "high"
+    assert updated.model_settings(role="bull").effort == "high"
+    assert updated.agent_presets == {"bull": "worker-high"}
 
 
 @pytest.mark.parametrize("command", ["run", "backtest"])
