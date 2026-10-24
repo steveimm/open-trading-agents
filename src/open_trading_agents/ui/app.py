@@ -483,7 +483,7 @@ class TradingApp(App[None]):
         elif self._failure:
             title = f"Failed · {name}"
         elif self._finished is not None:
-            title = f"✓ {name}"
+            title = name
         elif self.run_callback is not None or any(stage.status == "running" for stage in self.stages.values()):
             title = f"{frame} {name}"
         else:
@@ -553,7 +553,7 @@ class TradingApp(App[None]):
             values = [value for (agent, _), value in self.usage.items() if agent == name]
             label = name.removesuffix(" Analyst") if compact else name
             self._status_widgets[f"agent-status-{index}"].update(
-                f"{label} · {statuses.get(activity.status, activity.status)} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
+                f"{label} · {duration(activity.elapsed(now))}\n{usage_label(values, compact=compact)}")
         if self._memory_agents:
             name = self._memory_agents[-1]
             activity = self.agents[name]

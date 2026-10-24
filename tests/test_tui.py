@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 
@@ -356,7 +357,7 @@ async def test_debate_geometry_fills_available_area_without_outer_scrollbars(siz
 
 
 async def test_analyst_completion_and_fullscreen_use_requested_controls() -> None:
-    """Mark finished analysts with a check and keep fullscreen on f alone."""
+    """Keep the analyst header to its name and time, with fullscreen on f alone."""
     app = TradingApp()
     async with app.run_test(size=(140, 40)) as pilot:
         await app.receive(AgentEvent("agent_start", "Market Analyst", "analysis"))
@@ -364,7 +365,7 @@ async def test_analyst_completion_and_fullscreen_use_requested_controls() -> Non
         app.flush_events()
         app.refresh_clocks()
         status = str(app.query_one("#agent-status-0", Static).render())
-        assert "✓" in status and "complete" not in status
+        assert re.fullmatch(r"Market Analyst · \d{2}:\d{2}", status.splitlines()[0])
         await pilot.press("enter", "escape")
         assert not app.fullscreen
         await pilot.press("f")

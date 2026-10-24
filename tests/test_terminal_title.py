@@ -53,13 +53,13 @@ class RecordingDriver(HeadlessDriver):
         return re.findall(r"\x1b\]0;([^\x07]*)\x07", "".join(self.title_controls))
 
 
-@pytest.mark.parametrize("terminal_event,marker", [("run_end", "✓"), ("error", "Failed")])
-async def test_title_animates_during_silence_and_stops_at_terminal_state(terminal_event: str, marker: str) -> None:
+@pytest.mark.parametrize("terminal_event,title", [("run_end", "Open Trading Agents · NVDA"), ("error", "Failed · Open Trading Agents · NVDA")])
+async def test_title_animates_during_silence_and_stops_at_terminal_state(terminal_event: str, title: str) -> None:
     """Animate actual terminal titles without new model events or transcript reindexing.
 
     Args:
         terminal_event: Workflow completion or failure event.
-        marker: Expected stable indicator after that event.
+        title: Expected stable title after that event.
     """
     app = TradingApp(ticker="NVDA")
     app.driver_class = RecordingDriver
@@ -84,7 +84,7 @@ async def test_title_animates_during_silence_and_stops_at_terminal_state(termina
 
         await app.receive(AgentEvent(terminal_event, "Workflow", "reports", "Provider failed" if terminal_event == "error" else ""))
         app.flush_events()
-        assert marker in driver.titles[-1]
+        assert driver.titles[-1] == title
         written = len(driver.titles)
 
         await pilot.pause(0.25)
