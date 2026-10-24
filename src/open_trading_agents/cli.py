@@ -159,7 +159,7 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
             raise RuntimeError(str(ui.error)) from ui.error
         if not isinstance(ui.result, RunResult):
             command = shlex.join(["open-trading-agents", "resume", str(workflow.directory)])
-            console.print(f"Run interrupted. Resume with: {command}", markup=False)
+            console.print(f"Run cancelled. Resume with: {command}", markup=False, soft_wrap=True)
             raise typer.Exit(130)
         result = ui.result
 
@@ -212,17 +212,18 @@ def run(
     """
     if ctx.invoked_subcommand is not None:
         return
-    if not list_presets():
-        typer.echo("Run uv run open-trading-agents configure first to create a preset.")
-        raise typer.Exit(1)
-
-    interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
-    if ticker is None:
-        if not interactive:
-            raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
-        ticker = typer.prompt("Ticker")
 
     try:
+        if not list_presets():
+            typer.echo("Run uv run open-trading-agents configure first to create a preset.")
+            raise typer.Exit(1)
+
+        interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
+        if ticker is None:
+            if not interactive:
+                raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
+            ticker = typer.prompt("Ticker")
+
         if interactive and analysis_date is None:
             from open_trading_agents.ui.configuration import select_analysis_date
 
@@ -249,6 +250,11 @@ def run(
 
         workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio), output_dir=output_dir)
         run_workflow(workflow, headless, events)
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Analysis failed: {exc}", style="red", markup=False)
         raise typer.Exit(1) from exc
@@ -270,6 +276,11 @@ def resume(
     try:
         load_dotenv(Path.cwd() / ".env", override=False)
         run_workflow(Workflow.resume(directory), headless, events)
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Resume failed: {exc}", style="red", markup=False)
         raise typer.Exit(1) from exc
@@ -314,6 +325,11 @@ def backtest(
         typer.echo(f"Backtest: {result.directory}")
         if result.failures:
             raise typer.Exit(1)
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Backtest failed: {exc}", style="red", markup=False)
         raise typer.Exit(1) from exc
@@ -336,11 +352,12 @@ def configure(
         provider: Native provider selector, or an empty string to reset it.
         effort: Native reasoning or thinking effort, or an empty string to reset it.
     """
-    config = (config or default_config_path()).expanduser()
-    interactive = harness is None and model is None and provider is None and effort is None
-    if interactive and not sys.stdin.isatty():
-        raise typer.BadParameter("provide --harness, --model, --provider or --effort when input is not interactive")
     try:
+        config = (config or default_config_path()).expanduser()
+        interactive = harness is None and model is None and provider is None and effort is None
+        if interactive and not sys.stdin.isatty():
+            raise typer.BadParameter("provide --harness, --model, --provider or --effort when input is not interactive")
+
         if interactive:
             from open_trading_agents.ui.configuration import configure_interactively
 
@@ -351,6 +368,11 @@ def configure(
         selected = settings.harness
         typer.echo(f"Saved default: {selected.kind} / {selected.model or 'Harness default'} / {selected.effort or 'Harness default'}")
         typer.echo(f"Config: {config.expanduser().resolve()}")
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Configuration failed: {exc}", style="red", markup=False)
         raise typer.Exit(1) from exc

@@ -34,17 +34,23 @@ def menus(monkeypatch: pytest.MonkeyPatch) -> list[Question]:
     return captured
 
 
-def test_default_suffix_stays_on_initial_choice_when_cursor_moves(menus: list[Question]) -> None:
-    """Keep the default marker distinct from the movable pointer and return the original option value."""
-    choices = ["pi", "codex", "claude"]
+@pytest.mark.parametrize("choices", [["pi", "codex", "claude"], ["astra (default)", "pi", "claude"]])
+def test_choice_labels_stay_verbatim_when_cursor_moves(menus: list[Question], choices: list[str]) -> None:
+    """Keep caller-provided preset labels independent of the initial choice and movable pointer.
+
+    Args:
+        menus: Captured terminal menus.
+        choices: Ordinary options or a saved profile explicitly labelled as the default.
+    """
+    expected_labels = choices.copy()
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         keyboard.send_text("\x1b[B\r")
         assert configuration_ui._choose("Harness", choices, default=1) == 2
     control = next(control for control in menus[0].application.layout.find_all_controls() if isinstance(control, InquirerControl))
-    assert [choice.title for choice in control.choices] == ["pi", "codex (default)", "claude"]
+    assert [choice.title for choice in control.choices] == expected_labels
     assert [choice.value for choice in control.choices] == [0, 1, 2]
     assert control.get_pointed_at().value == 2
-    assert choices == ["pi", "codex", "claude"]
+    assert choices == expected_labels
     assert any(style == "class:pointer" and "›" in text for style, text in control._get_choice_tokens())
 
 
@@ -73,7 +79,7 @@ def test_only_arrow_keys_change_selection(menus: list[Question], keys: str, expe
         keyboard.send_text(f"{keys}\r")
         assert configuration_ui._choose("Model", ["local-small", "cloud-large", "local-large"], default=0) == expected
     control = next(control for control in menus[0].application.layout.find_all_controls() if isinstance(control, InquirerControl))
-    assert control.choices[0].title == "local-small (default)"
+    assert control.choices[0].title == "local-small"
     assert control.search_filter is None
     assert control.filtered_choices == control.choices
     assert control.get_pointed_at().value == expected

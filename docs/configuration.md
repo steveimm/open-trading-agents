@@ -12,13 +12,13 @@ Choose **Create or update profile**, select the harness, provider, model, and re
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
-Use Up/Down to move the pointer and Enter to confirm. The initial choice has a `(default)` suffix. Ctrl+C cancels setup without saving.
+Use Up/Down to move the pointer and Enter to confirm. The `(default)` suffix identifies your saved default preset. Moving the pointer or selecting another profile for a run does not change that default. Ctrl+C cancels setup without saving.
 
 To remove a preset, choose **Delete saved profile**, select its name, and confirm. Deleting the default clears its default selection in the selected and global configuration. Other presets and saved runs are retained.
 
 ## Model selection
 
-- **Harness default** uses the harness's own selection. In pi, choosing the harness default for the model also resets the provider to its harness default.
+- When creating a profile, **Harness default** uses the harness's own selection. In pi, choosing the harness default for the model also resets the provider to its harness default.
 - Providers, models, and effort levels are listed when the harness exposes them. Custom model identifiers can be entered manually.
 - Claude's listed model choices are aliases. To select a specific version, enter its full model identifier manually. Claude manages its provider through its native settings.
 - Effort is passed to the harness only when selected explicitly. Temperature and top-p remain controlled by the harness and provider.
@@ -60,7 +60,7 @@ Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an 
 
 **Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
 
-**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, reflection agent, or screening agent. Choose a saved profile or **Configure for this run**. **Default profile** restores the role's initial group profile.
+**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, reflection agent, or screening agent. Choose a saved profile or **Configure for this run**. To use your saved default, select the named preset marked `(default)`.
 
 These choices are saved with the run for resume and do not modify your presets or configuration file. Cancelling either editor discards its changes.
 

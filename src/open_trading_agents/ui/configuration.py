@@ -32,12 +32,12 @@ _MENU_STYLE = questionary.Style([
 
 
 def _choose(label: str, choices: list[str], default: int = 0) -> int:
-    """Choose from a keyboard menu with an explicit default label and movable pointer.
+    """Choose from a keyboard menu without changing its supplied labels.
 
     Args:
         label: Name of the selection.
         choices: Human-readable choices in display order.
-        default: Initially selected index, marked with a suffix and accepted by Enter.
+        default: Initially selected index, accepted by Enter.
 
     Returns:
         The selected zero-based index.
@@ -45,8 +45,7 @@ def _choose(label: str, choices: list[str], default: int = 0) -> int:
     Raises:
         typer.Abort: The user cancels or terminal input closes.
     """
-    options = [questionary.Choice(f"{title} (default)" if index == default and not title.endswith(" (default)") else title, value=index)
-               for index, title in enumerate(choices)]
+    options = [questionary.Choice(title, value=index) for index, title in enumerate(choices)]
     try:
         selected = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
@@ -266,6 +265,19 @@ class ProfileChoice:
     inherited: bool = False
 
 
+def _preset_label(name: str, default_preset: str | None) -> str:
+    """Mark the saved default preset independently of the menu pointer.
+
+    Args:
+        name: Saved preset name.
+        default_preset: Name configured as the application's default preset.
+
+    Returns:
+        The preset name with its persistent default marker when applicable.
+    """
+    return f"{name} (default)" if name == default_preset else name
+
+
 def _profile_label(
     settings: HarnessSettings,
     profiles: dict[str, HarnessSettings],
@@ -278,16 +290,17 @@ def _profile_label(
         settings: Effective profile shown in the editor.
         profiles: Available saved profiles.
         name: Exact preset chosen during this editing session.
-        default_preset: Preferred matching preset when no explicit name was chosen.
+        default_preset: Saved default to mark and prefer when no explicit name was chosen.
 
     Returns:
         A preset name or harness/model/effort summary.
     """
     for candidate in (name, default_preset):
         if candidate is not None and profiles.get(candidate) == settings:
-            return candidate
+            return _preset_label(candidate, default_preset)
 
-    return next((key for key, profile in profiles.items() if profile == settings), _describe(settings))
+    matched = next((key for key, profile in profiles.items() if profile == settings), None)
+    return _preset_label(matched, default_preset) if matched is not None else _describe(settings)
 
 
 def _agent_profile(
@@ -298,7 +311,6 @@ def _agent_profile(
     catalogs: dict[str, ModelCatalog],
     same_as: HarnessSettings | None = None,
     inherit_default: bool = False,
-    same_as_label: str = "Same as working agents",
     current_name: str | None = None,
 ) -> ProfileChoice:
     """Select a saved profile or configure a runtime for a group or individual role.
@@ -307,11 +319,10 @@ def _agent_profile(
         label: Group or individual role shown as the menu title.
         current: Existing runtime selection for this group or role.
         profiles: Saved named single-agent profiles.
-        default_preset: Name to highlight when it matches the current selection.
+        default_preset: Saved default preset to label independently of the current selection.
         catalogs: Shared native discovery results for custom selections.
         same_as: Runtime offered as an explicit inheritance choice.
         inherit_default: Whether inheritance is initially selected.
-        same_as_label: Name of the group whose runtime can be inherited.
         current_name: Exact preset name most recently selected for this row.
 
     Returns:
@@ -320,21 +331,17 @@ def _agent_profile(
     labels: list[str] = []
     selections: list[ProfileChoice] = []
     if same_as is not None:
-        labels.append(f"{same_as_label} · {_profile_label(same_as, profiles, default_preset=default_preset)}")
+        labels.append("Same as working agents")
         selections.append(ProfileChoice(same_as, inherited=True))
     if current not in profiles.values():
         labels.append(f"Current settings · {_describe(current)}")
         selections.append(ProfileChoice(current))
     preferred = None
     for name, profile in profiles.items():
-        labels.append(f"{name} · {_describe(profile)}")
+        labels.append(f"{_preset_label(name, default_preset)} · {_describe(profile)}")
         if name == (current_name or default_preset) and profile == current:
             preferred = len(selections)
         selections.append(ProfileChoice(profile, name))
-    native = HarnessSettings(kind=current.kind)
-    if not any(choice.settings == native for choice in selections):
-        labels.append(f"Harness default · {current.kind}")
-        selections.append(ProfileChoice(native))
     default = next((index for index, choice in enumerate(selections) if choice.settings == current and not choice.inherited), 0)
     if preferred is not None:
         default = preferred
@@ -447,7 +454,6 @@ def _advanced_agent_settings(
 
         key = roles[cursor]
         role = ROLES[key]
-        inherited = selected.model_settings(deep=role.deep)
         current = selected.model_settings(role=key)
         choice = _agent_profile(
             role.name,
@@ -455,17 +461,10 @@ def _advanced_agent_settings(
             profiles,
             selected.default_preset,
             catalogs,
-            same_as=inherited,
-            inherit_default=key not in selected.agents,
-            same_as_label="Default profile",
             current_name=names.get(key),
         )
-        if choice.inherited:
-            selected.agents.pop(key, None)
-            names.pop(key, None)
-        else:
-            selected.agents[key] = HarnessSettings.model_validate(choice.settings.model_dump())
-            names[key] = choice.name
+        selected.agents[key] = HarnessSettings.model_validate(choice.settings.model_dump())
+        names[key] = choice.name
 
 
 def _preset() -> tuple[str, bool]:
@@ -527,7 +526,7 @@ def configure_interactively(path: Path) -> None:
         return
     settings = load_settings(path) if path.exists() else Settings()
     catalogs: dict[str, ModelCatalog] = {}
-    typer.echo("Defaults are marked (default). Ctrl+C cancels setup.")
+    typer.echo("Ctrl+C cancels setup.")
     typer.echo("\nAgent profile")
     harness = _runtime(settings.harness, catalogs)
     name, overwrite = _preset()

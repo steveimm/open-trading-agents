@@ -1,6 +1,7 @@
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
 import typer
@@ -147,9 +148,61 @@ def test_cancelling_date_prompt_does_not_create_run_state(run_config: Path, monk
 
     monkeypatch.setattr(configuration_ui, "select_research_depth", unexpected)
     result = runner.invoke(cli.app, ["--ticker", "NVDA"], input="")
-    assert result.exit_code == 1
+    assert result.exit_code == 130
+    assert "Cancelled." in result.output and "failed" not in result.output
     assert received == [] and calls == []
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
+
+
+@pytest.mark.parametrize("stage", ["ticker", "date", "depth", "editor", "output"])
+@pytest.mark.parametrize("exception", [typer.Abort, KeyboardInterrupt])
+def test_startup_cancellation_exits_without_creating_or_changing_files(
+    run_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    exception: type[BaseException],
+) -> None:
+    """Report cancellation consistently from every setup step before workflow creation.
+
+    Args:
+        run_config: Isolated configuration and profile files.
+        monkeypatch: Scoped prompt replacements.
+        stage: Setup step where cancellation occurs.
+        exception: Wrapped prompt abort or raw keyboard interrupt.
+    """
+    before = {path: path.read_bytes() if path.is_file() else None for path in run_config.parent.rglob("*")}
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+    monkeypatch.setattr(cli.typer, "prompt", lambda *args, **kwargs: "NVDA")
+    monkeypatch.setattr(configuration_ui, "select_analysis_date", lambda: "2024-03-15")
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_output_directory", lambda directory: None)
+
+    def cancel(*args: object, **kwargs: object) -> NoReturn:
+        """Abort the selected setup boundary without performing external work.
+
+        Args:
+            args: Arguments supplied by the current prompt.
+            kwargs: Prompt-specific defaults.
+        """
+        raise exception()
+
+    targets = {
+        "ticker": (cli.typer, "prompt"),
+        "date": (configuration_ui, "select_analysis_date"),
+        "depth": (configuration_ui, "select_research_depth"),
+        "editor": (configuration_ui, "select_agent_settings"),
+        "output": (configuration_ui, "select_output_directory"),
+    }
+    target, attribute = targets[stage]
+    monkeypatch.setattr(target, attribute, cancel)
+    result = runner.invoke(cli.app, [])
+
+    assert result.exit_code == 130
+    assert "Cancelled." in result.output and "failed" not in result.output
+    assert received == [] and calls == []
+    assert {path: path.read_bytes() if path.is_file() else None for path in run_config.parent.rglob("*")} == before
 
 
 @pytest.mark.parametrize("round_flags,expected", [(["--research-rounds", "2"], (2, 5)), (["--research-rounds", "2", "--risk-rounds", "4"], (2, 4))])
@@ -214,7 +267,8 @@ def test_cancelling_run_selection_creates_no_run_or_settings_changes(run_config:
 
     monkeypatch.setattr(configuration_ui, "select_agent_settings", cancel)
     result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15"])
-    assert result.exit_code == 1
+    assert result.exit_code == 130
+    assert "Cancelled." in result.output and "failed" not in result.output
     assert received == [] and calls == []
     assert run_config.read_text() == original
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
@@ -288,7 +342,8 @@ def test_cancelling_output_selection_creates_no_run_or_settings_changes(run_conf
 
     result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15"], input="")
 
-    assert result.exit_code == 1
+    assert result.exit_code == 130
+    assert "Cancelled." in result.output and "failed" not in result.output
     assert "Output directory" in result.output
     assert received == [] and calls == []
     assert run_config.read_text() == original

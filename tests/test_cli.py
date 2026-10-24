@@ -1,13 +1,17 @@
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from open_trading_agents import cli
 from open_trading_agents.analysis import backtest
 from open_trading_agents.cli import HarnessName, app, configured
 from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, default_config_path, save_preset, set_default_preset
+from open_trading_agents.ui import app as tui
 from open_trading_agents.ui import configuration as configuration_ui
 
 runner = CliRunner()
@@ -106,6 +110,89 @@ def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch
     monkeypatch.setattr(cli, "Workflow", SimpleNamespace(resume=lambda path: resumed))
     monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: resumed)
     assert runner.invoke(app, ["resume", str(directory), "--headless"]).exit_code == 0
+
+
+@pytest.mark.parametrize("command", ["run", "run-events", "resume", "resume-events", "backtest", "configure"])
+@pytest.mark.parametrize("exception", [typer.Abort, KeyboardInterrupt, RuntimeError])
+def test_commands_distinguish_cancellation_from_runtime_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    exception: type[BaseException],
+) -> None:
+    """Keep explicit cancellation at exit 130 while retaining actual failure messages and exit 1.
+
+    Args:
+        tmp_path: Isolated storage and an existing directory for resume validation.
+        monkeypatch: Scoped workflow and configuration replacements.
+        command: Public command whose protected work is interrupted.
+        exception: User cancellation or genuine runtime failure.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "list_presets", lambda: ("fixture",))
+
+    def fail(*args: object, **kwargs: object) -> NoReturn:
+        """Stop the command before filesystem or native harness work.
+
+        Args:
+            args: Command-specific inputs.
+            kwargs: Optional native runtime selections.
+        """
+        raise exception("fixture interruption")
+
+    monkeypatch.setattr(cli, "configured", fail)
+    monkeypatch.setattr(cli, "Workflow", SimpleNamespace(resume=fail))
+    monkeypatch.setattr(cli, "save_harness_selection", fail)
+    arguments = {
+        "run": ["--ticker", "NVDA", "--headless"],
+        "run-events": ["--ticker", "NVDA", "--events"],
+        "resume": ["resume", str(tmp_path), "--headless"],
+        "resume-events": ["resume", str(tmp_path), "--events"],
+        "backtest": ["backtest", "NVDA", "--start", "2024-03-15", "--end", "2024-03-15"],
+        "configure": ["configure", "--model", "fixture"],
+    }
+    result = runner.invoke(app, arguments[command])
+
+    if exception is RuntimeError:
+        label = {"run": "Analysis", "run-events": "Analysis", "resume-events": "Resume", "configure": "Configuration"}.get(
+            command, command.capitalize(),
+        )
+        assert result.exit_code == 1
+        assert f"{label} failed: fixture interruption" in result.output
+        assert "Cancelled." not in result.output
+    else:
+        assert result.exit_code == 130
+        assert "Cancelled." in result.stderr and "failed" not in result.output
+        assert result.stdout == ""
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tui_cancellation_preserves_resume_command_and_exit_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leave a resumable run notice intact when the terminal UI exits without a result.
+
+    Args:
+        tmp_path: Isolated run directory containing spaces.
+        monkeypatch: Scoped UI and workflow replacements without native execution.
+    """
+    settings = Settings(state_dir=tmp_path)
+    workflow = SimpleNamespace(settings=settings, ticker="NVDA", asset_type="stock", directory=tmp_path / "saved run", run=object())
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True), stdout=SimpleNamespace(isatty=lambda: True)))
+    monkeypatch.setattr(cli, "list_presets", lambda: ("fixture",))
+    monkeypatch.setattr(cli, "configured", lambda *args: settings)
+    monkeypatch.setattr(cli, "Workflow", lambda *args, **kwargs: workflow)
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    monkeypatch.setattr(tui, "TradingApp", lambda *args, **kwargs: SimpleNamespace(run=lambda: None, error=None, result=None))
+
+    result = runner.invoke(app, ["--ticker", "NVDA", "--date", "2024-03-15", "--output-dir", str(tmp_path)])
+
+    assert result.exit_code == 130
+    assert "Run cancelled. Resume with:" in result.output
+    assert "failed" not in result.output and "interrupted" not in result.output
+    command = result.output.split("Resume with: ", 1)[1].strip()
+    assert shlex.split(command) == ["open-trading-agents", "resume", str(workflow.directory)]
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_headless_requires_explicit_ticker_before_any_model_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
