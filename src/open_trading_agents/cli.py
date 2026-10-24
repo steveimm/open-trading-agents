@@ -113,7 +113,8 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         selected = tuple(key for key in workflow.settings.analysts if not (workflow.asset_type == "crypto" and key == "fundamentals"))
         ui = TradingApp(workflow.run, selected_analysts=selected, ticker=workflow.ticker, run_dir=workflow.directory,
                         working_config=workflow.settings.model_settings().runtime(),
-                        decision_config=workflow.settings.model_settings(deep=True).runtime())
+                        decision_config=workflow.settings.model_settings(deep=True).runtime(),
+                        output_language=workflow.settings.output_language)
         ui.run()
         if ui.error:
             raise RuntimeError(str(ui.error)) from ui.error

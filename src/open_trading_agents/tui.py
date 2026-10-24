@@ -18,7 +18,7 @@ from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
 from open_trading_agents.chat import ChatView
 from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
-from open_trading_agents.prompts import ROLES
+from open_trading_agents.prompts import ROLES, system_prompt
 from open_trading_agents.transcript import Transcript, TranscriptView, literal_text
 from open_trading_agents.usage import format_usage as usage_label
 from open_trading_agents.usage import request_usage
@@ -150,7 +150,8 @@ class TradingApp(App[None]):
 
     def __init__(self, run: Callable[[EventSink], Awaitable[object]] | None = None, *,
                  selected_analysts: tuple[str, ...] = tuple(ANALYSTS), ticker: str = "", run_dir: Path | None = None,
-                 working_config: HarnessConfig | None = None, decision_config: HarnessConfig | None = None) -> None:
+                 working_config: HarnessConfig | None = None, decision_config: HarnessConfig | None = None,
+                 output_language: str = "English") -> None:
         """Create stage views without starting native model work.
 
         Args:
@@ -160,6 +161,7 @@ class TradingApp(App[None]):
             run_dir: Saved run location used to load the completed report.
             working_config: Selected working-agent harness, provider, model, and effort.
             decision_config: Selected decision-manager harness, provider, model, and effort.
+            output_language: Run language used to build the initial debate system prompts.
         """
         super().__init__()
         self.run_callback, self.selected_analysts, self.ticker, self.run_dir = run, selected_analysts, ticker, run_dir
@@ -179,7 +181,9 @@ class TradingApp(App[None]):
             self.prompt_views[stage] = {}
             for key in roles:
                 name = ROLES[key].name
-                view = TranscriptView(Transcript(), id=f"system-{stage}-{key}")
+                document = Transcript()
+                document.append(system_prompt(ROLES[key], output_language), "#a9bcd3")
+                view = TranscriptView(document, id=f"system-{stage}-{key}")
                 view.add_class("prompt-pane")
                 view.border_title = name
                 view.following = False
@@ -187,7 +191,7 @@ class TradingApp(App[None]):
             self.stage_views[stage].add_class("debate-transcript")
         self._prompt_targets = {view: (stage, name) for stage, views in self.prompt_views.items() for name, view in views.items()}
         self._debate_focus = {stage: len(views) for stage, views in self.prompt_views.items()}
-        self._prompt_fullscreen: dict[str, TranscriptView | None] = {stage: None for stage in DEBATE_STAGES}
+        self._debate_fullscreen: dict[str, ChatView | TranscriptView | None] = {stage: None for stage in DEBATE_STAGES}
         self.memory_view = ChatView(id="memory-transcript")
         self.report_document = Transcript()
         self.report_view = TranscriptView(self.report_document, id="transcript-reports")
@@ -532,7 +536,7 @@ class TradingApp(App[None]):
         view = self._active_view()
         analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
         if action == "fullscreen":
-            return analyst or view in self._prompt_targets
+            return analyst or self.active_stage in DEBATE_STAGES and view in self._debate_views(self.active_stage)
         if action in {"detail", "toggle_detail"}:
             return isinstance(view, ChatView) and view.has_details
         if action == "memory":
@@ -540,7 +544,7 @@ class TradingApp(App[None]):
         if action == "navigate":
             direction = parameters[0] if parameters else ""
             if direction in {"left", "right"}:
-                return self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._prompt_fullscreen[self.active_stage] is None)
+                return self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._debate_fullscreen[self.active_stage] is None)
             return view.is_on_screen
         return True
 
@@ -617,7 +621,7 @@ class TradingApp(App[None]):
         if self.active_stage == "analysis":
             return self.report_view
         if self.active_stage in DEBATE_STAGES:
-            return self._prompt_fullscreen[self.active_stage] or self._debate_views(self.active_stage)[self._debate_focus[self.active_stage]]
+            return self._debate_fullscreen[self.active_stage] or self._debate_views(self.active_stage)[self._debate_focus[self.active_stage]]
         return self.report_view if self.active_stage == "reports" else self.stage_views[self.active_stage]
 
     def _debate_views(self, stage: str) -> tuple[ChatView | TranscriptView, ...]:
@@ -709,18 +713,20 @@ class TradingApp(App[None]):
         self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:
-        """Toggle fullscreen for the selected analyst or debate system prompt."""
+        """Toggle fullscreen for the selected analyst or debate pane."""
         if not self._action_available("fullscreen"):
             return
         view = self._active_view()
-        if view in self._prompt_targets:
-            stage, _ = self._prompt_targets[view]
-            selected = None if self._prompt_fullscreen[stage] is view else view
-            self._prompt_fullscreen[stage] = selected
-            self.query_one(f"#stage-{stage}", Horizontal).set_class(selected is not None, "prompt-fullscreen")
+        if self.active_stage in DEBATE_STAGES:
+            stage = self.active_stage
+            selected = None if self._debate_fullscreen[stage] is view else view
+            self._debate_fullscreen[stage] = selected
+            chat = self.stage_views[stage]
+            self.query_one(f"#stage-{stage}", Horizontal).set_class(selected in self._prompt_targets, "prompt-fullscreen")
+            self.query_one(f"#prompts-{stage}", Vertical).set_class(selected is chat, "hidden")
             for prompt in self.prompt_views[stage].values():
                 prompt.set_class(selected is not None and prompt is not selected, "hidden")
-            self.stage_views[stage].set_class(selected is not None, "hidden")
+            chat.set_class(selected is not None and selected is not chat, "hidden")
             view.focus()
             self.call_after_refresh(self.flush_events)
             return

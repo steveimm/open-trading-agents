@@ -76,13 +76,13 @@ The run header shows the ticker, total elapsed time, and selected harness/provid
 
 The seven stages are Analysis, Research Debate, Research Decision, Trader, Risk Debate, Portfolio Decision, and Reports. Running tabs and participant turns show an animated circular spinner, completed tabs and agents show a check mark, and failures are marked explicitly. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
 
-Debates use a narrow left column of participant system-prompt panes and a wider right column for the conversation. The conversation shows shared input once, followed by each participant's turn. Turn titles stay visible while scrolling and can collapse the whole contribution, including reasoning and tool calls. A collapsed active turn continues receiving output. Repeated per-agent input messages are omitted from the debate view. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
+Debates use a narrow left column of participant system-prompt panes and a wider right column for the conversation. All system prompts are filled at startup using the run's output language and the same prompt builder as the harness sessions. Recorded prompts remain authoritative when loading saved events. The conversation shows shared input once, followed by each participant's turn. Turn titles stay visible while scrolling and can collapse the whole contribution, including reasoning and tool calls. A collapsed active turn continues receiving output. Repeated per-agent input messages are omitted from the debate view. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
 
 | Key | Action |
 | --- | --- |
 | Tab / Shift+Tab | Next / previous stage |
 | Arrow keys | Select analyst panes in grid view; Left/Right selects debate prompt/conversation panes, Up/Down scrolls the focused pane |
-| f | Toggle fullscreen for the selected analyst or debate system-prompt pane |
+| f | Toggle fullscreen for the selected analyst, debate system-prompt, or debate transcript pane |
 | Page Up / Page Down | Scroll a page |
 | Home / End | Beginning / jump to the latest content and follow the stream |
 | [ / ] | Select the previous / next collapsible turn or detail |
@@ -92,7 +92,7 @@ Debates use a narrow left column of participant system-prompt panes and a wider 
 
 Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Click a disclosure header or use the keyboard to expand it. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Exact native metadata remains in the saved event log rather than a separate payload pane.
 
-Shortcut hints follow the selected stage and focused pane. Fullscreen controls appear for analyst panes and debate system-prompt panes. Turn and detail controls appear only in conversations with expandable content. System instructions outside the debate stages retain their disclosure controls.
+Shortcut hints follow the selected stage and focused pane. Fullscreen controls appear for analyst panes and either debate column. Turn and detail controls appear only in conversations with expandable content. System instructions outside the debate stages retain their disclosure controls.
 
 The Research Manager produces a JSON recommendation, rationale, and implementation strategy. The Trader and Portfolio Manager have their own structured decision fields. These agents receive the exact validation schema in their initial system instructions. A response that still fails validation gets one correction request in the same native session, with the specific field or JSON error. Validated decisions are rendered as readable Markdown in reports.
 
