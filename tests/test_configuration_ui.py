@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +62,7 @@ def wizard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_one_session_selects_both_tiers_and_saves_a_reusable_preset(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Choose listed models, inherit the working tier, and save a distinct manager tier."""
-    shown = select_choices(monkeypatch, [None, 1, 1, None, 1, 1, 2, 0])
+    shown = select_choices(monkeypatch, [None, 1, 1, None, 1, 1, 2, 0, None])
     result = runner.invoke(cli.app, ["configure"], input="local-research\n")
     assert result.exit_code == 0, result.output
     settings = load_settings()
@@ -72,9 +73,48 @@ def test_one_session_selects_both_tiers_and_saves_a_reusable_preset(wizard: Path
     assert "Small model (small)" in shown[2][1] and "Large model (large)" in shown[2][1]
     assert "Working agents (quick)" in result.output and "Decision managers (deep)" in result.output
     assert preset_path("local-research").exists()
+    assert tomllib.loads(wizard.read_text())["default_preset"] == "local-research"
     restored = load_settings(preset="local-research")
     assert restored.harness == settings.harness and restored.deep == settings.deep
     assert wizard.exists()
+
+
+def test_saving_another_preset_keeps_the_existing_default(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declining the new default selection leaves the previous named preset selected."""
+    previous = save_preset("daily", Settings(harness=HarnessSettings(kind="claude", model="stable-model")))
+    previous_contents = previous.read_text()
+    wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\n')
+    select_choices(monkeypatch, [None, 1, 1, None, None, 0, None])
+    result = runner.invoke(cli.app, ["configure"], input="experiment\n")
+    assert result.exit_code == 0, result.output
+    assert tomllib.loads(wizard.read_text())["default_preset"] == "daily"
+    assert previous.read_text() == previous_contents
+    assert load_settings(preset="experiment").harness == HarnessSettings(kind="pi", provider="local", model="small")
+    assert "Default preset: daily" in result.output
+
+
+def test_replacing_the_selected_preset_keeps_it_as_default(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Updating the selected named preset preserves its default status and new model choices."""
+    save_preset("daily", Settings(harness=HarnessSettings(kind="pi", provider="local", model="small")))
+    wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\nprovider = "local"\nmodel = "small"\n')
+    select_choices(monkeypatch, [None, None, 2, None, None, 0, 0, None])
+    result = runner.invoke(cli.app, ["configure"], input="daily\n")
+    assert result.exit_code == 0, result.output
+    assert tomllib.loads(wizard.read_text())["default_preset"] == "daily"
+    assert load_settings(preset="daily").harness.model == "large"
+    assert "Default preset: daily" in result.output
+
+
+def test_cancel_at_default_preset_selection_writes_nothing(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gather the final preset preference before changing the config or creating a preset."""
+    wizard.parent.mkdir(parents=True)
+    original = '[harness]\nkind = "pi"\nmodel = "saved-model"\n'
+    wizard.write_text(original)
+    select_choices(monkeypatch, [None, None, None, None, None, 0])
+    result = runner.invoke(cli.app, ["configure"], input="uncommitted\n")
+    assert result.exit_code == 1, result.output
+    assert wizard.read_text() == original
+    assert not preset_path("uncommitted").exists()
 
 
 def test_native_defaults_are_explicit_choices_and_cancel_preserves_config(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
