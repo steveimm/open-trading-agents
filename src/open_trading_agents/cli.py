@@ -22,6 +22,7 @@ from open_trading_agents.config import (
     load_portfolio,
     load_settings,
     save_harness_selection,
+    validate_date,
 )
 from open_trading_agents.domain import AgentEvent
 from open_trading_agents.workflow import RunResult, Workflow
@@ -129,7 +130,7 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
 def run(
     ctx: typer.Context,
     ticker: Annotated[str | None, typer.Option("--ticker", help="Ticker or supported alias, for example NVDA or BTC-USD.")] = None,
-    analysis_date: Annotated[str | None, typer.Option("--date", help="Information cutoff, YYYY-MM-DD.")] = None,
+    analysis_date: Annotated[str | None, typer.Option("--date", help="Information cutoff, YYYY-MM-DD. Skips the date prompt.")] = None,
     config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
     model: Annotated[str | None, typer.Option(help="Native harness model selector.")] = None,
@@ -173,6 +174,11 @@ def run(
             raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
         ticker = typer.prompt("Ticker")
     try:
+        if interactive and analysis_date is None:
+            from open_trading_agents.configuration_ui import select_analysis_date
+
+            analysis_date = select_analysis_date()
+        analysis_date = validate_date(analysis_date.strip() if analysis_date is not None else date.today().isoformat())
         settings = configured(config, harness, model, provider, effort)
         if interactive:
             from open_trading_agents.configuration_ui import select_agent_settings, select_research_depth
@@ -183,7 +189,7 @@ def run(
         changes = {"analysts": tuple(key.strip() for key in analysts.split(",")) if analysts else None,
                    "research_rounds": research_rounds, "risk_rounds": risk_rounds, "state_dir": state_dir}
         settings = Settings.model_validate({**settings.model_dump(), **{k: v for k, v in changes.items() if v is not None}})
-        workflow = Workflow(ticker, analysis_date or date.today().isoformat(), settings, load_portfolio(portfolio))
+        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio))
         run_workflow(workflow, headless, events)
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Analysis failed: {exc}", style="red", markup=False)

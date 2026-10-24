@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import questionary
@@ -15,6 +16,7 @@ from open_trading_agents.config import (
     save_configuration,
     save_preset,
     set_default_preset,
+    validate_date,
 )
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
 
@@ -192,6 +194,20 @@ def _runtime(current: HarnessSettings, catalogs: dict[str, ModelCatalog]) -> Har
     effort = selected.effort if (model, provider) == (selected.model, selected.provider) else None
     selected = selected.model_copy(update={"model": model, "provider": provider, "effort": effort})
     return selected.model_copy(update={"effort": _effort(selected, catalog)})
+
+
+def select_analysis_date() -> str:
+    """Ask for the analysis cutoff, defaulting to the machine's local calendar date.
+
+    Returns:
+        A valid YYYY-MM-DD date no later than today.
+    """
+    while True:
+        value = typer.prompt("Analysis date (YYYY-MM-DD)", default=date.today().isoformat()).strip()
+        try:
+            return validate_date(value)
+        except ValueError:
+            typer.echo("Enter a valid date as YYYY-MM-DD, today or earlier.")
 
 
 def select_research_depth(settings: Settings) -> Settings:

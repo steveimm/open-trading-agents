@@ -24,7 +24,9 @@ uv run open-trading-agents --ticker BTC-USD --harness claude
 uv run open-trading-agents --ticker NVDA --harness codex --date 2026-01-02
 ```
 
-In an interactive terminal, the bare command asks for the ticker, research depth, working agent, and decision manager, in that order. Supplying `--ticker` skips the first question. The analysis date defaults to today and can be set with `--date`. Shallow, Medium, and Deep research use 1, 3, and 5 rounds for both research and risk debates. Each agent role can use a saved profile or a custom harness selection for that run. The decision manager can also use the same settings as the working agents. Cancelling setup does not start an analysis or change saved profiles. A new run requires at least one saved preset. If none exists, the command prints the instruction to run `configure` and exits before asking for a ticker.
+In an interactive terminal, the bare command asks for the ticker, analysis date, research depth, working agent, and decision manager, in that order. Supplying `--ticker` or `--date` skips the corresponding question. The date prompt defaults to the machine's local date, accepts historical dates, and rejects invalid or future dates before later selections. Headless runs without `--date` use today. Shallow, Medium, and Deep research use 1, 3, and 5 rounds for both research and risk debates. Each agent role can use a saved profile or a custom harness selection for that run. The decision manager can also use the same settings as the working agents. Cancelling setup does not start an analysis or change saved profiles. A new run requires at least one saved preset. If none exists, the command prints the instruction to run `configure` and exits before asking for a ticker.
+
+Output language and analyst-team defaults come from `output_language` and `analysts` in the config, with `--analysts` available as a run override. These settings are not separate wizard questions. Run-specific selections apply only to that run; persistent defaults come from the config and saved profiles.
 
 Use `configure` to create a reusable agent profile:
 

@@ -47,16 +47,19 @@ def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tupl
     return received
 
 
-def test_interactive_run_asks_ticker_then_depth_then_agents_before_starting(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_interactive_run_asks_ticker_date_depth_and_agents_before_starting(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Collect startup choices in the requested order without modifying global configuration."""
     calls: list[str] = []
     original = run_config.read_text()
     received = capture_runs(monkeypatch, calls)
 
-    def prompt(label: str) -> str:
-        """Record the only free-text startup prompt."""
+    def prompt(label: str, default: str | None = None) -> str:
+        """Record ticker and date before either selection menu opens."""
         calls.append(label)
-        return "NVDA"
+        if label == "Ticker":
+            return "NVDA"
+        assert default == date.today().isoformat()
+        return "2024-03-15"
 
     def depth(settings: Settings) -> Settings:
         """Select medium research before selecting any runtime profiles."""
@@ -77,12 +80,63 @@ def test_interactive_run_asks_ticker_then_depth_then_agents_before_starting(run_
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
     result = runner.invoke(cli.app, [])
     assert result.exit_code == 0, result.output
-    assert calls == ["Ticker", "depth", "agents", "workflow"]
+    assert calls == ["Ticker", "Analysis date (YYYY-MM-DD)", "depth", "agents", "workflow"]
     ticker, trade_date, settings = received[0]
-    assert ticker == "NVDA" and trade_date == date.today().isoformat()
+    assert ticker == "NVDA" and trade_date == "2024-03-15"
     assert settings.model_settings().model == "worker" and settings.model_settings().effort == "low"
     assert settings.model_settings(True).model == "manager" and settings.model_settings(True).effort == "high"
     assert run_config.read_text() == original
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
+
+
+@pytest.mark.parametrize("answer,expected,errors", [("\n", None, 0), ("not-a-date\n2999-01-01\n2024-03-15\n", "2024-03-15", 2)])
+def test_date_prompt_defaults_to_today_and_retries_invalid_values_before_menus(
+    run_config: Path, monkeypatch: pytest.MonkeyPatch, answer: str, expected: str | None, errors: int,
+) -> None:
+    """Accept Enter as today or a valid historical cutoff without allowing malformed or future dates."""
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    result = runner.invoke(cli.app, ["--ticker", "NVDA"], input=answer)
+    assert result.exit_code == 0, result.output
+    assert received[0][1] == (expected or date.today().isoformat())
+    assert result.output.count("Enter a valid date") == errors
+    assert date.today().isoformat() in result.output
+    assert calls == ["workflow"]
+
+
+@pytest.mark.parametrize("value", ["invalid", "2024-02-30", "2999-01-01", ""])
+def test_invalid_date_flag_is_rejected_before_menus_or_workflow(run_config: Path, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Validate explicit cutoffs before discovering models or creating any run state."""
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    def unexpected(settings: Settings) -> Settings:
+        """Reject any downstream interaction before the cutoff is valid."""
+        raise AssertionError("Date was not validated before the menus")
+
+    monkeypatch.setattr(configuration_ui, "select_research_depth", unexpected)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", unexpected)
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", value])
+    assert result.exit_code == 1
+    assert received == [] and calls == []
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
+
+
+def test_cancelling_date_prompt_does_not_create_run_state(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An abandoned date question must not advance to runtime selection or create a run."""
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    def unexpected(settings: Settings) -> Settings:
+        """Reject later selections after date input has been cancelled."""
+        raise AssertionError("Date cancellation reached a later menu")
+
+    monkeypatch.setattr(configuration_ui, "select_research_depth", unexpected)
+    result = runner.invoke(cli.app, ["--ticker", "NVDA"], input="")
+    assert result.exit_code == 1
+    assert received == [] and calls == []
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
 
@@ -140,7 +194,7 @@ def test_cancelling_run_selection_creates_no_run_or_settings_changes(run_config:
         raise typer.Abort()
 
     monkeypatch.setattr(configuration_ui, "select_agent_settings", cancel)
-    result = runner.invoke(cli.app, ["--ticker", "NVDA"])
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15"])
     assert result.exit_code == 1
     assert received == [] and calls == []
     assert run_config.read_text() == original
@@ -166,5 +220,6 @@ def test_unattended_analysis_never_opens_startup_menus(run_config: Path, monkeyp
     result = runner.invoke(cli.app, ["--ticker", "NVDA", *flags])
     assert result.exit_code == 0, result.output
     assert calls == ["workflow"]
+    assert received[0][1] == date.today().isoformat()
     assert received[0][2].harness.model == "base-model"
     assert received[0][2].research_rounds == 1 and received[0][2].risk_rounds == 1
