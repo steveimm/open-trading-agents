@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from click import Choice
 from dotenv import load_dotenv
 from rich.console import Console
 
-from open_trading_agents.config import HarnessSettings, Settings, load_portfolio, load_settings, save_harness_selection
+from open_trading_agents.config import HarnessSettings, Settings, default_config_path, load_portfolio, load_settings, save_harness_selection
 from open_trading_agents.domain import AgentEvent
 from open_trading_agents.workflow import RunResult, Workflow
 
@@ -35,21 +34,22 @@ class ModelTier(StrEnum):
     deep = "deep"
 
 
-def configured(path: Path | None, harness: HarnessName | None, model: str | None, provider: str | None) -> Settings:
+def configured(path: Path | None, harness: HarnessName | None, model: str | None, provider: str | None,
+               preset: str | None = None) -> Settings:
     """Load application choices while leaving provider credentials with the harness.
 
     Args:
-        path: Explicit TOML file or the conventional local configuration.
+        path: Explicit TOML file or the shared user configuration.
         harness: Optional CLI harness override.
         model: Optional native model selector.
         provider: Optional native provider selector.
+        preset: Named harness selections applied before explicit CLI overrides.
 
     Returns:
         Validated application settings.
     """
     load_dotenv(Path.cwd() / ".env", override=False)
-    path = path or (Path("tradingagents.toml") if Path("tradingagents.toml").is_file() else None)
-    settings = load_settings(path)
+    settings = load_settings(path, preset=preset)
     overrides = {key: value for key, value in {"kind": harness, "model": model, "provider": provider}.items() if value is not None}
     if overrides:
         for tier in ("harness", "quick", "deep"):
@@ -111,6 +111,7 @@ def analyze(
     ticker: Annotated[str | None, typer.Argument(help="Ticker or supported alias, for example NVDA or BTC-USD.")] = None,
     analysis_date: Annotated[str | None, typer.Option("--date", help="Information cutoff, YYYY-MM-DD.")] = None,
     config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    preset: Annotated[str | None, typer.Option(help="Named harness/model preset saved by configure.")] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
     model: Annotated[str | None, typer.Option(help="Native harness model selector.")] = None,
     provider: Annotated[str | None, typer.Option(help="Native pi provider selector.")] = None,
@@ -128,6 +129,7 @@ def analyze(
         ticker: Instrument symbol.
         analysis_date: Analysis cutoff date.
         config: Optional TOML configuration.
+        preset: Named harness/model selections.
         harness: Native harness override.
         model: Native model selector override.
         provider: Pi provider selector override.
@@ -145,7 +147,7 @@ def analyze(
         ticker = typer.prompt("Ticker")
         analysis_date = analysis_date or typer.prompt("Analysis date", default=date.today().isoformat())
     try:
-        settings = configured(config, harness, model, provider)
+        settings = configured(config, harness, model, provider, preset)
         changes = {"analysts": tuple(key.strip() for key in analysts.split(",")) if analysts else None,
                    "research_rounds": research_rounds, "risk_rounds": risk_rounds, "state_dir": state_dir}
         settings = Settings.model_validate({**settings.model_dump(), **{k: v for k, v in changes.items() if v is not None}})
@@ -180,6 +182,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
              end: Annotated[str, typer.Option(help="Last analysis date, YYYY-MM-DD.")],
              every: Annotated[int, typer.Option(min=1)] = 1,
              config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+             preset: Annotated[str | None, typer.Option(help="Named harness/model preset saved by configure.")] = None,
              harness: HarnessName | None = None, model: str | None = None, provider: str | None = None,
              run_id: str | None = None, portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None) -> None:
     """Evaluate independent decisions over a ticker/date grid without simulating order fills.
@@ -190,6 +193,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
         end: Last analysis date.
         every: Calendar-day spacing between cells.
         config: Optional TOML configuration.
+        preset: Named harness/model selections.
         harness: Native harness override.
         model: Native model override.
         provider: Pi provider override.
@@ -199,7 +203,7 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
     from open_trading_agents.backtest import iter_grid, run_backtest
 
     try:
-        settings = configured(config, harness, model, provider)
+        settings = configured(config, harness, model, provider, preset)
         result = asyncio.run(run_backtest([t.strip() for t in tickers.split(",") if t.strip()], iter_grid(start, end, every),
                                          settings, load_portfolio(portfolio), run_id))
         typer.echo(result.summary)
@@ -211,15 +215,15 @@ def backtest(tickers: Annotated[str, typer.Argument(help="Comma-separated instru
         raise typer.Exit(1) from exc
 
 
-@app.command(help="Save harness and model choices. Omit selection flags for interactive setup.")
+@app.command(help="Choose harnesses and models for all tiers, then optionally save a named preset.")
 def configure(
-    config: Annotated[Path, typer.Option(dir_okay=False, help="Application configuration file to create or update.")] = Path("tradingagents.toml"),
-    tier: Annotated[ModelTier, typer.Option(help="Default, working-agent (quick), or decision-manager (deep) settings.")] = ModelTier.default,
+    config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
+    tier: Annotated[ModelTier, typer.Option(help="Tier to update when supplying selection flags. Interactive setup covers all tiers.")] = ModelTier.default,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
     model: Annotated[str | None, typer.Option(help='Native model selector. Pass "" to use native defaults.')] = None,
     provider: Annotated[str | None, typer.Option(help='Native pi or Codex provider selector. Pass "" to use native defaults.')] = None,
 ) -> None:
-    """Save harness and model choices, prompting when no selection flags are supplied.
+    """Guide configuration of every tier, or apply explicit selection flags.
 
     Args:
         config: Destination TOML configuration file.
@@ -228,18 +232,16 @@ def configure(
         model: Native model selector, or an empty string to reset it.
         provider: Native provider selector, or an empty string to reset it.
     """
-    config = config.expanduser()
+    config = (config or default_config_path()).expanduser()
     interactive = harness is None and model is None and provider is None
     if interactive and not sys.stdin.isatty():
         raise typer.BadParameter("provide --harness, --model or --provider when input is not interactive")
     try:
         if interactive:
-            settings = load_settings(config) if config.exists() else Settings()
-            current = getattr(settings, "harness" if tier == ModelTier.default else tier.value) or settings.harness
-            typer.echo(f"Current {tier.value}: {current.kind} / {current.provider or 'native provider'} / {current.model or 'native model'}")
-            harness = HarnessName(typer.prompt("Harness", default=current.kind, type=Choice([item.value for item in HarnessName])))
-            provider = typer.prompt("Provider (blank uses native default)", default="", show_default=False) if harness != HarnessName.claude else ""
-            model = typer.prompt("Model (blank uses native default)", default="", show_default=False)
+            from open_trading_agents.configuration_ui import configure_interactively
+
+            configure_interactively(config)
+            return
         settings = save_harness_selection(config, tier.value, harness.value if harness is not None else None, model, provider)
         selected = getattr(settings, "harness" if tier == ModelTier.default else tier.value) or settings.harness
         typer.echo(f"Saved {tier.value}: {selected.kind} / {selected.provider or 'native provider'} / {selected.model or 'native model'}")

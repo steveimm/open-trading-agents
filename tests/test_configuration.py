@@ -13,12 +13,13 @@ from open_trading_agents.config import load_settings, save_harness_selection
 runner = CliRunner()
 
 
-def test_configure_creates_local_settings_without_model_requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_creates_user_settings_without_model_requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Persist a reusable selection through the same command advertised to users."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     result = runner.invoke(cli.app, ["configure", "--harness", "pi", "--provider", "local", "--model", "research-model"])
     assert result.exit_code == 0, result.output
-    settings = load_settings(tmp_path / "tradingagents.toml")
+    settings = load_settings(tmp_path / ".open-trading-agents" / "config.toml")
     assert settings.harness.kind == "pi"
     assert settings.harness.provider == "local"
     assert settings.harness.model == "research-model"
@@ -93,18 +94,25 @@ def test_tier_harness_switch_to_shared_kind_uses_native_defaults(tmp_path: Path)
     assert settings.harness.model == "shared-model"
 
 
-def test_interactive_configuration_uses_native_defaults_for_blank_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The prompt accepts a harness choice and clearly resets blank model/provider choices."""
+def test_interactive_configuration_keeps_current_values_for_blank_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Entering no replacement keeps all configured native selectors intact."""
+    from open_trading_agents import configuration_ui
+    from open_trading_agents.harnesses.catalog import ModelCatalog
+
     path = tmp_path / "tradingagents.toml"
     path.write_text('[harness]\nkind="pi"\nmodel="old-model"\nprovider="old-provider"\n')
     monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
-    result = runner.invoke(cli.app, ["configure", "--config", str(path)], input="codex\n\n\n")
+    monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(()))
+    result = runner.invoke(cli.app, ["configure", "--config", str(path)], input="\n\n\n\n\n\n")
     assert result.exit_code == 0, result.output
     settings = load_settings(path)
-    assert settings.harness.kind == "codex"
-    assert settings.harness.model is None
-    assert settings.harness.provider is None
-    assert "blank uses native default" in result.output
+    assert settings.harness.kind == "pi"
+    assert settings.harness.model == "old-model"
+    assert settings.harness.provider == "old-provider"
+    assert settings.quick is None and settings.deep is None
+    assert "Working agents (quick)" in result.output
+    assert "Decision managers (deep)" in result.output
+    assert "Enter keeps the displayed selection" in result.output
 
 
 def test_noninteractive_configuration_requires_selection_flags(tmp_path: Path) -> None:

@@ -1,10 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
+from open_trading_agents import backtest, cli
 from open_trading_agents.cli import HarnessName, app, configured
-from open_trading_agents.config import Portfolio, Position, Settings
+from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, save_preset
 
 runner = CliRunner()
 
@@ -85,3 +87,48 @@ def test_partial_tier_inherits_harness_and_survives_saved_run_roundtrip(tmp_path
     assert settings.model_settings(True).model == "manager-model"
     restored = Settings.model_validate(settings.model_dump(mode="json"))
     assert restored.model_settings(True) == settings.model_settings(True)
+
+
+def test_preset_overrides_global_models_before_explicit_cli_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apply a named runtime to one invocation without rewriting the shared configuration."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = tmp_path / ".open-trading-agents" / "config.toml"
+    path.parent.mkdir()
+    original = 'research_rounds=3\n[harness]\nkind="pi"\nmodel="global-model"\n[deep]\nmodel="stale-manager"\n'
+    path.write_text(original)
+    save_preset("claude-work", Settings(harness=HarnessSettings(kind="claude", model="preset-model")))
+    selected = configured(None, None, None, None, "claude-work")
+    assert selected.research_rounds == 3
+    assert selected.harness == HarnessSettings(kind="claude", model="preset-model")
+    assert selected.quick is None and selected.deep is None
+    overridden = configured(None, HarnessName.pi, "one-run-model", "local", "claude-work")
+    assert overridden.harness == HarnessSettings(kind="pi", model="one-run-model", provider="local")
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize("command", ["analyze", "backtest"])
+def test_new_runs_use_the_requested_preset(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route named selections into both execution paths without changing native credentials."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    save_preset("local", Settings(harness=HarnessSettings(kind="pi", provider="local", model="selected-model")))
+    received: list[Settings] = []
+
+    def workflow(ticker: str, trade_date: str, settings: Settings, portfolio: Portfolio | None) -> Settings:
+        """Capture a new analysis before any native sessions or data requests start."""
+        received.append(settings)
+        return settings
+
+    async def sweep(tickers: list[str], grid: object, settings: Settings,
+                    portfolio: Portfolio | None, run_id: str | None) -> SimpleNamespace:
+        """Capture a new backtest before any native sessions or data requests start."""
+        received.append(settings)
+        return SimpleNamespace(summary="Saved fixture", directory=tmp_path, failures=[])
+
+    monkeypatch.setattr(cli, "Workflow", workflow)
+    monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: None)
+    monkeypatch.setattr(backtest, "run_backtest", sweep)
+    options = ["--headless"] if command == "analyze" else ["--start", "2026-01-02", "--end", "2026-01-02"]
+    result = runner.invoke(app, [command, "NVDA", "--preset", "local", *options])
+    assert result.exit_code == 0, result.output
+    assert len(received) == 1
+    assert received[0].harness == HarnessSettings(kind="pi", provider="local", model="selected-model")
