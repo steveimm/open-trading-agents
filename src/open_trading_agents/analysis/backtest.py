@@ -165,6 +165,9 @@ def _manifest(tickers: list[str], dates: list[str], settings: Settings, portfoli
     if not settings.agents:
         inputs["settings"].pop("agents")
 
+    # Preserve fingerprints from before the unused default screening flag was removed.
+    inputs["settings"]["social_screening"] = False
+
     digest = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {"schema_version": 1, "tickers": tickers, "dates": dates, "configuration_fingerprint": digest}
 

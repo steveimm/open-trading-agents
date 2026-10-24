@@ -60,7 +60,7 @@ Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an 
 
 **Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
 
-**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, reflection agent, or screening agent. Choose a saved profile or **Configure for this run**. To use your saved default, select the named preset marked `(default)`.
+**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, or reflection agent. Choose a saved profile or **Configure for this run**. To use your saved default, select the named preset marked `(default)`.
 
 These choices are saved with the run for resume and do not modify your presets or configuration file. Cancelling either editor discards its changes.
 
@@ -80,7 +80,7 @@ model = "my-model"
 model = "my-manager-model"
 ```
 
-Omitted fields inherit from the role's group profile when using the same harness. Role keys are `market`, `social`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `trader`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`, `reflection`, and `screening`. Configuring an analyst or supporting role does not enable it if it is disabled elsewhere.
+Omitted fields inherit from the role's group profile when using the same harness. Role keys are `market`, `social`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `trader`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`, and `reflection`. Configuring an analyst or supporting role does not enable it if it is disabled elsewhere.
 
 ## Application preferences
 
@@ -97,7 +97,6 @@ Edit `config.toml` for settings outside the profile picker:
 | `benchmark_ticker` | Regional default | Reference instrument for outcome scoring |
 | `allow_execution` | `true` | Permit native script execution |
 | `web_research` | `true` | Offer search and page retrieval to analysts |
-| `social_screening` | `false` | Use an additional agent to screen social posts |
 
 The fundamentals analyst is omitted for crypto. Language and analyst selection are configured here rather than asked in the run wizard.
 

@@ -9,7 +9,7 @@ import random
 import re
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError
@@ -76,7 +76,6 @@ def subreddits_for(ticker: str) -> tuple[str, ...]:
 
 
 _FEED_PAGE = 100
-_SCREEN_CHARS = 1000
 
 
 _SEARCH_LOOKBACK = timedelta(days=7)
@@ -220,24 +219,23 @@ def fetch_reddit_posts(
     timeout: float = 10.0,
     start_date: str | None = None,
     end_date: str | None = None,
-    screen: Callable[[list[str]], tuple[list[bool], str]] | None = None,
 ) -> str:
-    """Fetch recent Reddit posts mentioning ``ticker`` across finance
-    subreddits (by default ``subreddits_for(ticker)``) and return them as a
-    formatted plaintext block.
+    """Fetch dated Reddit posts from one combined feed and group them by community.
 
-    All subreddits are searched in one combined feed (``r/a+b+c``): anonymous
-    RSS allows about one request per minute per IP, so a request per subreddit
-    spent a back-off on almost every run. Each entry names its subreddit, and
-    posts are grouped back by it.
+    The date window is applied before each community's display limit so
+    historical analyses cannot include later discussion.
 
-    When ``start_date``/``end_date`` (yyyy-mm-dd) are given, posts are trimmed to
-    that window so a historical run does not leak current discussion into a
-    backtest (#1220).
+    Args:
+        ticker: Instrument to search for.
+        subreddits: Requested communities, or instrument-appropriate defaults.
+        limit_per_sub: Maximum eligible posts to render for each community.
+        timeout: Network request timeout in seconds.
+        start_date: Optional first included date, YYYY-MM-DD.
+        end_date: Optional last included date, YYYY-MM-DD.
 
-    ``screen``, when given, takes each post's title and body and returns a keep
-    flag per post and a note line that heads the block. It runs before the
-    per-subreddit cut, so the posts it keeps fill the slots.
+    Returns:
+        Complete post titles and bodies limited to 700 characters, or notices
+        distinguishing unavailable feed coverage from absent discussion.
     """
     subreddits = list(subreddits or subreddits_for(ticker))
 
@@ -264,12 +262,6 @@ def fetch_reddit_posts(
         """Read the returned subreddit or the sole requested community."""
         return p.get("subreddit") or (subreddits[0] if len(subreddits) == 1 else "unknown")
 
-    note, screened_out = "", set()
-    if screen:
-        keep, note = screen([f"{p.get('title') or ''}\n{p.get('selftext') or ''}"[:_SCREEN_CHARS] for p in posts])
-        screened_out = {sub_of(p).lower() for p, kept in zip(posts, keep, strict=True) if not kept}
-        posts = [p for p, kept in zip(posts, keep, strict=True) if kept]
-
     by_sub = {s.lower(): (s, []) for s in subreddits}
     for p in posts:
         by_sub.setdefault(sub_of(p).lower(), (sub_of(p), []))[1].append(p)
@@ -278,14 +270,11 @@ def fetch_reddit_posts(
     blocks = []
     for sub, sub_posts in by_sub.values():
         if not sub_posts:
-            if sub.lower() in screened_out:
-                blocks.append(f"r/{sub}: <no posts about {ticker.upper()} after screening>")
-            else:
-                blocks.append(
-                    f"r/{sub}: <not among the newest {_FEED_PAGE} matches across {label}>"
-                    if page_full
-                    else f"r/{sub}: <no posts found mentioning {ticker.upper()}>"
-                )
+            blocks.append(
+                f"r/{sub}: <not among the newest {_FEED_PAGE} matches across {label}>"
+                if page_full
+                else f"r/{sub}: <no posts found mentioning {ticker.upper()}>"
+            )
             continue
         sub_posts = sub_posts[:limit_per_sub]
         lines = [f"r/{sub} — {len(sub_posts)} recent posts mentioning {ticker.upper()}:"]
@@ -294,8 +283,8 @@ def fetch_reddit_posts(
             created = p.get("created_utc")
             created_str = time.strftime("%Y-%m-%d", time.gmtime(created)) if created else "?"
             selftext = (p.get("selftext") or "").replace("\n", " ").strip()
-            if len(selftext) > 240:
-                selftext = selftext[:240] + "…"
+            if len(selftext) > 700:
+                selftext = selftext[:700] + "…"
             lines.append(f"  [{created_str}] {title}" + (f"\n    body excerpt: {selftext}" if selftext else ""))
         blocks.append("\n".join(lines))
-    return "\n\n".join(([note] if note else []) + blocks)
+    return "\n\n".join(blocks)

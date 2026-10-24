@@ -316,7 +316,7 @@ async def test_every_role_keeps_its_runtime_selection_and_native_session_on_resu
 
     try:
         for key, role in ROLES.items():
-            name = f"{role.name} example" if key in {"reflection", "screening"} else None
+            name = f"{role.name} example" if key == "reflection" else None
             await workflow._call(key, key, "Initial evidence", session_name=name)
     finally:
         for session in workflow.sessions.values():
@@ -326,7 +326,7 @@ async def test_every_role_keeps_its_runtime_selection_and_native_session_on_resu
     resumed = Workflow.resume(workflow.directory, session_factory=factory)
     try:
         for key, role in ROLES.items():
-            name = f"{role.name} example" if key in {"reflection", "screening"} else None
+            name = f"{role.name} example" if key == "reflection" else None
             await resumed._call(f"next:{key}", key, "New evidence", session_name=name)
     finally:
         for session in resumed.sessions.values():
@@ -366,6 +366,59 @@ def test_saved_inputs_without_role_overrides_remain_resumable(tmp_path: Path) ->
         resumed.store.close()
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_saved_screening_configuration_is_removed_without_changing_other_run_inputs(tmp_path: Path, enabled: bool) -> None:
+    """Resume historical runs after removing the obsolete role and its optional filtering flag.
+
+    Args:
+        tmp_path: Isolated run storage.
+        enabled: Historical screening setting recorded before the role was removed.
+    """
+    settings = Settings(state_dir=tmp_path, memory_enabled=False,
+                        agents={"bull": HarnessSettings(effort="high"), "reflection": HarnessSettings(model="reviewer")},
+                        agent_presets={"bull": "selected-bull"})
+    workflow = Workflow("NVDA", "2026-01-02", settings)
+    inputs = workflow.store.metadata("input")
+    inputs["settings"]["social_screening"] = enabled
+    inputs["settings"]["agents"]["screening"] = {"kind": "pi", "model": "obsolete-screening-model"}
+    inputs["settings"]["agent_presets"]["screening"] = "obsolete-screening-preset"
+    workflow.store.set_metadata("input", inputs)
+    workflow.store.save_session("Bull Researcher", "existing-bull-session")
+    workflow.store.begin_step("analyst:social", "Sentiment Analyst", "Original input")
+    workflow.store.finish_step("analyst:social", "Completed sentiment report")
+    original_context = workflow.context_file.read_bytes()
+    workflow.store.close()
+
+    resumed = Workflow.resume(workflow.directory)
+    try:
+        assert resumed.settings.model_dump() == settings.model_dump()
+        assert resumed.store.metadata("input")["settings"] == settings.model_dump(mode="json")
+        assert resumed.store.session("Bull Researcher") == "existing-bull-session"
+        assert resumed.store.step("analyst:social")["output"] == "Completed sentiment report"
+        assert resumed.context_file.read_bytes() == original_context
+    finally:
+        resumed.store.close()
+
+
+@pytest.mark.parametrize("content", [
+    "social_screening = false\n",
+    '[agents.screening]\nmodel = "obsolete"\n',
+    '[agent_presets]\nscreening = "obsolete"\n',
+])
+def test_user_configuration_rejects_removed_screening_settings(tmp_path: Path, content: str) -> None:
+    """Limit obsolete-key cleanup to saved runs rather than accepting removed user options.
+
+    Args:
+        tmp_path: Isolated configuration location.
+        content: One removed setting supplied in user TOML.
+    """
+    path = tmp_path / "config.toml"
+    path.write_text(content)
+
+    with pytest.raises(ValidationError):
+        load_settings(path)
+
+
 def test_backtest_fingerprint_preserves_old_defaults_and_pins_role_overrides(tmp_path: Path) -> None:
     """Keep existing sweep identities while detecting changes to individual agent profiles.
 
@@ -374,6 +427,7 @@ def test_backtest_fingerprint_preserves_old_defaults_and_pins_role_overrides(tmp
     """
     settings = Settings(state_dir=tmp_path)
     old_inputs = {"settings": settings.model_dump(mode="json", exclude={"agents", "agent_presets"}), "portfolio": None}
+    old_inputs["settings"]["social_screening"] = False
     old_digest = hashlib.sha256(json.dumps(old_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"] == old_digest
     settings.agent_presets = {"market": "display-label"}

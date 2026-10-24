@@ -94,7 +94,7 @@ async def test_agent_title_hover_tracks_each_speaker_and_pinned_scroll_position(
 
 @pytest.mark.parametrize("agent,base,show_label", [
     ("Reflection 17", "Reflection", True),
-    ("Sentiment Screening 4", "Sentiment Screening", False),
+    ("Reflection 18", "Reflection", False),
 ])
 async def test_supporting_agent_titles_resolve_base_profile_and_optional_labels(agent: str, base: str, show_label: bool) -> None:
     """Use the supporting role's profile for numbered sessions while retaining tooltips when labels are suppressed."""

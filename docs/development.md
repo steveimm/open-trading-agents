@@ -15,7 +15,7 @@ The package root contains the CLI entry points and shared application configurat
 
 ## Workflow and harnesses
 
-The workflow runs parallel analysts, a bull/bear debate, the research manager, the trader, a three-participant risk debate, the portfolio manager, and report export. Optional memory evaluation and social screening use the same harness interface.
+The workflow runs parallel analysts, a bull/bear debate, the research manager, the trader, a three-participant risk debate, the portfolio manager, and report export. Optional memory evaluation uses the same harness interface.
 
 Harnesses manage model connections, authentication, request construction, conversation history, and tool loops. The application supplies role instructions and new task messages, then records events and native session identifiers.
 

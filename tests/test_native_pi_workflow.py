@@ -262,7 +262,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
         result = await asyncio.wait_for(workflow.run(observe), 120)
         assert state.failures == []
 
-    expected_roles = {role.name for key, role in ROLES.items() if key != "screening"}
+    expected_roles = {role.name for role in ROLES.values()}
     assert set(state.scripted) == expected_roles
     assert state.scripted["Bull Researcher"] == state.scripted["Bear Researcher"] == 2
     assert sum(state.scripted.values()) == 15

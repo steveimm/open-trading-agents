@@ -5,7 +5,7 @@ import math
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 Rating = Literal["Buy", "Overweight", "Hold", "Underweight", "Sell"]
 
@@ -56,22 +56,10 @@ class PortfolioDecision(NumericDecision):
     time_horizon: str | None = None
 
 
-class ScreenedPost(BaseModel):
-    index: int = Field(ge=0)
-    relevance: float = Field(ge=0, le=1)
-    stance: Literal["bullish", "bearish", "neutral", "unclear"]
-    confidence: float = Field(ge=0, le=1)
-
-
-class SocialScreen(BaseModel):
-    items: list[ScreenedPost]
-
-
 SCHEMAS: dict[str, type[BaseModel]] = {
     "research_manager": ResearchPlan,
     "trader": TraderProposal,
     "portfolio_manager": PortfolioDecision,
-    "screening": SocialScreen,
 }
 
 
@@ -79,7 +67,7 @@ def decision_format(role: str) -> str:
     """Describe the exact final-response schema validated for a structured role.
 
     Args:
-        role: Key of the decision or screening role.
+        role: Key of the decision role.
 
     Returns:
         Final-response instructions followed by the authoritative JSON schema.

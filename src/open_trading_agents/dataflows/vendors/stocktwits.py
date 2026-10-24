@@ -7,7 +7,6 @@ import html
 import http.client
 import json
 import logging
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 from urllib.request import Request, urlopen
@@ -67,22 +66,22 @@ def fetch_stocktwits_messages(
     timeout: float = 10.0,
     start_date: str | None = None,
     end_date: str | None = None,
-    screen: Callable[[list[str]], tuple[list[bool], str]] | None = None,
 ) -> str:
-    """Fetch recent StockTwits messages for ``ticker`` and return them as a
-    formatted plaintext block ready for prompt injection.
+    """Fetch dated StockTwits messages with their native sentiment labels.
 
-    When ``start_date``/``end_date`` (yyyy-mm-dd) are given, messages are trimmed
-    to that window, so a historical run never sees today's chatter (#1220). The
-    public stream only serves recent messages, so a window it cannot reach is
-    reported as unavailable rather than as silence.
+    The public stream only serves recent messages. Historical windows beyond
+    its coverage are reported as unavailable rather than as absent discussion.
 
-    ``screen``, when given, takes the message bodies and returns a keep flag per
-    message and a note line that heads the block.
+    Args:
+        ticker: Instrument whose symbol stream is requested.
+        limit: Maximum eligible messages to render.
+        timeout: Network request timeout in seconds.
+        start_date: Optional first included date, YYYY-MM-DD.
+        end_date: Optional last included date, YYYY-MM-DD.
 
-    Returns a placeholder string when the endpoint is unreachable, the
-    symbol has no messages, or the response shape is unexpected — the
-    caller never has to special-case None or exceptions.
+    Returns:
+        Label counts and messages with bodies limited to 700 characters, or a
+        notice describing unavailable data or absent messages.
     """
     url = _API.format(ticker=_stocktwits_symbol(ticker))
     req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
@@ -107,14 +106,6 @@ def fetch_stocktwits_messages(
             return gap or (f"<no StockTwits messages for ${ticker.upper()} within {start_date}..{end_date}>")
         return f"<no StockTwits messages found for ${ticker.upper()}>"
 
-    note = ""
-    if screen:
-        keep, note = screen([_body(m) for m in messages])
-        screened = len(messages)
-        messages = [m for m, kept in zip(messages, keep, strict=True) if kept]
-        if not messages:
-            return f"{note}\n\n<none of the {screened} StockTwits messages is about ${ticker.upper()}>"
-
     lines = []
     bullish = bearish = unlabeled = 0
     for m in messages[:limit]:
@@ -124,8 +115,8 @@ def fetch_stocktwits_messages(
         sentiment_obj = entities.get("sentiment") or {}
         sentiment = sentiment_obj.get("basic") if isinstance(sentiment_obj, dict) else None
         body = _body(m).replace("\n", " ").strip()
-        if len(body) > 280:
-            body = body[:280] + "…"
+        if len(body) > 700:
+            body = body[:700] + "…"
 
         if sentiment == "Bullish":
             bullish += 1
@@ -144,4 +135,4 @@ def fetch_stocktwits_messages(
     summary = (
         f"Bullish: {bullish} ({bull_pct}%) · Bearish: {bearish} ({bear_pct}%) · Unlabeled: {unlabeled} · Total: {total} most-recent messages"
     )
-    return (f"{note}\n\n" if note else "") + summary + "\n\n" + "\n".join(lines)
+    return summary + "\n\n" + "\n".join(lines)

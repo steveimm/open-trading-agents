@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import sys
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
-from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -36,6 +34,22 @@ class RunResult:
     directory: Path
     rating: str
     outputs: dict[str, str]
+
+
+def _saved_settings(values: dict[str, Any]) -> dict[str, Any]:
+    """Normalize retired settings only when reopening recorded run inputs.
+
+    Args:
+        values: Settings persisted by an earlier workflow version.
+
+    Returns:
+        Saved settings without the removed sentiment-screening configuration.
+    """
+    restored = {key: value for key, value in values.items() if key != "social_screening"}
+    for field in ("agents", "agent_presets"):
+        restored[field] = {key: value for key, value in values.get(field, {}).items() if key != "screening"}
+
+    return restored
 
 
 class Workflow:
@@ -83,7 +97,6 @@ class Workflow:
         self.sink: EventSink | None = None
         self.active_steps: dict[str, str] = {}
         self.conversation_turns: dict[str, str] = {}
-        self.screening_futures: set[Future[tuple[list[bool], str]]] = set()
         self.data_config = build_data_config({"data_cache_dir": str(settings.state_dir / "cache"), **settings.data})
         self.tool_context = ToolContext(self.ticker, self.trade_date, self.asset_type, self.data_config)
         self.context_file = self.directory / "tool-context.json"
@@ -91,8 +104,7 @@ class Workflow:
                     "portfolio": portfolio.model_dump() if portfolio is not None else None}
         previous = self.store.metadata("input")
         if previous:
-            for field in ("agents", "agent_presets"):
-                previous["settings"].setdefault(field, {})
+            previous["settings"] = _saved_settings(previous["settings"])
             identity["settings"]["agent_presets"] = previous["settings"]["agent_presets"]
             self.settings = settings.model_copy(update={"agent_presets": previous["settings"]["agent_presets"].copy()})
         if previous and previous != identity:
@@ -148,7 +160,7 @@ class Workflow:
         return cls(
             inputs["ticker"],
             inputs["trade_date"],
-            Settings.model_validate(inputs["settings"]),
+            Settings.model_validate(_saved_settings(inputs["settings"])),
             portfolio,
             directory.name,
             session_factory,
@@ -306,25 +318,7 @@ class Workflow:
                 if not evidence:
                     await self._event("tool_start", "analysis", ROLES[key].name, tool="get_social_sentiment", tool_call_id="prefetch-social")
                     try:
-                        loop = asyncio.get_running_loop()
-
-                        def screen(posts: list[str]) -> tuple[list[bool], str]:
-                            """Request optional screening without blocking the application event loop.
-
-                            Args:
-                                posts: Source posts supplied by the data adapter.
-
-                            Returns:
-                                Relevance decisions and the source summary note.
-                            """
-                            future = asyncio.run_coroutine_threadsafe(self._screen_posts(posts), loop)
-                            self.screening_futures.add(future)
-                            try:
-                                return future.result()
-                            finally:
-                                self.screening_futures.discard(future)
-
-                        tools = FinancialTools(self.tool_context, screen=screen if self.settings.social_screening else None)
+                        tools = FinancialTools(self.tool_context)
                         evidence = await asyncio.to_thread(tools.get_social_sentiment)
                     except Exception as exc:
                         evidence = f"DATA_UNAVAILABLE: sentiment sources could not be retrieved ({type(exc).__name__})."
@@ -334,37 +328,6 @@ class Workflow:
             text = await self._call(f"analyst:{key}", key, f"{self._instrument()}\n\nProduce your research report.\n\n{evidence}")
             self.outputs[ROLES[key].name] = text
             await self._release_session(ROLES[key].name)
-
-    async def _screen_posts(self, posts: list[str]) -> tuple[list[bool], str]:
-        """Screen a source batch through a normal harness session, preserving data on failure.
-
-        Args:
-            posts: Untrusted source post texts in stable order.
-
-        Returns:
-            A keep flag per post and an explicitly model-derived stance summary.
-        """
-        if not posts:
-            return [], "No posts available for screening."
-        body = json.dumps({"ticker": self.ticker, "posts": posts}, ensure_ascii=False)
-        digest = hashlib.sha256(body.encode()).hexdigest()[:16]
-        session_name = f"Sentiment Screening {digest}"
-        try:
-            response = await self._call(f"screen:{digest}", "screening", body, session_name)
-            parsed = parse_decision("screening", response)
-            indexes = [item.index for item in parsed.items]
-            if sorted(indexes) != list(range(len(posts))):
-                raise ValueError("screening did not return exactly one result per source post")
-            ordered = sorted(parsed.items, key=lambda item: item.index)
-            keep = [item.relevance >= 0.3 for item in ordered]
-            stances = [item.stance if item.confidence >= 0.5 else "unclear" for item, kept in zip(ordered, keep, strict=True) if kept]
-            counts = ", ".join(f"{stances.count(stance)} {stance}" for stance in ("bullish", "bearish", "neutral", "unclear"))
-            return keep, f"Model screening retained {sum(keep)} of {len(posts)} posts for {self.ticker}: {counts}."
-        except Exception as exc:
-            await self._event("status", "analysis", "Sentiment Analyst", f"Optional social screening unavailable: {type(exc).__name__}")
-            return [True] * len(posts), "Model screening unavailable; all source posts were retained."
-        finally:
-            await self._release_session(session_name)
 
     async def _debate(self, stage: str, keys: tuple[str, ...], rounds: int, evidence: str) -> str:
         """Rotate speakers while appending only new public contributions to each native session.
@@ -518,8 +481,6 @@ class Workflow:
             self.store.set_metadata("status", "complete" if not notes else "partial")
             return notes
         finally:
-            for future in tuple(self.screening_futures):
-                future.cancel()
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
             try:
                 await asyncio.to_thread(self.recorder.close)
@@ -599,8 +560,6 @@ class Workflow:
             await self._event("error", "reports", text=f"{type(exc).__name__}: {exc}")
             raise
         finally:
-            for future in tuple(self.screening_futures):
-                future.cancel()
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
             quick, deep = self.settings.model_settings(), self.settings.model_settings(True)
             report_settings = {

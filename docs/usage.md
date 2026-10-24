@@ -44,7 +44,7 @@ Each agent's panel title shows its selected preset name, or the model name for a
 
 The terminal tab/window title shows the ticker and an animated activity indicator while a run is active. The activity indicator disappears after completion. Failed or cancelled runs show a status label. On exit, the app clears its title and restores the previous one where the terminal supports title restoration. Headless and JSON-event output contain no title-control sequences.
 
-Click a turn or detail header to collapse it, or select it with `[` / `]` and press Space. Collapsed turns continue receiving output. `m` shows supporting memory or screening work when available.
+Click a turn or detail header to collapse it, or select it with `[` / `]` and press Space. Collapsed turns continue receiving output. `m` shows memory activity and reflection work when available.
 
 Scrolling upward pauses stream-following. Scroll to the bottom or press End to follow again. Tool previews longer than 10,000 characters show the beginning and end with an omitted-character count. Complete content remains in the saved transcript.
 

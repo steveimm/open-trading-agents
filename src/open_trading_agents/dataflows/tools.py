@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -74,15 +73,13 @@ class ToolContext:
 
 
 class FinancialTools:
-    def __init__(self, context: ToolContext, screen: Callable[[list[str]], tuple[list[bool], str]] | None = None) -> None:
+    def __init__(self, context: ToolContext) -> None:
         """Bind financial tools to one instrument and analysis date.
 
         Args:
             context: Instrument identity and data configuration supplied by the workflow.
-            screen: Optional caller-owned relevance and stance classifier, never an MCP argument.
         """
         self.context = context
-        self.screen = screen
 
     def _route(self, name: str, *args: Any) -> str:
         """Invoke the configured vendor chain inside this run's data context.
@@ -257,7 +254,7 @@ class FinancialTools:
         return self._route("get_prediction_markets", topic, limit, self.context.trade_date)
 
     def get_social_sentiment(self, start_date: str | None = None, end_date: str | None = None) -> str:
-        """Collect dated news, Reddit posts, and StockTwits messages with optional caller-owned screening.
+        """Collect dated news, Reddit posts, and StockTwits messages for the sentiment analyst.
 
         Args:
             start_date: Inclusive start, defaulting to seven days before the analysis date.
@@ -274,13 +271,12 @@ class FinancialTools:
         except Exception as exc:
             news = f"<news unavailable: {type(exc).__name__}>"
         with run_config(self.context.config):
-            stocktwits = fetch_stocktwits_messages(self.context.ticker, start_date=start_date, end_date=end_date, screen=self.screen)
+            stocktwits = fetch_stocktwits_messages(self.context.ticker, start_date=start_date, end_date=end_date)
             reddit = fetch_reddit_posts(
                 self.context.ticker,
                 subreddits_for(self.context.ticker),
                 start_date=start_date,
                 end_date=end_date,
-                screen=self.screen,
             )
         return f"## News\n{news}\n\n## StockTwits\n{stocktwits}\n\n## Reddit\n{reddit}"
 

@@ -559,9 +559,8 @@ class ChatView(FollowScrollView):
         """
         if agent in self.agent_presentations:
             return self.agent_presentations[agent]
-        for base in ("Reflection", "Sentiment Screening"):
-            if agent.startswith(f"{base} "):
-                return self.agent_presentations.get(base)
+        if agent.startswith("Reflection "):
+            return self.agent_presentations.get("Reflection")
         return None
 
     def _title_text(self, part: ChatPart) -> str:

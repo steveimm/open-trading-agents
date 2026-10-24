@@ -40,6 +40,8 @@ A `.env` in the current working directory is loaded without overriding exported 
 
 Use Yahoo Finance ticker formats, including exchange suffixes for non-US listings. Source coverage varies by instrument and market. The default social and macro sources are more US-centric than the price feed.
 
+The Sentiment Analyst receives up to 30 StockTwits messages and five Reddit posts per subreddit within the requested date window. Post bodies include their first 700 characters, with an omission marker for longer text. Reddit titles are retained in full. These excerpts go directly to the analyst.
+
 Company profiles can distinguish quote and reporting currencies, but price snapshots currently lack explicit quote-currency metadata.
 
 Analysis dates are information cutoffs. Tools exclude data known to be after the cutoff and report unavailable data explicitly. Live news, social feeds, search results, and web pages are not historical archives. A reported publication date alone does not prove that today's page content was unchanged on a past date.

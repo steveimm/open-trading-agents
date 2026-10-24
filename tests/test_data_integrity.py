@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -128,6 +128,93 @@ def test_social_windows_exclude_future_and_undated_posts() -> None:
     assert [post["title"] for post in reddit._within_window(posts, "2024-03-01", "2024-03-15")] == ["past"]
     messages = [{"created_at": "2024-03-15T23:59:00Z", "body": "past"}, {"created_at": "2024-03-16T00:00:00Z"}, {}]
     assert stocktwits._within_window(messages, "2024-03-01", "2024-03-15") == [messages[0]]
+
+
+@pytest.mark.parametrize("length", [699, 700, 701, 1500])
+def test_stocktwits_renders_up_to_700_decoded_body_characters(length: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Truncate only beyond 700 decoded characters and retain the existing omission marker."""
+    body = "&" + "가" * (length - 1)
+    messages = [{"created_at": "2024-03-15T12:00:00Z", "body": body.replace("&", "&amp;")}]
+    monkeypatch.setattr(stocktwits, "urlopen", Mock(return_value=BytesIO(json.dumps({"messages": messages}).encode())))
+
+    result = stocktwits.fetch_stocktwits_messages("NVDA", start_date="2024-03-01", end_date="2024-03-15")
+
+    rendered = result.splitlines()[-1].split("] ", 1)[1]
+    assert rendered == body[:700] + ("…" if length > 700 else "")
+    assert "Total: 1 most-recent messages" in result
+
+
+@pytest.mark.parametrize("length", [699, 700, 701, 1500])
+def test_reddit_renders_up_to_700_body_characters_and_preserves_title(length: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apply the body limit independently of the complete Reddit title."""
+    title = "Full title " + "T" * 900
+    body = "가" * length
+    posts = [{"title": title, "selftext": body, "subreddit": "stocks", "created_utc": datetime(2024, 3, 15, tzinfo=UTC).timestamp()}]
+    monkeypatch.setattr(reddit, "_fetch_subreddit_rss", Mock(return_value=posts))
+
+    result = reddit.fetch_reddit_posts("NVDA", ("stocks",), start_date="2024-03-01", end_date="2024-03-15")
+
+    assert f"[2024-03-15] {title}\n" in result
+    assert result.split("body excerpt: ", 1)[1] == body[:700] + ("…" if length > 700 else "")
+    assert "r/stocks — 1 recent posts" in result
+
+
+def test_stocktwits_keeps_30_eligible_messages_and_counts_only_rendered_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Filter dates before applying the display limit and computing native sentiment-label counts."""
+    messages = [
+        {"created_at": "2024-03-16T00:00:00Z", "body": "future-post"},
+        {"body": "undated-post"},
+        *[{"created_at": "2024-03-15T12:00:00Z", "body": f"eligible-{index}",
+           "entities": {"sentiment": {"basic": ("Bullish", "Bearish", None)[index % 3]}}} for index in range(35)],
+    ]
+    monkeypatch.setattr(stocktwits, "urlopen", Mock(return_value=BytesIO(json.dumps({"messages": messages}).encode())))
+
+    result = stocktwits.fetch_stocktwits_messages("NVDA", start_date="2024-03-01", end_date="2024-03-15")
+
+    assert result.count("] eligible-") == 30
+    assert "Bullish: 10 (33%) · Bearish: 10 (33%) · Unlabeled: 10 · Total: 30" in result
+    assert "eligible-29" in result and "eligible-30" not in result
+    assert "future-post" not in result and "undated-post" not in result
+
+
+def test_reddit_keeps_five_eligible_posts_per_subreddit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Filter each feed entry by date before preserving the existing five-post community limits."""
+    timestamp = datetime(2024, 3, 15, tzinfo=UTC).timestamp()
+    posts = [
+        {"created_utc": datetime(2024, 3, 16, tzinfo=UTC).timestamp(), "subreddit": "stocks", "title": "future-post"},
+        {"subreddit": "stocks", "title": "undated-post"},
+        *[{"created_utc": timestamp, "subreddit": sub, "title": f"{sub}-post-{index}", "selftext": "Evidence"}
+          for sub in reddit.DEFAULT_SUBREDDITS for index in range(7)],
+    ]
+    fetch = Mock(return_value=posts)
+    monkeypatch.setattr(reddit, "_fetch_subreddit_rss", fetch)
+
+    result = reddit.fetch_reddit_posts("NVDA", start_date="2024-03-01", end_date="2024-03-15")
+
+    fetch.assert_called_once_with("NVDA", "wallstreetbets+stocks+investing", 100, 10.0)
+    for sub in reddit.DEFAULT_SUBREDDITS:
+        assert f"r/{sub} — 5 recent posts" in result
+        assert f"{sub}-post-4" in result and f"{sub}-post-5" not in result
+    assert result.count("body excerpt:") == 15
+    assert "future-post" not in result and "undated-post" not in result
+
+
+def test_unavailable_social_history_remains_distinct_from_no_discussion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep coverage notices when current feeds cannot establish the requested historical window."""
+    messages = [{"created_at": "2024-03-16T12:00:00Z", "body": "future-post"}]
+    posts = [{"created_utc": datetime(2024, 3, 16, tzinfo=UTC).timestamp(), "title": "future-post", "subreddit": "stocks"}]
+    monkeypatch.setattr(stocktwits, "urlopen", Mock(return_value=BytesIO(json.dumps({"messages": messages}).encode())))
+    monkeypatch.setattr(reddit, "_fetch_subreddit_rss", Mock(return_value=posts))
+
+    results = (
+        stocktwits.fetch_stocktwits_messages("NVDA", start_date="2024-03-01", end_date="2024-03-15"),
+        reddit.fetch_reddit_posts("NVDA", ("stocks",), start_date="2024-03-01", end_date="2024-03-15"),
+    )
+
+    for result in results:
+        assert "unavailable for 2024-03-01..2024-03-15" in result
+        assert "not an absence" in result
+        assert "future-post" not in result
 
 
 def test_verified_snapshot_excludes_future_prices(monkeypatch: pytest.MonkeyPatch) -> None:

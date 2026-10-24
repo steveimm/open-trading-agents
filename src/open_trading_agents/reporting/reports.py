@@ -124,7 +124,7 @@ def report_details(settings: dict[str, Any], generated: str) -> list[tuple[str, 
             for selection in selections:
                 name = selection["agent"]
                 names = [name] if not runtimes else [agent for agent in unknown if agent == name or (
-                    selection.get("role") in {"reflection", "screening"} and agent and agent.startswith(f"{name} "))]
+                    selection.get("role") == "reflection" and agent and agent.startswith(f"{name} "))]
                 if names:
                     identity = (selection.get("harness"), selection.get("provider"), selection.get("model"))
                     configured.setdefault(identity, []).extend(sorted(names))

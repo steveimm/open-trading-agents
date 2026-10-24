@@ -420,7 +420,7 @@ class TradingApp(App[None]):
                 view.set_document(document)
                 view.navigate("home")
         activity = self.agents.setdefault(agent, Activity())
-        supporting = agent == "Memory" or agent.startswith(("Reflection ", "Sentiment Screening "))
+        supporting = agent == "Memory" or agent.startswith("Reflection ")
         if agent != "Workflow" and not supporting and agent not in self._stage_agents[stage]:
             self._stage_agents[stage].append(agent)
         if supporting and agent not in self._memory_agents:
@@ -902,7 +902,7 @@ class TradingApp(App[None]):
             self._refresh_shortcuts()
 
     def action_memory(self) -> None:
-        """Show optional memory and screening conversations."""
+        """Show memory activity and reflection conversations."""
         if self._action_available("memory"):
             panel = self.query_one("#memory-details", Collapsible)
             panel.collapsed = not panel.collapsed

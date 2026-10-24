@@ -176,7 +176,6 @@ class Settings(BaseModel):
     memory_enabled: bool = True
     allow_execution: bool = True
     web_research: bool = True
-    social_screening: bool = False
     data: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("default_preset")

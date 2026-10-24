@@ -132,18 +132,18 @@ async def test_real_stdio_mcp_process_lists_and_calls_historical_tool(tmp_path: 
             assert "2024-03-15" in text and "withheld" in text.lower()
 
 
-def test_social_screening_uses_only_the_explicit_constructor_callback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Send source bodies through the caller's harness callback without exposing it to model arguments."""
+def test_social_collection_passes_dated_evidence_directly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collect all three sources for the bound instrument and window without an intermediate classifier."""
     monkeypatch.setattr(module, "route_to_vendor", Mock(return_value="Dated news"))
-    stocktwits = Mock(return_value="Screened StockTwits")
-    reddit = Mock(return_value="Screened Reddit")
+    stocktwits = Mock(return_value="Dated StockTwits messages")
+    reddit = Mock(return_value="Dated Reddit posts")
     monkeypatch.setattr(module, "fetch_stocktwits_messages", stocktwits)
     monkeypatch.setattr(module, "fetch_reddit_posts", reddit)
-    screen = Mock(return_value=([True, False], "One relevant bullish post"))
-    api = FinancialTools(ToolContext("NVDA", "2024-03-15"), screen=screen)
+    api = FinancialTools(ToolContext("NVDA", "2024-03-15"))
     result = api.get_social_sentiment()
-    assert "Screened StockTwits" in result and "Screened Reddit" in result
-    assert stocktwits.call_args.kwargs["screen"] is screen
-    assert reddit.call_args.kwargs["screen"] is screen
+
+    assert result == "## News\nDated news\n\n## StockTwits\nDated StockTwits messages\n\n## Reddit\nDated Reddit posts"
+    stocktwits.assert_called_once_with("NVDA", start_date="2024-03-08", end_date="2024-03-15")
+    reddit.assert_called_once_with("NVDA", ("wallstreetbets", "stocks", "investing"), start_date="2024-03-08", end_date="2024-03-15")
     schemas = asyncio.run(create_server(api.context, ("get_social_sentiment",)).list_tools())
-    assert "screen" not in schemas[0].input_schema.get("properties", {})
+    assert set(schemas[0].input_schema.get("properties", {})) == {"start_date", "end_date"}
