@@ -28,7 +28,13 @@ pytestmark = pytest.mark.native
 
 
 class NativeResponses:
-    def __init__(self) -> None:
+    def __init__(self, effort: str | None = None) -> None:
+        """Retain expected native effort and request history for the local fixture.
+
+        Args:
+            effort: Explicit effort expected from pi, or None for native defaults.
+        """
+        self.effort = effort
         self.lock = threading.Lock()
         self.requests: list[dict[str, Any]] = []
         self.failures: list[str] = []
@@ -54,7 +60,11 @@ class NativeResponses:
         tools = {tool["function"]["name"] for tool in payload["tools"]}
         assert "calculate" in tools
         assert not tools.intersection({"read", "write", "edit", "bash"})
-        assert not {"temperature", "top_p", "reasoning_effort"}.intersection(payload)
+        assert not {"temperature", "top_p"}.intersection(payload)
+        if self.effort is None:
+            assert "reasoning_effort" not in payload
+        else:
+            assert payload.get("reasoning_effort") == self.effort
         assert payload["model"] == "fixture-model"
 
         for message in messages:
@@ -167,19 +177,20 @@ def native_model_server(responses: NativeResponses | None = None) -> Iterator[tu
         thread.join(timeout=5)
 
 
-def configure_pi(directory: Path, base_url: str) -> None:
+def configure_pi(directory: Path, base_url: str, effort: str | None = None) -> None:
     """Create isolated native model settings with a fake key and no auth files.
 
     Args:
         directory: Temporary pi configuration directory.
         base_url: Loopback-only model server.
+        effort: Whether the fixture advertises native reasoning-effort support.
     """
     directory.mkdir()
     model = {
         "id": "fixture-model", "name": "Loopback native workflow fixture", "reasoning": True, "input": ["text"],
         "contextWindow": 1048576, "maxTokens": 2048,
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-        "compat": {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": False,
+        "compat": {"supportsStore": False, "supportsDeveloperRole": False, "supportsReasoningEffort": effort is not None,
                    "supportsUsageInStreaming": True, "maxTokensField": "max_tokens", "thinkingFormat": "openai",
                    "requiresThinkingAsText": False},
     }
@@ -194,7 +205,8 @@ def configure_pi(directory: Path, base_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("effort", [None, "high"])
+async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, effort: str | None) -> None:
     """Run all roles and reflection through installed pi against a loopback model fixture."""
     executable = shutil.which("pi")
     if executable is None:
@@ -214,7 +226,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
 
     monkeypatch.setattr(FinancialTools, "get_social_sentiment", social_evidence)
     monkeypatch.setattr("open_trading_agents.memory.fetch_returns", outcomes)
-    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,)),
+    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,), effort=effort),
                         research_rounds=2, risk_rounds=1,
                         allow_execution=False, web_research=False, memory_enabled=True)
     memory = MemoryLog(settings.state_dir / "memory.sqlite")
@@ -225,9 +237,9 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
         """Retain ordered workflow and native harness evidence."""
         events.append(event)
 
-    with native_model_server() as (base_url, state):
+    with native_model_server(NativeResponses(effort)) as (base_url, state):
         pi_directory = tmp_path / "pi-config"
-        configure_pi(pi_directory, base_url)
+        configure_pi(pi_directory, base_url, effort)
         monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_directory))
         monkeypatch.setenv("PI_OFFLINE", "1")
         monkeypatch.setenv("PI_TELEMETRY", "0")
@@ -242,6 +254,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
     assert state.calculated["Bull Researcher"] == state.calculated["Bear Researcher"] == 2
     assert sum(state.calculated.values()) == 15
     assert len(state.requests) == 30
+    assert all(request["payload"].get("reasoning_effort") == effort for request in state.requests)
     assert state.continuations == {"Bull Researcher", "Bear Researcher"}
     assert result.rating == "Overweight"
     native_auth = pi_directory / "auth.json"
