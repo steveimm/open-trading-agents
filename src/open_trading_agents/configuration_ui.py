@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import questionary
 import typer
-from click import IntRange
 
 from open_trading_agents.config import (
     HarnessSettings,
@@ -16,21 +16,52 @@ from open_trading_agents.config import (
 )
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models
 
+_MENU_STYLE = questionary.Style([
+    ("highlighted", "fg:#74b9ff bold noinherit"),
+    ("pointer", "fg:#74b9ff bold noinherit"),
+    ("answer", "fg:#74b9ff"),
+])
+
 
 def _choose(label: str, choices: list[str], default: int = 0) -> int:
-    """Show valid choices and retain the displayed selection on Enter.
+    """Choose from a keyboard menu with the current value initially highlighted.
 
     Args:
         label: Name of the selection.
         choices: Human-readable choices in display order.
-        default: Index selected by an empty answer.
+        default: Initially highlighted index, accepted by pressing Enter.
 
     Returns:
         The selected zero-based index.
+
+    Raises:
+        typer.Abort: The user cancels or terminal input closes.
     """
-    for index, choice in enumerate(choices, 1):
-        typer.echo(f"  {index}. {choice}")
-    return typer.prompt(label, default=default + 1, type=IntRange(1, len(choices))) - 1
+    options = [questionary.Choice(title, value=index) for index, title in enumerate(choices)]
+    try:
+        selected = questionary.select(
+            label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
+            instruction="(↑/↓ select · Enter confirm · type to filter)",
+            use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_search_filter=True,
+        ).unsafe_ask()
+    except (KeyboardInterrupt, EOFError) as exc:
+        raise typer.Abort() from exc
+    if selected is None:
+        raise typer.Abort()
+    return selected
+
+
+def _confirm(label: str, default: bool = False) -> bool:
+    """Use the same keyboard selection for a yes-or-no decision.
+
+    Args:
+        label: Decision presented to the user.
+        default: Initially highlighted answer.
+
+    Returns:
+        Whether the user selected Yes.
+    """
+    return _choose(label, ["Yes", "No"], default=0 if default else 1) == 0
 
 
 def _describe(settings: HarnessSettings) -> str:
@@ -152,7 +183,7 @@ def _preset() -> tuple[str, bool] | None:
     Returns:
         The preset name and replacement permission, or None when declined.
     """
-    if not typer.confirm("Save these choices as a preset?", default=False):
+    if not _confirm("Save these choices as a preset?"):
         return None
     if names := list_presets():
         typer.echo(f"Existing presets: {', '.join(names)}")
@@ -165,9 +196,9 @@ def _preset() -> tuple[str, bool] | None:
             continue
         if not path.exists():
             return name, False
-        if typer.confirm(f"Replace preset '{name}'?", default=False):
+        if _confirm(f"Replace preset '{name}'?"):
             return name, True
-        if not typer.confirm("Choose another preset name?", default=True):
+        if not _confirm("Choose another preset name?", default=True):
             return None
 
 
@@ -179,7 +210,7 @@ def configure_interactively(path: Path) -> None:
     """
     settings = load_settings(path) if path.exists() else Settings()
     catalogs: dict[str, ModelCatalog] = {}
-    typer.echo("Enter keeps the displayed selection.")
+    typer.echo("Current choices start highlighted. Ctrl+C cancels setup.")
     typer.echo("\nDefault settings")
     harness = _runtime(settings.harness, None, catalogs)
     assert harness is not None

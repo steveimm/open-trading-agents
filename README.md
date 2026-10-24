@@ -31,7 +31,7 @@ Use `configure` for guided harness and model selection:
 uv run open-trading-agents configure
 ```
 
-The numbered choices cover shared defaults, working agents (`quick`), and decision managers (`deep`) in one session. Press Enter to retain the displayed selection. Each tier can inherit the shared defaults or select its own harness and model. Providers and models come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom identifier when needed. Setup does not send a model prompt.
+Use Up/Down to move through choices and Enter to confirm. Current settings start highlighted, and typing filters the choices. The menus cover shared defaults, working agents (`quick`), and decision managers (`deep`) in one session. Each tier can inherit the shared defaults or select its own harness and model. Providers and models come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom identifier when needed. Preset confirmations use the same menus. Ctrl+C cancels setup without saving. Setup does not send a model prompt.
 
 Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regardless of the working directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Connection settings and authentication remain in the harness.
 
