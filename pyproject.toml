@@ -21,6 +21,7 @@ dependencies = [
     "stockstats>=0.6.9",
     "tabulate>=0.10.0",
     "textual>=8.2.8",
+    "tomlkit>=0.15.2",
     "typer>=0.27.3",
     "yfinance>=1.7.0",
 ]
