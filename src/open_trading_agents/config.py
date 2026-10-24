@@ -17,6 +17,8 @@ from tomlkit.toml_document import TOMLDocument
 from open_trading_agents.dataflows.symbols import normalize_symbol
 from open_trading_agents.domain import HarnessConfig
 
+_PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
 
 def application_dir() -> Path:
     """Return the shared directory for application settings, presets, and run data."""
@@ -40,7 +42,7 @@ def preset_path(name: str) -> Path:
     Raises:
         ValueError: The name is empty, too long, or contains path characters.
     """
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name):
+    if not _PRESET_NAME.fullmatch(name):
         raise ValueError("Preset names must start with a letter or number and contain up to 64 letters, numbers, dots, underscores, or hyphens.")
     return application_dir() / "presets" / f"{name}.toml"
 
@@ -48,7 +50,7 @@ def preset_path(name: str) -> Path:
 def list_presets() -> tuple[str, ...]:
     """Return available preset names in alphabetical order."""
     return tuple(sorted(path.stem for path in (application_dir() / "presets").glob("*.toml")
-                        if path.is_file() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", path.stem)))
+                        if path.is_file() and _PRESET_NAME.fullmatch(path.stem)))
 
 
 class HarnessSettings(BaseModel):

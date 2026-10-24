@@ -25,17 +25,26 @@ uv run open-trading-agents analyze NVDA --harness codex --date 2026-01-02
 
 Omitting the ticker opens a short ticker/date prompt in an interactive terminal. Model and provider selectors are optional. When omitted, the harness uses its own configuration. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
 
-Use `configure` to save the application's harness and model selections:
+Use `configure` for guided harness and model selection:
 
 ```sh
 uv run open-trading-agents configure
-uv run open-trading-agents configure --harness pi --provider my-local-provider --model my-model
-uv run open-trading-agents configure --tier deep --harness codex --model manager-model
 ```
 
-The command writes `tradingagents.toml` in the current directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Empty `--model ""` or `--provider ""` selects native defaults. This command selects an existing native provider/model; connection settings and authentication remain in the harness.
+The numbered choices cover shared defaults, working agents (`quick`), and decision managers (`deep`) in one session. Press Enter to retain the displayed selection. Each tier can inherit the shared defaults or select its own harness and model. Providers and models come from native harness metadata where available. Choose `Native default` to delegate a selection to the harness, or enter a custom identifier when needed. Setup does not send a model prompt.
 
-You can also edit `tradingagents.example.toml` as a starting point. The `[harness]` section sets the default. Optional `[quick]` and `[deep]` sections select different harnesses or models for working agents and decision managers. Explicit CLI harness/model/provider options override both tiers.
+Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regardless of the working directory. Use `--config PATH` for another file. Existing comments, data settings, and unrelated preferences are preserved. Connection settings and authentication remain in the harness.
+
+At the end, setup offers to save the default and both tier selections as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset. Multiple presets can be kept and selected for an individual analysis or backtest:
+
+```sh
+uv run open-trading-agents analyze NVDA --preset local-research
+uv run open-trading-agents backtest NVDA --start 2026-01-05 --end 2026-01-09 --preset local-research
+```
+
+A preset replaces all three harness selections for that invocation without rewriting the main config. Other application and data preferences still come from the main config. Explicit CLI harness/model/provider options override the preset. Resuming a run keeps the selections saved with that run.
+
+For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model`. `--tier quick` or `--tier deep` targets one tier, and an empty `--model ""` or `--provider ""` selects native defaults. You can also use `tradingagents.example.toml` as a starting point for the global config or an explicit `--config` file. The `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides:
 
 ```toml
 [harness]
@@ -80,7 +89,7 @@ Elapsed clocks update independently of model responses. Usage shows total input,
 
 ## Calculations and sources
 
-Agents can use native execution tools to write and run calculation scripts in their own workspaces. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
+Agents can use native execution tools to write and run calculation scripts in their own workspaces. Interpreters are resolved by the native shell environment, with no application interpreter path prescribed in prompts. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
 
 Financial tools retain Yahoo, SEC EDGAR, Alpha Vantage, FRED, Polymarket, Reddit, and StockTwits integrations. Tools bind the ticker and information cutoff outside the model's arguments. Technical reports have a shared verified price/indicator snapshot. Missing or unavailable data is reported explicitly.
 
@@ -92,7 +101,7 @@ Most default sources need no API key. Optional FRED and Alpha Vantage sources us
 
 ## Saved runs and unattended use
 
-The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a separate `reports/usage.json` diagnostic file. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. They follow five team sections: analyst reports, research decision, trading plan, risk decision, and portfolio decision. Their headers identify the observed harnesses, providers, and models, with configuration fallbacks explicitly labeled when native identity is unavailable. Token statistics remain in the TUI and diagnostic usage file, not in the human reports. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
+The default state directory is `~/.open-trading-agents`, with runs under `~/.open-trading-agents/runs`. Override it using `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a separate `reports/usage.json` diagnostic file. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. They follow five team sections: analyst reports, research decision, trading plan, risk decision, and portfolio decision. Their headers identify the observed harnesses, providers, and models, with configuration fallbacks explicitly labeled when native identity is unavailable. Token statistics remain in the TUI and diagnostic usage file, not in the human reports. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
 
 ```sh
 uv run open-trading-agents analyze NVDA --headless
