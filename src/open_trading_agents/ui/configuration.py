@@ -213,6 +213,30 @@ def select_analysis_date() -> str:
             typer.echo("Enter a valid date as YYYY-MM-DD, today or earlier.")
 
 
+def select_output_directory(default_directory: Path) -> Path | None:
+    """Choose where to create this run's output folder without changing saved preferences.
+
+    Args:
+        default_directory: Parent directory used when no override is selected.
+
+    Returns:
+        An absolute output directory, or None to retain the current default.
+    """
+    default_directory = default_directory.expanduser().resolve()
+
+    while True:
+        value = typer.prompt("Output directory", default=str(default_directory)).strip()
+        if not value:
+            return None
+
+        directory = Path(value).expanduser().resolve()
+        if directory.exists() and not directory.is_dir():
+            typer.echo("Enter a directory path, not an existing file.")
+            continue
+
+        return None if directory == default_directory else directory
+
+
 def select_research_depth(settings: Settings) -> Settings:
     """Select the number of rounds for both research and risk discussions.
 

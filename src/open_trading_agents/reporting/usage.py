@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from open_trading_agents.analysis.models import AgentEvent, Usage
@@ -82,6 +82,26 @@ def format_usage(usages: list[Usage], compact: bool = False) -> str:
     return label
 
 
+def format_run_usage(totals: Mapping[str, Any]) -> str:
+    """Render persisted token totals and available cache counts for a completed run.
+
+    Args:
+        totals: Aggregate counts and completeness flags from the usage report.
+
+    Returns:
+        A readable summary using the same partial-count markers as the interface.
+    """
+    tokens = f"Reported tokens: {totals['input_tokens']:,} input / {totals['output_tokens']:,} output."
+    read = _format_cache_total(totals.get("cache_read_tokens"), totals.get("cache_read_tokens_complete", False), False)
+    cache = f"Cache read: {read}"
+
+    if totals.get("cache_write_tokens") is not None:
+        write = _format_cache_total(totals["cache_write_tokens"], totals.get("cache_write_tokens_complete", False), False)
+        cache += f" / write: {write}"
+
+    return f"{tokens} {cache}."
+
+
 def _format_cache(values: list[int | None], compact: bool) -> str:
     """Distinguish unknown cache data from reported zero and partial counts.
 
@@ -93,11 +113,26 @@ def _format_cache(values: list[int | None], compact: bool) -> str:
         A known count, a partial count, or an unavailable marker.
     """
     known = [value for value in values if value is not None]
-    if not known:
+    total = sum(known) if known else None
+    return _format_cache_total(total, len(known) == len(values), compact)
+
+
+def _format_cache_total(value: int | None, complete: bool, compact: bool) -> str:
+    """Format a cache total without confusing missing or partial data with zero.
+
+    Args:
+        value: Reported cache count, or None when unavailable.
+        complete: Whether every counted request reported this cache field.
+        compact: Whether to abbreviate the count for a narrow display.
+
+    Returns:
+        A known count, partial count, or unavailable marker.
+    """
+    if value is None:
         return "—"
-    total = sum(known)
-    label = _short(total) if compact else f"{total:,}"
-    return label if len(known) == len(values) else f"{label}+?"
+
+    label = _short(value) if compact else f"{value:,}"
+    return label if complete else f"{label}+?"
 
 
 def _short(value: int) -> str:

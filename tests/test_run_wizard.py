@@ -25,7 +25,7 @@ def run_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
-def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tuple[str, str, Settings]]:
+def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tuple[str, str, Settings, Path | None]]:
     """Capture chosen settings before workflow construction can create files or model sessions.
 
     Args:
@@ -33,14 +33,21 @@ def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tupl
         calls: Ordered wizard and execution observations.
 
     Returns:
-        Captured ticker, analysis date, and settings for each invocation.
+        Captured ticker, analysis date, settings, and output override for each invocation.
     """
-    received: list[tuple[str, str, Settings]] = []
+    received: list[tuple[str, str, Settings, Path | None]] = []
 
-    def workflow(ticker: str, trade_date: str, settings: Settings, portfolio: Portfolio | None) -> Settings:
+    def workflow(
+        ticker: str,
+        trade_date: str,
+        settings: Settings,
+        portfolio: Portfolio | None,
+        *,
+        output_dir: Path | None = None,
+    ) -> Settings:
         """Record the finalized run choices without starting any external work."""
         calls.append("workflow")
-        received.append((ticker, trade_date, settings))
+        received.append((ticker, trade_date, settings, output_dir))
         return settings
 
     monkeypatch.setattr(cli, "Workflow", workflow)
@@ -48,17 +55,20 @@ def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tupl
     return received
 
 
-def test_interactive_run_asks_ticker_date_depth_and_agents_before_starting(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_interactive_run_asks_startup_choices_before_starting(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Collect startup choices in the requested order without modifying global configuration."""
     calls: list[str] = []
     original = run_config.read_text()
     received = capture_runs(monkeypatch, calls)
 
     def prompt(label: str, default: str | None = None) -> str:
-        """Record ticker and date before either selection menu opens."""
+        """Record text input around the research and runtime selections."""
         calls.append(label)
         if label == "Ticker":
             return "NVDA"
+        if label == "Output directory":
+            assert default == str(run_config.parent / "runs")
+            return ""
         assert default == date.today().isoformat()
         return "2024-03-15"
 
@@ -81,11 +91,12 @@ def test_interactive_run_asks_ticker_date_depth_and_agents_before_starting(run_c
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
     result = runner.invoke(cli.app, [])
     assert result.exit_code == 0, result.output
-    assert calls == ["Ticker", "Analysis date (YYYY-MM-DD)", "depth", "agents", "workflow"]
-    ticker, trade_date, settings = received[0]
+    assert calls == ["Ticker", "Analysis date (YYYY-MM-DD)", "depth", "agents", "Output directory", "workflow"]
+    ticker, trade_date, settings, output_dir = received[0]
     assert ticker == "NVDA" and trade_date == "2024-03-15"
     assert settings.model_settings().model == "worker" and settings.model_settings().effort == "low"
     assert settings.model_settings(True).model == "manager" and settings.model_settings(True).effort == "high"
+    assert output_dir is None
     assert run_config.read_text() == original
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
@@ -99,7 +110,7 @@ def test_date_prompt_defaults_to_today_and_retries_invalid_values_before_menus(
     received = capture_runs(monkeypatch, calls)
     monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
-    result = runner.invoke(cli.app, ["--ticker", "NVDA"], input=answer)
+    result = runner.invoke(cli.app, ["--ticker", "NVDA"], input=answer + "\n")
     assert result.exit_code == 0, result.output
     assert received[0][1] == (expected or date.today().isoformat())
     assert result.output.count("Enter a valid date") == errors
@@ -170,6 +181,7 @@ def test_supplied_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
     monkeypatch.setattr(cli.typer, "prompt", prompt)
     monkeypatch.setattr(configuration_ui, "select_research_depth", depth)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
+    monkeypatch.setattr(configuration_ui, "select_output_directory", lambda default_directory: None)
     result = runner.invoke(cli.app, [
         "--ticker", "NVDA", "--date", "2026-01-02", "--harness", "pi", "--provider", "local", "--model", "flag-model",
         "--effort", "medium", *round_flags,
@@ -202,6 +214,94 @@ def test_cancelling_run_selection_creates_no_run_or_settings_changes(run_config:
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
 
+@pytest.mark.parametrize("answer,expected", [("\n", None), ("   \n", None), ("results\n", "results"), ("config.toml\n~/export\n", "~/export")])
+def test_output_selection_preserves_default_or_uses_custom_directory(
+    run_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str,
+    expected: str | None,
+) -> None:
+    """Resolve selected paths, retry existing files, and retain the effective storage default on Enter."""
+    monkeypatch.chdir(run_config.parent)
+    monkeypatch.setenv("HOME", str(run_config.parent.parent))
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    original = run_config.read_text()
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15", "--state-dir", "storage"], input=answer)
+
+    assert result.exit_code == 0, result.output
+    assert str(run_config.parent / "storage" / "runs") in result.output
+    assert received[0][2].state_dir == Path("storage")
+    assert received[0][3] == (Path(expected).expanduser().resolve() if expected is not None else None)
+    assert result.output.count("not an existing file") == int(answer.startswith("config.toml"))
+    assert calls == ["workflow"]
+    assert run_config.read_text() == original
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
+    assert not (run_config.parent.parent / "export").exists()
+
+
+@pytest.mark.parametrize("headless,value", [(False, "results"), (True, "~/results")])
+def test_output_flag_skips_directory_prompt_and_keeps_storage_location(
+    run_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    headless: bool,
+    value: str,
+) -> None:
+    """Pass an explicit output parent to either run mode without changing shared cache or memory settings."""
+    monkeypatch.chdir(run_config.parent)
+    monkeypatch.setenv("HOME", str(run_config.parent.parent))
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    def unexpected(default_directory: Path) -> Path | None:
+        """Reject a redundant directory question after an explicit flag."""
+        raise AssertionError("An explicit output directory opened the selection prompt")
+
+    monkeypatch.setattr(configuration_ui, "select_output_directory", unexpected)
+    flags = ["--headless"] if headless else []
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15", "--output-dir", value, *flags])
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["workflow"]
+    assert received[0][2].state_dir == run_config.parent
+    assert received[0][3] == Path(value).expanduser().resolve()
+
+
+def test_cancelling_output_selection_creates_no_run_or_settings_changes(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An abandoned output prompt leaves saved preferences and the filesystem unchanged."""
+    monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    original = run_config.read_text()
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15"], input="")
+
+    assert result.exit_code == 1
+    assert "Output directory" in result.output
+    assert received == [] and calls == []
+    assert run_config.read_text() == original
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
+
+
+def test_output_flag_rejects_existing_file_before_startup(run_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a file destination before prompts, run directories, or native sessions are created."""
+    calls: list[str] = []
+    received = capture_runs(monkeypatch, calls)
+
+    result = runner.invoke(cli.app, ["--output-dir", str(run_config)])
+
+    assert result.exit_code == 2
+    assert "is a file" in result.output
+    assert received == [] and calls == []
+    assert "Ticker" not in result.output
+
+
 @pytest.mark.parametrize("mode", ["headless", "events", "stdin-pipe", "stdout-pipe"])
 def test_unattended_analysis_never_opens_startup_menus(run_config: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     """Avoid terminal selection prompts for explicit unattended modes or redirected streams."""
@@ -217,6 +317,7 @@ def test_unattended_analysis_never_opens_startup_menus(run_config: Path, monkeyp
 
     monkeypatch.setattr(configuration_ui, "select_research_depth", unexpected)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", unexpected)
+    monkeypatch.setattr(configuration_ui, "select_output_directory", unexpected)
     flags = [f"--{mode}"] if mode in ("headless", "events") else []
     result = runner.invoke(cli.app, ["--ticker", "NVDA", *flags])
     assert result.exit_code == 0, result.output
@@ -224,3 +325,4 @@ def test_unattended_analysis_never_opens_startup_menus(run_config: Path, monkeyp
     assert received[0][1] == date.today().isoformat()
     assert received[0][2].harness.model == "base-model"
     assert received[0][2].research_rounds == 1 and received[0][2].risk_rounds == 1
+    assert received[0][3] is None

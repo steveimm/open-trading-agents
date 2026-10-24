@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import shutil
 import sys
 from dataclasses import asdict
@@ -26,6 +27,7 @@ from open_trading_agents.config import (
     save_harness_selection,
     validate_date,
 )
+from open_trading_agents.reporting.usage import format_run_usage
 
 app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
 console = Console(stderr=True)
@@ -129,13 +131,18 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         if ui.error:
             raise RuntimeError(str(ui.error)) from ui.error
         if not isinstance(ui.result, RunResult):
-            console.print(f"Run interrupted. Resume with: open-trading-agents resume {workflow.directory}", markup=False)
+            command = shlex.join(["open-trading-agents", "resume", str(workflow.directory)])
+            console.print(f"Run interrupted. Resume with: {command}", markup=False)
             raise typer.Exit(130)
         result = ui.result
+
     if not events:
         typer.echo(f"{workflow.ticker}: {result.rating}\nReports: {result.directory / 'reports'}\nRun: {result.run_id}")
-        usage = json.loads((result.directory / "reports" / "usage.json").read_text())["totals"]
-        typer.echo(f"Reported tokens: {usage['input_tokens']:,} input / {usage['output_tokens']:,} output. Cache details: reports/usage.json")
+        usage_path = result.directory / "reports" / "usage.json"
+        usage = json.loads(usage_path.read_text(encoding="utf-8"))["totals"]
+        typer.echo(format_run_usage(usage))
+        typer.echo(f"Usage details: {usage_path}")
+
     return result
 
 
@@ -154,6 +161,7 @@ def run(
     risk_rounds: Annotated[int | None, typer.Option(min=1, max=20)] = None,
     portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     state_dir: Annotated[Path | None, typer.Option()] = None,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir", file_okay=False, help="Parent directory for this run's output folder.")] = None,
     headless: Annotated[bool, typer.Option(help="Run without the terminal UI.")] = False,
     events: Annotated[bool, typer.Option(help="Emit normalized JSONL events to stdout.")] = False,
 ) -> None:
@@ -173,6 +181,7 @@ def run(
         risk_rounds: Number of three-speaker risk rotations.
         portfolio: Optional holdings JSON file.
         state_dir: Application storage override.
+        output_dir: Parent directory for this run's reports, transcript, and session files.
         headless: Disable terminal rendering.
         events: Stream JSON events instead of concise progress.
     """
@@ -181,17 +190,20 @@ def run(
     if not list_presets():
         typer.echo("Run uv run open-trading-agents configure first to create a preset.")
         raise typer.Exit(1)
+
     interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
     if ticker is None:
         if not interactive:
             raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
         ticker = typer.prompt("Ticker")
+
     try:
         if interactive and analysis_date is None:
             from open_trading_agents.ui.configuration import select_analysis_date
 
             analysis_date = select_analysis_date()
         analysis_date = validate_date(analysis_date.strip() if analysis_date is not None else date.today().isoformat())
+
         settings = configured(config, harness, model, provider, effort)
         if interactive:
             from open_trading_agents.ui.configuration import select_agent_settings, select_research_depth
@@ -202,7 +214,15 @@ def run(
         changes = {"analysts": tuple(key.strip() for key in analysts.split(",")) if analysts else None,
                    "research_rounds": research_rounds, "risk_rounds": risk_rounds, "state_dir": state_dir}
         settings = Settings.model_validate({**settings.model_dump(), **{k: v for k, v in changes.items() if v is not None}})
-        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio))
+
+        if interactive and output_dir is None:
+            from open_trading_agents.ui.configuration import select_output_directory
+
+            output_dir = select_output_directory(settings.state_dir / "runs")
+        if output_dir is not None:
+            output_dir = output_dir.expanduser().resolve()
+
+        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio), output_dir=output_dir)
         run_workflow(workflow, headless, events)
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Analysis failed: {exc}", style="red", markup=False)

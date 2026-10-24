@@ -47,6 +47,8 @@ class Workflow:
         portfolio: Portfolio | None = None,
         run_id: str | None = None,
         session_factory: SessionFactory = open_session,
+        *,
+        output_dir: Path | None = None,
     ) -> None:
         """Prepare a resumable financial research run without contacting any provider.
 
@@ -57,6 +59,7 @@ class Workflow:
             portfolio: Optional known holdings and cash.
             run_id: Existing run identifier to resume, or None to create one.
             session_factory: Native session constructor, injectable for offline tests.
+            output_dir: Parent of the run folder, defaulting to the configured runs directory.
         """
         self.ticker = safe_ticker_component(normalize_symbol(ticker))
         self.trade_date = validate_date(trade_date)
@@ -65,7 +68,9 @@ class Workflow:
         self.asset_type = "crypto" if crypto_base(self.ticker) else "stock"
         self.run_id = run_id or f"{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
         safe_ticker_component(self.run_id, max_len=100)
-        self.directory = settings.state_dir / "runs" / self.run_id
+        output_root = (output_dir if output_dir is not None else settings.state_dir / "runs").expanduser().resolve()
+        self.directory = output_root / self.run_id
+
         self.store = RunStore(self.directory)
         self.sessions: dict[str, HarnessSession] = {}
         self.session_factory = session_factory
@@ -121,16 +126,26 @@ class Workflow:
         Returns:
             A workflow ready to continue incomplete steps.
         """
+        directory = directory.expanduser().resolve()
         if not (directory / "run.sqlite").is_file():
             raise ValueError(f"no saved run in {directory}")
+
         store = RunStore(directory)
         inputs = store.metadata("input")
         store.close()
         if not inputs:
             raise ValueError("saved run is missing its inputs")
+
         portfolio = Portfolio.model_validate(inputs["portfolio"]) if inputs["portfolio"] is not None else None
-        return cls(inputs["ticker"], inputs["trade_date"], Settings.model_validate(inputs["settings"]), portfolio,
-                   directory.name, session_factory)
+        return cls(
+            inputs["ticker"],
+            inputs["trade_date"],
+            Settings.model_validate(inputs["settings"]),
+            portfolio,
+            directory.name,
+            session_factory,
+            output_dir=directory.parent,
+        )
 
     async def emit(self, event: AgentEvent) -> None:
         """Persist events independently of the UI and remember native session IDs.

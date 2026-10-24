@@ -210,7 +210,14 @@ def test_unattended_runs_use_the_default_profile(command: str, tmp_path: Path, m
     set_default_preset(default_config_path(), "local")
     received: list[Settings] = []
 
-    def workflow(ticker: str, trade_date: str, settings: Settings, portfolio: Portfolio | None) -> Settings:
+    def workflow(
+        ticker: str,
+        trade_date: str,
+        settings: Settings,
+        portfolio: Portfolio | None,
+        *,
+        output_dir: Path | None = None,
+    ) -> Settings:
         """Capture a new analysis before any native sessions or data requests start."""
         received.append(settings)
         return settings

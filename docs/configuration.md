@@ -29,7 +29,7 @@ Native protocol support matters when connecting to a local model server. A harne
 | --- | --- |
 | `~/.open-trading-agents/config.toml` | Application defaults |
 | `~/.open-trading-agents/presets/NAME.toml` | Saved agent profiles |
-| `~/.open-trading-agents/runs/` | Analysis runs and reports |
+| `~/.open-trading-agents/runs/` | Default analysis run and report location |
 
 A profile contains only four selectors:
 
@@ -42,7 +42,7 @@ effort = "high"
 
 Profiles are selected independently for the working agents and decision managers. Run-specific choices apply only to that run. A named default profile supplies the initial selection for both groups and supersedes the main config's harness/tier settings. Explicit CLI harness, provider, model, effort, and round options take precedence over the wizard's choices.
 
-`--config PATH` selects another application configuration file. Profiles still live in the global presets directory. `state_dir` or `--state-dir` changes run storage, not the profile directory. Resume uses the choices saved with that run.
+`--config PATH` selects another application configuration file. Profiles still live in the global presets directory. `state_dir` or `--state-dir` changes application storage, including the default runs directory, shared cache, and memory. The run wizard's output-directory choice or `--output-dir PATH` overrides only that run's location. Resume uses the choices saved with that run.
 
 Selection flags can update the main config without opening the wizard:
 

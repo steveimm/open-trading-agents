@@ -19,14 +19,22 @@ uv run open-trading-agents doctor
 
 ## Saved runs and resume
 
-Runs are stored under `~/.open-trading-agents/runs/` by default. Each run has reports and a complete `transcript.jsonl`. Token details are in `reports/usage.json`.
+Runs are stored under `~/.open-trading-agents/runs/` by default. The run wizard asks for an output directory after the agent profiles. Press Enter to keep the current default, or enter another parent directory. An explicit flag skips this prompt:
+
+```sh
+uv run open-trading-agents --ticker NVDA --output-dir ./research
+```
+
+This creates `./research/RUN_ID/` with the reports, complete `transcript.jsonl`, saved progress, and native session files. Each run gets its own folder. Relative paths and `~` are supported. Output choices apply only to the current run and do not change saved configuration. Shared cache and feedback memory remain under the configured `state_dir`.
+
+When output is unspecified, the current `state_dir/runs/` location is retained, including in unattended runs. The final console summary shows reported input, output, and available cache counts, followed by the path to `reports/usage.json` for full details.
 
 ```sh
 uv run open-trading-agents resume ~/.open-trading-agents/runs/RUN_ID
 uv run open-trading-agents resume ~/.open-trading-agents/runs/RUN_ID --headless
 ```
 
-Resume retains completed steps, original inputs, and native sessions. Only one process can drive the same saved run at a time. Pressing `q` stops an active run but retains its progress and files.
+For a custom output directory, pass its run folder instead, for example `resume ./research/RUN_ID`. Resume retains completed steps, original inputs, native sessions, and the same output location. Only one process can drive the same saved run at a time. Pressing `q` stops an active run but retains its progress and files.
 
 ## Reading the interface
 

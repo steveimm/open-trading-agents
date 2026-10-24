@@ -14,7 +14,7 @@ uv run open-trading-agents
 
 During configuration, save a **named preset** containing your harness, provider, model, and reasoning effort. At least one saved preset is required to start an analysis. Run `configure` again to create, update, or delete profiles.
 
-The run wizard asks for the ticker, analysis date, research depth, working-agent profile, and decision-manager profile. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select, type to filter, and Enter to confirm. `(default)` marks the initial choice.
+The run wizard asks for the ticker, analysis date, research depth, working-agent profile, decision-manager profile, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select, type to filter, and Enter to confirm. `(default)` marks the initial choice.
 
 To supply the ticker and date directly:
 
@@ -39,10 +39,12 @@ Settings and profiles are stored under `~/.open-trading-agents/`. See [configura
 
 ## Reports and saved runs
 
-Reports are exported automatically under `~/.open-trading-agents/runs/RUN_ID/reports/`:
+Reports are exported automatically under `~/.open-trading-agents/runs/RUN_ID/reports/` by default:
 
 - `complete_report.md`
 - `complete_report.html`
+
+Press Enter at the output-directory prompt to keep this default, or choose another parent directory. You can also pass `--output-dir ./research`; reports then appear under `./research/RUN_ID/reports/`.
 
 Resume an interrupted run with:
 
