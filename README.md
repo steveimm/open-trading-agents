@@ -12,7 +12,9 @@ uv run open-trading-agents configure
 uv run open-trading-agents
 ```
 
-Configuration saves a **named preset** containing your harness, provider, model, and reasoning effort. At least one saved preset is required to start an analysis. Run `configure` again to create, update, or delete profiles.
+The configuration menu offers **Agents** and **Data sources**. Agents saves named presets containing the harness, provider, model, and reasoning effort. At least one preset is required to start an analysis. Data sources configures FRED and Alpha Vantage API keys and your SEC contact identity. You can open either editor directly with `configure agents` or `configure data`.
+
+Run `uv run open-trading-agents doctor` to check local harness, profile, and data-source setup.
 
 The run wizard asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(default)` identifies your saved default preset.
 

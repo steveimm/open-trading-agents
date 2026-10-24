@@ -45,6 +45,7 @@ def capture_runs(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> list[tupl
         portfolio: Portfolio | None,
         *,
         output_dir: Path | None = None,
+        config_path: Path | None = None,
     ) -> Settings:
         """Record the finalized run choices without starting any external work."""
         calls.append("workflow")

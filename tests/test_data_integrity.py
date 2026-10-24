@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -97,15 +98,122 @@ def test_fred_pins_metadata_and_observations_to_known_vintage(monkeypatch: pytes
         assert call.args[1]["realtime_start"] == call.args[1]["realtime_end"] == "2024-03-15"
 
 
-def test_alpha_request_contains_no_tracking_source_and_scrubs_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("field,environment,reader", [
+    ("fred_api_key", "FRED_API_KEY", fred.get_api_key),
+    ("alpha_vantage_api_key", "ALPHA_VANTAGE_API_KEY", alpha.get_api_key),
+    ("sec_edgar_user_agent", "SEC_EDGAR_USER_AGENT", sec_edgar._user_agent),
+])
+def test_vendor_credentials_come_from_config_instead_of_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    environment: str,
+    reader: Callable[[], str],
+) -> None:
+    """Use the run's selected configuration file even when an obsolete environment value exists."""
+    path = tmp_path / "config.toml"
+    path.write_text(f'[data]\n{field} = "configured-fixture-value"\n')
+    monkeypatch.setenv(environment, "stale-environment-value")
+
+    with run_config({"credentials_file": str(path)}):
+        assert reader() == "configured-fixture-value"
+
+
+@pytest.mark.parametrize("field,environment,reader", [
+    ("fred_api_key", "FRED_API_KEY", fred.get_api_key),
+    ("alpha_vantage_api_key", "ALPHA_VANTAGE_API_KEY", alpha.get_api_key),
+])
+def test_missing_vendor_key_explains_configuration_without_environment_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    environment: str,
+    reader: Callable[[], str],
+) -> None:
+    """Direct users to data configuration when a key is absent instead of silently reading the environment."""
+    path = tmp_path / "config.toml"
+    path.write_text("[data]\n")
+    monkeypatch.setenv(environment, "ignored-environment-key")
+
+    with run_config({"credentials_file": str(path)}), pytest.raises(ValueError) as error:
+        reader()
+
+    assert "configure data" in str(error.value)
+    assert f"data.{field}" in str(error.value)
+    assert "ignored-environment-key" not in str(error.value)
+    assert environment not in str(error.value)
+
+
+def test_missing_sec_identity_retains_package_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep SEC's existing fallback identity when no configuration value is supplied."""
+    path = tmp_path / "config.toml"
+    path.write_text("[data]\n")
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "Ignored environment contact@example.test")
+
+    with run_config({"credentials_file": str(path)}):
+        assert sec_edgar._user_agent() == f"OpenTradingAgents/{sec_edgar.__version__} (contact@example.com)"
+
+
+def test_sec_request_error_discards_private_identity_and_exception_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop an InvalidHeader exception that contains the configured SEC contact identity."""
+    identity = "Fixture Research\nprivate-contact@example.invalid"
+    path = tmp_path / "config.toml"
+    path.write_text(f"[data]\nsec_edgar_user_agent = {json.dumps(identity)}\n")
+    failure = requests.exceptions.InvalidHeader(f"Invalid header value: {identity!r}")
+    request = Mock(side_effect=failure)
+    monkeypatch.setattr(sec_edgar.requests, "get", request)
+
+    with run_config({"credentials_file": str(path)}), pytest.raises(VendorUnavailableError) as error:
+        sec_edgar._fetch_json("https://data.sec.gov/fixture.json")
+
+    assert request.call_args.kwargs["headers"] == {"User-Agent": identity}
+    assert str(error.value) == "SEC EDGAR request failed (InvalidHeader)"
+    assert "private-contact" not in str(error.value) + repr(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize("json_body", [False, True])
+def test_fred_bad_request_scrubs_configured_key_from_provider_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    json_body: bool,
+) -> None:
+    """Redact a FRED key echoed by either a JSON error body or the raw 400 response."""
+    secret = "fred-fixture-secret"
+    path = tmp_path / "config.toml"
+    path.write_text(f'[data]\nfred_api_key = "{secret}"\n')
+    response = Mock(status_code=400, text=f"Invalid request containing {secret}")
+    if json_body:
+        response.json.return_value = {"error_message": f"Invalid api_key '{secret}'"}
+    else:
+        response.json.side_effect = ValueError(f"Unreadable response: {secret}")
+    request = Mock(return_value=response)
+    monkeypatch.setattr(fred, "get_scrubbed", request)
+
+    with run_config({"credentials_file": str(path)}), pytest.raises(ValueError) as error:
+        fred._request("series", {"series_id": "CPIAUCSL"})
+
+    assert request.call_args.kwargs["params"]["api_key"] == secret
+    assert request.call_args.kwargs["secret"] == secret
+    assert "FRED request failed:" in str(error.value) and "***" in str(error.value)
+    assert secret not in str(error.value)
+    assert secret not in repr(error.value.__context__)
+
+
+def test_alpha_request_contains_no_tracking_source_and_scrubs_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Market requests must not add attribution tracking or expose the configured API key."""
-    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "fixture-secret")
+    path = tmp_path / "config.toml"
+    path.write_text('[data]\nalpha_vantage_api_key = "fixture-secret"\n')
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "ignored-environment-key")
     response = Mock(text=json.dumps({"Note": "fixture-secret rate limit reached"}))
     request = Mock(return_value=response)
     monkeypatch.setattr(alpha, "get_scrubbed", request)
-    with pytest.raises(alpha.AlphaVantageRateLimitError) as error:
+    with run_config({"credentials_file": str(path)}), pytest.raises(alpha.AlphaVantageRateLimitError) as error:
         alpha._make_api_request("TIME_SERIES_DAILY", {"symbol": "NVDA"})
     assert "source" not in request.call_args.kwargs["params"]
+    assert request.call_args.kwargs["params"]["apikey"] == "fixture-secret"
+    assert request.call_args.kwargs["secret"] == "fixture-secret"
     assert "fixture-secret" not in str(error.value)
 
 

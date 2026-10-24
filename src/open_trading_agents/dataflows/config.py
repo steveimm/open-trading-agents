@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import Context, ContextVar, copy_context
@@ -9,6 +10,54 @@ from typing import Any
 
 _config: dict[str, Any] | None = None
 _run_config: ContextVar[dict[str, Any] | None] = ContextVar("open_trading_agents_data_config", default=None)
+DATA_CREDENTIAL_KEYS = ("fred_api_key", "alpha_vantage_api_key", "sec_edgar_user_agent")
+
+
+def read_data_credentials(path: Path | None = None) -> dict[str, str]:
+    """Read data-source credentials directly without retaining them in runtime settings.
+
+    Args:
+        path: Selected configuration file, or the shared application configuration.
+
+    Returns:
+        All supported fields, with missing values represented by empty strings.
+
+    Raises:
+        ValueError: The file is invalid TOML or credential values are not strings.
+    """
+    source = (path or Path.home() / ".open-trading-agents" / "config.toml").expanduser()
+    values: dict[str, Any] = {}
+    if source.exists():
+        try:
+            with source.open("rb") as handle:
+                values = tomllib.load(handle)
+        except tomllib.TOMLDecodeError:
+            raise ValueError("Data configuration is not valid TOML.") from None
+
+    data = values.get("data", {})
+    if not isinstance(data, dict) or any(not isinstance(data.get(key, ""), str) for key in DATA_CREDENTIAL_KEYS):
+        raise ValueError("Data credential fields must be strings in the [data] table.")
+
+    return {key: data.get(key, "").strip() for key in DATA_CREDENTIAL_KEYS}
+
+
+def get_data_credential(name: str) -> str:
+    """Read the current configured credential at the time a data request is made.
+
+    Args:
+        name: One of the supported data credential fields.
+
+    Returns:
+        The selected file's current value, or an empty string when unconfigured.
+
+    Raises:
+        ValueError: The credential name or file contents are invalid.
+    """
+    if name not in DATA_CREDENTIAL_KEYS:
+        raise ValueError("Unknown data credential name.")
+    source = get_config().get("credentials_file")
+
+    return read_data_credentials(Path(source) if source else None)[name]
 
 
 def default_data_config() -> dict[str, Any]:
@@ -53,6 +102,8 @@ def _merge(base: dict[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
         The updated destination.
     """
     for key, value in deepcopy(dict(config)).items():
+        if key in DATA_CREDENTIAL_KEYS:
+            continue
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             base[key].update(value)
         else:

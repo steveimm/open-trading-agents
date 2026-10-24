@@ -6,6 +6,7 @@ from pathlib import Path
 
 import questionary
 import typer
+from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
 
 from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.config import (
@@ -17,10 +18,12 @@ from open_trading_agents.config import (
     load_settings,
     preset_path,
     save_configuration,
+    save_data_configuration,
     save_preset,
     set_default_preset,
     validate_date,
 )
+from open_trading_agents.dataflows.config import read_data_credentials
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
 
 _MENU_STYLE = questionary.Style([
@@ -71,6 +74,141 @@ def _confirm(label: str, default: bool = False) -> bool:
         Whether the user selected Yes.
     """
     return _choose(label, ["Yes", "No"], default=0 if default else 1) == 0
+
+
+def select_configuration_section() -> str:
+    """Choose whether to configure agent profiles or data-source access.
+
+    Returns:
+        The selected configuration section, agents or data.
+    """
+    return ("agents", "data")[_choose("Configuration", ["Agents", "Data sources"])]
+
+
+def _key_preview(value: str) -> str:
+    """Show only the final five characters of a sufficiently long API key.
+
+    Args:
+        value: Current or saved credential value.
+
+    Returns:
+        A fully masked short value or four stars followed by the final five characters.
+    """
+    return "*" * len(value) if len(value) <= 5 else f"****{value[-5:]}"
+
+
+class _ApiKeyMask(Processor):
+    def apply_transformation(self, ti: TransformationInput) -> Transformation:
+        """Render a masked key while preserving cursor positions for the editable buffer.
+
+        Args:
+            ti: Current input line and its unmodified document.
+
+        Returns:
+            Masked fragments with source/display mappings for the compressed prefix.
+        """
+        value = ti.document.lines[ti.lineno]
+        fragments = [("class:answer", _key_preview(value))]
+        if len(value) <= 5:
+            return Transformation(fragments)
+
+        hidden = len(value) - 5
+
+        def source_to_display(position: int) -> int:
+            """Map the hidden prefix into four cells and retain exact tail positions.
+
+            Args:
+                position: Character offset in the original input buffer.
+
+            Returns:
+                The corresponding offset in the masked preview.
+            """
+            position = min(max(position, 0), len(value))
+            return position * 4 // hidden if position < hidden else 4 + position - hidden
+
+        def display_to_source(position: int) -> int:
+            """Map pointer positions back into the original editable key.
+
+            Args:
+                position: Character offset in the masked preview.
+
+            Returns:
+                The corresponding offset in the original input buffer.
+            """
+            position = min(max(position, 0), 9)
+            return position * hidden // 4 if position < 4 else hidden + position - 4
+
+        return Transformation(fragments, source_to_display=source_to_display, display_to_source=display_to_source)
+
+
+def _api_key_prompt(label: str) -> str:
+    """Read a new API key with a live masked-tail preview and no completion echo.
+
+    Args:
+        label: Data provider's credential prompt.
+
+    Returns:
+        The original entered value, with empty input leaving the stored key unchanged.
+
+    Raises:
+        typer.Abort: The user cancels or terminal input closes.
+    """
+    try:
+        value = questionary.text(label, default="", style=_MENU_STYLE, is_password=True,
+                                 input_processors=[_ApiKeyMask()], erase_when_done=True).unsafe_ask()
+    except (KeyboardInterrupt, EOFError) as exc:
+        raise typer.Abort() from exc
+    if value is None:
+        raise typer.Abort()
+    return value
+
+
+def configure_data_interactively(path: Path) -> None:
+    """Edit optional data-source credentials and save all changes together.
+
+    Args:
+        path: Application configuration file to create or update.
+
+    Raises:
+        typer.Abort: The user cancels before saving.
+    """
+    fields = (
+        ("fred_api_key", "FRED (macro data)", "FRED API key", True,
+         "FRED provides macroeconomic series such as interest rates and inflation. Request an API key at https://fred.stlouisfed.org/docs/api/api_key.html."),
+        ("alpha_vantage_api_key", "Alpha Vantage (alternative market/news data)", "Alpha Vantage API key", True,
+         "Alpha Vantage is an alternative source for market and news data. Request an API key at https://www.alphavantage.co/support/#api-key."),
+        ("sec_edgar_user_agent", "SEC EDGAR (contact identity)", "SEC EDGAR contact identity", False,
+         "SEC EDGAR provides company filings. Enter your name or organization and contact email, for example: Research Team research@example.com."),
+    )
+    values = read_data_credentials(path).copy()
+    cursor = 0
+    typer.echo("Leave a value blank to keep it. Ctrl+C cancels without saving.")
+
+    while True:
+        labels = []
+        for key, label, _, secret, _ in fields:
+            value = values.get(key, "")
+            status = _key_preview(value) if secret and value else "Set" if value else "Not set"
+            labels.append(f"{label} · {status}")
+        cursor = _choose("Data sources", [*labels, "Save"], cursor)
+        if cursor == len(fields):
+            target = save_data_configuration(path, values)
+            typer.echo(f"Saved data sources: {target}")
+            return
+
+        key, label, prompt, secret, explanation = fields[cursor]
+        typer.echo(explanation)
+        if values.get(key):
+            action = _choose(label, ["Update", "Remove", "Back"])
+            if action == 1:
+                values[key] = ""
+                continue
+            if action == 2:
+                continue
+
+        value = (_api_key_prompt(prompt) if secret else typer.prompt(prompt, default="", show_default=False)).strip()
+        if value:
+            values[key] = value
 
 
 def _describe(settings: HarnessSettings) -> str:

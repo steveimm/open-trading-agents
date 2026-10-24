@@ -6,16 +6,19 @@ import re
 import stat
 import tempfile
 import tomllib
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, SerializationInfo, field_serializer, field_validator, model_validator
+from tomlkit.exceptions import ParseError
 from tomlkit.toml_document import TOMLDocument
 
 from open_trading_agents.analysis.models import HarnessConfig
 from open_trading_agents.analysis.prompts import ROLES
+from open_trading_agents.dataflows.config import DATA_CREDENTIAL_KEYS
 from open_trading_agents.dataflows.symbols import normalize_symbol
 
 _PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -156,7 +159,7 @@ class Portfolio(BaseModel):
 
 
 class Settings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     # Runtime storage also records isolated backtest paths for resume.
     state_dir: Path = Field(default_factory=application_dir)
     default_preset: str | None = None
@@ -177,6 +180,39 @@ class Settings(BaseModel):
     allow_execution: bool = True
     web_research: bool = True
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def omit_data_credentials(cls, value: Any) -> Any:
+        """Keep file-based credentials and their locator outside persisted analysis settings.
+
+        Args:
+            value: Raw data configuration from TOML or a saved run.
+
+        Returns:
+            Data settings without authentication values or their source-file locator.
+
+        Raises:
+            ValueError: A supplied credential field is not a string.
+        """
+        if not isinstance(value, Mapping):
+            return value
+        if any(key in value and not isinstance(value[key], str) for key in DATA_CREDENTIAL_KEYS):
+            raise ValueError("Data credential fields must be strings.")
+
+        return {key: item for key, item in value.items() if key not in (*DATA_CREDENTIAL_KEYS, "credentials_file")}
+
+    @field_serializer("data")
+    def serialize_data_settings(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Exclude credentials even after a caller updates mutable data settings.
+
+        Args:
+            value: Current data settings.
+
+        Returns:
+            Persistable data preferences without credentials or their file locator.
+        """
+        return self.omit_data_credentials(value)
 
     @field_validator("default_preset")
     @classmethod
@@ -367,8 +403,11 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
     source = (path or default_config_path()).expanduser()
     values: dict[str, Any] = {}
     if path is not None or source.exists():
-        with source.open("rb") as handle:
-            values = tomllib.load(handle)
+        try:
+            with source.open("rb") as handle:
+                values = tomllib.load(handle)
+        except tomllib.TOMLDecodeError:
+            raise ValueError("Configuration is not valid TOML.") from None
 
     settings = _settings_from_config(values)
     if use_default_preset and settings.default_preset is not None:
@@ -400,13 +439,16 @@ def _configuration_document(path: Path) -> TOMLDocument:
     Returns:
         A validated TOML document.
     """
-    document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    try:
+        document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    except ParseError:
+        raise ValueError("Configuration is not valid TOML.") from None
     _settings_from_config(document.unwrap())
     return document
 
 
 def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) -> None:
-    """Persist a complete TOML document atomically, preserving existing permissions.
+    """Persist TOML atomically and restrict credential-bearing files to their owner.
 
     Args:
         path: Destination configuration or preset file.
@@ -421,7 +463,10 @@ def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) 
             handle.write(tomlkit.dumps(document))
             handle.flush()
             os.fsync(handle.fileno())
-        if path.exists():
+        data = document.get("data", {})
+        if any(data.get(key) for key in DATA_CREDENTIAL_KEYS):
+            temporary.chmod(0o600)
+        elif path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         if overwrite:
             os.replace(temporary, path)
@@ -430,6 +475,38 @@ def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) 
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def save_data_configuration(path: Path, values: Mapping[str, str]) -> Path:
+    """Update data credentials without replacing unrelated configuration or comments.
+
+    Args:
+        path: Destination application configuration.
+        values: Supported credential fields, with blank values requesting removal.
+
+    Returns:
+        The absolute path of the atomically saved configuration.
+
+    Raises:
+        ValueError: A supplied field is unknown or its value is not a string.
+    """
+    if values.keys() - set(DATA_CREDENTIAL_KEYS):
+        raise ValueError("Unknown data credential fields.")
+    if any(not isinstance(value, str) for value in values.values()):
+        raise ValueError("Data credential fields must be strings.")
+
+    path = path.expanduser().resolve()
+    document = _configuration_document(path)
+    if "data" not in document:
+        document["data"] = tomlkit.table()
+    for key, value in values.items():
+        if cleaned := value.strip():
+            document["data"][key] = cleaned
+        else:
+            document["data"].pop(key, None)
+    _write_document(path, document)
+
+    return path
 
 
 def _set_harness_tables(

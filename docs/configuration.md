@@ -5,10 +5,12 @@
 Set up model access through your chosen harness first. Then run:
 
 ```sh
-uv run open-trading-agents configure
+uv run open-trading-agents configure agents
 ```
 
 Choose **Create or update profile**, select the harness, provider, model, and reasoning effort, then enter a preset name. Interactive configuration always saves a named preset. The final question asks whether to use it by default. The first setup goes directly to profile creation.
+
+Running `configure` without a subcommand offers **Agents** and **Data sources**. Use `configure data` to enter data-source API keys and SEC contact information; these settings are stored in the same `config.toml`. See [data-source setup](data-sources.md#source-configuration).
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
@@ -49,7 +51,7 @@ Profiles are selected independently for the working agents and decision managers
 Selection flags can update the main config without opening the wizard:
 
 ```sh
-uv run open-trading-agents configure --harness pi --provider local --model my-model --effort high
+uv run open-trading-agents configure agents --harness pi --provider local --model my-model --effort high
 ```
 
 These flags do not create a named preset. Use the interactive wizard to save one before the first analysis. Empty `--model ""`, `--provider ""`, or `--effort ""` values reset the corresponding selector to its harness default.

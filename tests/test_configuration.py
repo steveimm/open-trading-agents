@@ -17,7 +17,7 @@ def test_configure_creates_user_settings_without_model_requests(tmp_path: Path, 
     """Persist a reusable selection through the same command advertised to users."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    result = runner.invoke(cli.app, ["configure", "--harness", "pi", "--provider", "local", "--model", "research-model"])
+    result = runner.invoke(cli.app, ["configure", "agents", "--harness", "pi", "--provider", "local", "--model", "research-model"])
     assert result.exit_code == 0, result.output
     settings = load_settings(tmp_path / ".open-trading-agents" / "config.toml")
     assert settings.harness.kind == "pi"
@@ -104,7 +104,7 @@ def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Pa
     monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(()))
     monkeypatch.setattr(configuration_ui, "effort_choices", lambda settings, catalog: ())
     monkeypatch.setattr(configuration_ui, "_choose", lambda label, choices, default=0: default)
-    result = runner.invoke(cli.app, ["configure", "--config", str(path)], input="retained-profile\n")
+    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path)], input="retained-profile\n")
     assert result.exit_code == 0, result.output
     settings = load_settings(path)
     assert settings.harness.kind == "pi"
@@ -118,7 +118,7 @@ def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Pa
 def test_noninteractive_configuration_requires_selection_flags(tmp_path: Path) -> None:
     """Unattended invocations provide actionable guidance instead of waiting for input."""
     path = tmp_path / "tradingagents.toml"
-    result = runner.invoke(cli.app, ["configure", "--config", str(path)])
+    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path)])
     assert result.exit_code == 2
     assert "provide --harness" in result.output and "--effort" in result.output
     assert not path.exists()
@@ -129,7 +129,7 @@ def test_invalid_configuration_is_not_overwritten(tmp_path: Path) -> None:
     path = tmp_path / "tradingagents.toml"
     original = 'risk_rounds = 0\n[harness]\nkind="pi"\nmodel="old"\n'
     path.write_text(original)
-    result = runner.invoke(cli.app, ["configure", "--config", str(path), "--model", "new"])
+    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path), "--model", "new"])
     assert result.exit_code == 1
     assert "risk_rounds" in result.output
     assert path.read_text() == original
@@ -151,7 +151,7 @@ def test_failed_atomic_replace_retains_original_configuration(tmp_path: Path, mo
 def test_claude_provider_configuration_is_left_to_native_harness(tmp_path: Path) -> None:
     """Reject an ineffective provider flag instead of saving it as an applied selection."""
     path = tmp_path / "tradingagents.toml"
-    result = runner.invoke(cli.app, ["configure", "--config", str(path), "--harness", "claude", "--provider", "local"])
+    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path), "--harness", "claude", "--provider", "local"])
     assert result.exit_code == 1
     assert "Claude Code selects its provider" in result.output
     assert not path.exists()

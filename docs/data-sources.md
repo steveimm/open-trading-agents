@@ -10,6 +10,37 @@ Agents use native harness tools to write and run scripts for calculations. The p
 
 ## Source configuration
 
+Open the data-source editor with:
+
+```sh
+uv run open-trading-agents configure data
+```
+
+Select FRED, Alpha Vantage, or SEC EDGAR to edit its setting, then choose **Save** at the bottom. API keys appear as `****abcde`, showing only their last five characters. Short keys remain fully masked. Blank input keeps the existing value. **Remove** clears it. Ctrl+C discards unsaved changes.
+
+These settings live in `~/.open-trading-agents/config.toml`:
+
+```toml
+[data]
+fred_api_key = "your-fred-key"
+alpha_vantage_api_key = "your-alpha-vantage-key"
+sec_edgar_user_agent = "Your Name you@example.com"
+```
+
+| Field | Purpose |
+| --- | --- |
+| `fred_api_key` | Required for FRED macroeconomic queries |
+| `alpha_vantage_api_key` | Required only for tools configured to use Alpha Vantage |
+| `sec_edgar_user_agent` | Your name and contact email for SEC requests, not an API key |
+
+Request keys through [FRED](https://fred.stlouisfed.org/docs/api/api_key.html) or [Alpha Vantage](https://www.alphavantage.co/support/#api-key).
+
+Unset fields can be omitted. `configure data --config PATH` edits another configuration file. Runs started with `--config PATH` use that file's credentials, and resumed runs retain the same file location. Key changes are read on subsequent data requests.
+
+The application no longer reads `.env` or the former data-source environment variables. Model authentication remains configured in the native harness. API keys stay in the selected configuration file and are excluded from run settings, tool-context files, transcripts, and reports.
+
+Run `uv run open-trading-agents doctor` to see which data credentials are configured or missing. It checks local setup without displaying keys or making provider requests.
+
 Set category defaults or individual tool overrides in `config.toml`:
 
 ```toml
@@ -25,16 +56,6 @@ get_news = "alpha_vantage"
 ```
 
 Comma-separated vendors are tried in the configured order. A tool-specific override takes precedence over its category. Fallback stays within the explicitly configured supported vendors.
-
-Optional source settings:
-
-| Variable | Use |
-| --- | --- |
-| `FRED_API_KEY` | FRED macroeconomic data |
-| `ALPHA_VANTAGE_API_KEY` | Alpha Vantage tools |
-| `SEC_EDGAR_USER_AGENT` | Identify requests to SEC EDGAR |
-
-A `.env` in the current working directory is loaded without overriding exported environment variables. Model-provider authentication is configured in the harness separately.
 
 ## Coverage limits
 

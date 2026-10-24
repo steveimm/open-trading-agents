@@ -11,11 +11,13 @@ uv run open-trading-agents --ticker NVDA --date 2026-01-02 --events > run-events
 
 Without `--date`, an unattended analysis uses the machine's local date. Interactive runs ask for a date unless the flag is supplied.
 
-Use `--help` to see all options. To check which harness executables are on PATH:
+Use `--help` to see all options. To check installed harnesses, saved profiles, and data-source setup:
 
 ```sh
 uv run open-trading-agents doctor
 ```
+
+`doctor` reports whether the config is readable, the default profile is usable, and API keys or SEC contact identity are configured. It identifies missing settings without printing their values. These are local checks. It does not contact providers to validate API keys. Use `doctor --config PATH` to inspect another configuration file.
 
 ## Saved runs and resume
 

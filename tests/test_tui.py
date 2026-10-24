@@ -405,8 +405,10 @@ async def test_clocks_tick_without_reindexing_chats(monkeypatch: pytest.MonkeyPa
         await pilot.pause(0.15)
         offsets = app.agent_views["Market Analyst"]._offsets
         before = rendered
+        status = app.query_one("#run-status", Static)
+        previous_clock = str(status.render()).rsplit("Total ", 1)[1]
         await pilot.pause(1.05)
-        assert "00:01" in str(app.query_one("#run-status", Static).render())
+        assert str(status.render()).rsplit("Total ", 1)[1] != previous_clock
         assert app.agent_views["Market Analyst"]._offsets is offsets
         assert rendered - before < 100
         await pilot.press("tab", "shift+tab")

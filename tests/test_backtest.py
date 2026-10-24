@@ -10,7 +10,8 @@ import pytest
 
 from open_trading_agents.analysis.backtest import iter_grid, run_backtest, summarize
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
-from open_trading_agents.config import HarnessSettings, Portfolio, Settings, load_settings, save_preset
+from open_trading_agents.config import HarnessSettings, Portfolio, Settings, load_settings, save_data_configuration, save_preset
+from open_trading_agents.dataflows.config import get_data_credential
 from open_trading_agents.dataflows.files import locked
 from open_trading_agents.persistence import memory
 from open_trading_agents.persistence.memory import MemoryLog
@@ -200,6 +201,62 @@ async def test_named_default_can_resume_legacy_sweep_and_incomplete_cell(
         finally:
             store.close()
     assert current.agent_presets["market"] == "daily"
+
+
+async def test_custom_credential_source_reaches_cells_and_settlement_after_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Forward the selected configuration without tying sweep identity to credential values.
+
+    Args:
+        monkeypatch: Scoped home-directory and market-data replacements.
+        tmp_path: Isolated configuration and backtest storage.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    source = tmp_path / "selected.toml"
+    save_data_configuration(source, {"fred_api_key": "fake-first-key"})
+    observed: list[str] = []
+
+    def returns(ticker: str, trade_date: str, holding_days: int, benchmark: str) -> tuple[None, None, None, None]:
+        """Record the credential source used by settlement without making a market request.
+
+        Args:
+            ticker: Instrument under review.
+            trade_date: Original information cutoff.
+            holding_days: Requested holding period.
+            benchmark: Comparison instrument.
+
+        Returns:
+            An unresolved synthetic outcome.
+        """
+        observed.append(get_data_credential("fred_api_key"))
+        return None, None, None, None
+
+    monkeypatch.setattr(memory, "fetch_returns", returns)
+    settings = load_settings(source).model_copy(update={"state_dir": tmp_path / "state", "analysts": ("market",)})
+    calls: list[tuple[str, str, str]] = []
+    first = await run_backtest(["NVDA"], ["2024-03-15"], settings, run_id="credentials",
+                               session_factory=_factory(calls), config_path=source)
+    manifest = (first.directory / "manifest.json").read_bytes()
+    assert observed == ["fake-first-key"]
+    for directory in (first.directory / "runs").iterdir():
+        store = RunStore(directory)
+        try:
+            assert store.metadata("config_path") == str(source.resolve())
+            assert "fred_api_key" not in store.metadata("input")["settings"]["data"]
+        finally:
+            store.close()
+        context = json.loads((directory / "tool-context.json").read_text())
+        assert context["config"]["credentials_file"] == str(source.resolve())
+
+    save_data_configuration(source, {"fred_api_key": "fake-second-key"})
+    rotated = load_settings(source).model_copy(update={"state_dir": tmp_path / "state", "analysts": ("market",)})
+    second = await run_backtest(["NVDA"], ["2024-03-15"], rotated, run_id="credentials",
+                                session_factory=_factory(calls), config_path=source)
+    assert second.skipped == 1 and second.failures == []
+    assert observed == ["fake-first-key", "fake-second-key"]
+    assert (second.directory / "manifest.json").read_bytes() == manifest
 
 
 @pytest.mark.asyncio

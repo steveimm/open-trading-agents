@@ -221,6 +221,7 @@ async def run_backtest(
     emit: EventSink | None = None,
     *,
     session_factory: SessionFactory = open_session,
+    config_path: Path | None = None,
 ) -> BacktestResult:
     """Evaluate and resume sequential ticker/date cells using the normal native-harness workflow.
 
@@ -232,6 +233,7 @@ async def run_backtest(
         run_id: Existing sweep identifier to resume, or None to create a new sweep.
         emit: Optional observer receiving workflow and sweep progress events.
         session_factory: Native session factory, injectable for deterministic offline tests.
+        config_path: Configuration source used by cell and settlement data requests.
 
     Returns:
         Sweep identity, newly completed and skipped cells, failures, and outcome scores.
@@ -275,13 +277,13 @@ async def run_backtest(
                     )
                 )
             try:
-                workflow = Workflow(ticker, analysis_date, isolated, portfolio, cell_id, session_factory)
+                workflow = Workflow(ticker, analysis_date, isolated, portfolio, cell_id, session_factory, config_path=config_path)
                 await workflow.run(emit)
                 result.cells_run += 1
             except Exception as exc:
                 result.failures.append((ticker, analysis_date, f"{type(exc).__name__}: {exc}"))
         try:
-            settlement = Workflow(tickers[0], max(dates), isolated, portfolio, "settlement", session_factory)
+            settlement = Workflow(tickers[0], max(dates), isolated, portfolio, "settlement", session_factory, config_path=config_path)
             notes = await settlement.settle_pending(emit)
         except Exception as exc:
             notes = [f"Final settlement failed ({type(exc).__name__}); unresolved outcomes remain pending."]

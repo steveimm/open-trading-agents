@@ -15,8 +15,8 @@ from open_trading_agents import __version__
 from open_trading_agents.analysis.decisions import SCHEMAS, decision_error, decision_format, parse_decision, render_decision
 from open_trading_agents.analysis.models import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.analysis.prompts import ROLES, system_prompt
-from open_trading_agents.config import Portfolio, Settings, validate_date
-from open_trading_agents.dataflows.config import build_data_config
+from open_trading_agents.config import Portfolio, Settings, default_config_path, validate_date
+from open_trading_agents.dataflows.config import DATA_CREDENTIAL_KEYS, build_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
 from open_trading_agents.dataflows.tools import FinancialTools, ToolContext
@@ -48,6 +48,9 @@ def _saved_settings(values: dict[str, Any]) -> dict[str, Any]:
     restored = {key: value for key, value in values.items() if key != "social_screening"}
     for field in ("agents", "agent_presets"):
         restored[field] = {key: value for key, value in values.get(field, {}).items() if key != "screening"}
+    if "data" in restored:
+        restored["data"] = {key: value for key, value in restored["data"].items()
+                            if key not in (*DATA_CREDENTIAL_KEYS, "credentials_file")}
 
     return restored
 
@@ -63,6 +66,7 @@ class Workflow:
         session_factory: SessionFactory = open_session,
         *,
         output_dir: Path | None = None,
+        config_path: Path | None = None,
     ) -> None:
         """Prepare a resumable financial research run without contacting any provider.
 
@@ -74,6 +78,7 @@ class Workflow:
             run_id: Existing run identifier to resume, or None to create one.
             session_factory: Native session constructor, injectable for offline tests.
             output_dir: Parent of the run folder, defaulting to the configured runs directory.
+            config_path: Configuration source used to retrieve data credentials at request time.
         """
         self.ticker = safe_ticker_component(normalize_symbol(ticker))
         self.trade_date = validate_date(trade_date)
@@ -89,6 +94,8 @@ class Workflow:
         self.directory = output_root / self.run_id
 
         self.store = RunStore(self.directory)
+        stored_config_path = self.store.metadata("config_path")
+        self.config_path = Path(stored_config_path or config_path or default_config_path()).expanduser().resolve()
         self.sessions: dict[str, HarnessSession] = {}
         self.session_factory = session_factory
         self.outputs: dict[str, str] = {}
@@ -97,7 +104,8 @@ class Workflow:
         self.sink: EventSink | None = None
         self.active_steps: dict[str, str] = {}
         self.conversation_turns: dict[str, str] = {}
-        self.data_config = build_data_config({"data_cache_dir": str(settings.state_dir / "cache"), **settings.data})
+        self.data_config = build_data_config({"data_cache_dir": str(settings.state_dir / "cache"), **settings.data,
+                                              "credentials_file": str(self.config_path)})
         self.tool_context = ToolContext(self.ticker, self.trade_date, self.asset_type, self.data_config)
         self.context_file = self.directory / "tool-context.json"
         identity = {"ticker": self.ticker, "trade_date": self.trade_date, "settings": settings.model_dump(mode="json"),
@@ -110,11 +118,17 @@ class Workflow:
         if previous and previous != identity:
             self.store.close()
             raise ValueError("run inputs differ from the saved run; resume its original configuration or start a new run")
-        if not self.context_file.exists():
-            context_json = json.dumps({"ticker": self.ticker, "trade_date": self.trade_date,
-                                       "asset_type": self.asset_type, "config": self.data_config})
+        context = {"ticker": self.ticker, "trade_date": self.trade_date, "asset_type": self.asset_type, "config": self.data_config}
+        saved_context = json.loads(self.context_file.read_text()) if self.context_file.exists() else None
+        if saved_context is not None:
+            context = {**saved_context, "config": {key: value for key, value in saved_context["config"].items()
+                                                  if key not in DATA_CREDENTIAL_KEYS}}
+            context["config"]["credentials_file"] = str(self.config_path)
+        if context != saved_context:
+            context_json = json.dumps(context)
             replace_file(self.context_file, lambda temporary: Path(temporary).write_text(context_json))
         self.store.set_metadata("input", identity)
+        self.store.set_metadata("config_path", str(self.config_path))
         if not self.store.metadata("version"):
             self.store.set_metadata("version", __version__)
         self.runtime_agents: list[dict[str, str | None]] = self.store.metadata("runtime_agents", [])
@@ -152,6 +166,7 @@ class Workflow:
 
         store = RunStore(directory)
         inputs = store.metadata("input")
+        config_path = store.metadata("config_path")
         store.close()
         if not inputs:
             raise ValueError("saved run is missing its inputs")
@@ -165,6 +180,7 @@ class Workflow:
             directory.name,
             session_factory,
             output_dir=directory.parent,
+            config_path=Path(config_path) if config_path else None,
         )
 
     async def emit(self, event: AgentEvent) -> None:

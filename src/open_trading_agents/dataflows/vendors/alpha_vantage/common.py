@@ -1,12 +1,12 @@
 # Adapted from TauricResearch/TradingAgents (Apache-2.0).
 # Imports, typing, configuration and tool integration modified for Open Trading Agents.
 import json
-import os
 from datetime import datetime
 from io import StringIO
 
 import pandas as pd
 
+from open_trading_agents.dataflows.config import get_data_credential
 from open_trading_agents.dataflows.errors import VendorNotConfiguredError, VendorUnavailableError
 from open_trading_agents.dataflows.net import get_scrubbed
 
@@ -28,10 +28,20 @@ class AlphaVantageNotConfiguredError(VendorNotConfiguredError):
 
 
 def get_api_key() -> str:
-    """Retrieve the API key for Alpha Vantage from environment variables."""
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    """Read the Alpha Vantage key from the selected application configuration.
+
+    Returns:
+        The configured key.
+
+    Raises:
+        AlphaVantageNotConfiguredError: No Alpha Vantage key is saved in the configuration.
+    """
+    api_key = get_data_credential("alpha_vantage_api_key")
     if not api_key:
-        raise AlphaVantageNotConfiguredError("ALPHA_VANTAGE_API_KEY environment variable is not set.")
+        raise AlphaVantageNotConfiguredError(
+            "Alpha Vantage API key is not configured. Run 'uv run open-trading-agents configure data' or set data.alpha_vantage_api_key in config.toml."
+        )
+
     return api_key
 
 

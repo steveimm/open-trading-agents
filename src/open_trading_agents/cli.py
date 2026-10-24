@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
-import shutil
 import sys
 from dataclasses import asdict
 from datetime import date
@@ -12,7 +11,6 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dotenv import load_dotenv
 from rich.console import Console
 
 from open_trading_agents.analysis.models import AgentEvent
@@ -31,6 +29,8 @@ from open_trading_agents.config import (
 from open_trading_agents.reporting.usage import format_run_usage
 
 app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
+configure_app = typer.Typer(no_args_is_help=False, add_completion=False, help="Configure agent profiles and data sources.")
+app.add_typer(configure_app, name="configure")
 console = Console(stderr=True)
 
 
@@ -59,7 +59,6 @@ def configured(
     Returns:
         Validated application settings.
     """
-    load_dotenv(Path.cwd() / ".env", override=False)
     return runtime_overrides(load_settings(path, use_default_preset=True), harness, model, provider, effort)
 
 
@@ -252,7 +251,7 @@ def run(
         if output_dir is not None:
             output_dir = output_dir.expanduser().resolve()
 
-        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio), output_dir=output_dir)
+        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio), output_dir=output_dir, config_path=config)
         run_workflow(workflow, headless, events)
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
@@ -278,7 +277,6 @@ def resume(
         events: Stream normalized JSON records.
     """
     try:
-        load_dotenv(Path.cwd() / ".env", override=False)
         run_workflow(Workflow.resume(directory), headless, events)
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
@@ -324,7 +322,7 @@ def backtest(
     try:
         settings = configured(config, harness, model, provider, effort)
         result = asyncio.run(run_backtest([t.strip() for t in tickers.split(",") if t.strip()], iter_grid(start, end, every),
-                                         settings, load_portfolio(portfolio), run_id))
+                                         settings, load_portfolio(portfolio), run_id, config_path=config))
         typer.echo(result.summary)
         typer.echo(f"Backtest: {result.directory}")
         if result.failures:
@@ -339,8 +337,60 @@ def backtest(
         raise typer.Exit(1) from exc
 
 
-@app.command(help="Create, update, or delete saved agent profiles.")
+def _configuration_path(ctx: typer.Context, path: Path | None) -> Path:
+    """Resolve a configuration destination from the command or its parent options.
+
+    Args:
+        ctx: Current configuration command context.
+        path: Explicit path supplied to this command.
+
+    Returns:
+        The selected configuration path, defaulting to the application directory.
+    """
+    current: typer.Context | None = ctx
+    while path is None and current is not None:
+        path = current.params.get("config")
+        current = current.parent
+
+    return Path(path or default_config_path()).expanduser()
+
+
+@configure_app.callback(invoke_without_command=True)
 def configure(
+    ctx: typer.Context,
+    config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
+) -> None:
+    """Choose agent profiles or data sources when no configuration subcommand is supplied.
+
+    Args:
+        ctx: Command context identifying an optional configuration subcommand.
+        config: Configuration file used by the selected editor.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    try:
+        if not sys.stdin.isatty():
+            raise typer.BadParameter("choose 'configure agents' with selection flags, or run 'configure data' in a terminal")
+        from open_trading_agents.ui.configuration import select_configuration_section
+
+        if select_configuration_section() == "agents":
+            configure_agents(ctx, config=config)
+        else:
+            configure_data(ctx, config=config)
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(f"Configuration failed: {exc}", style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
+@configure_app.command("agents", help="Create, update, or delete saved agent profiles.")
+def configure_agents(
+    ctx: typer.Context,
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
     model: Annotated[str | None, typer.Option(help='Native model selector. Pass "" to use harness defaults.')] = None,
@@ -350,6 +400,7 @@ def configure(
     """Manage saved runtime profiles, or apply explicit configuration flags.
 
     Args:
+        ctx: Command context carrying an optional parent configuration path.
         config: Destination TOML configuration file.
         harness: Native harness selection.
         model: Native model selector, or an empty string to reset it.
@@ -357,7 +408,7 @@ def configure(
         effort: Native reasoning or thinking effort, or an empty string to reset it.
     """
     try:
-        config = (config or default_config_path()).expanduser()
+        config = _configuration_path(ctx, config)
         interactive = harness is None and model is None and provider is None and effort is None
         if interactive and not sys.stdin.isatty():
             raise typer.BadParameter("provide --harness, --model, --provider or --effort when input is not interactive")
@@ -382,10 +433,47 @@ def configure(
         raise typer.Exit(1) from exc
 
 
+@configure_app.command("data", help="Configure data-source API keys and SEC contact identity.")
+def configure_data(
+    ctx: typer.Context,
+    config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
+) -> None:
+    """Edit data credentials stored in the selected TOML configuration.
+
+    Args:
+        ctx: Command context carrying an optional parent configuration path.
+        config: Configuration file to update.
+    """
+    try:
+        if not sys.stdin.isatty():
+            raise typer.BadParameter("run 'configure data' in a terminal, or edit the [data] fields in config.toml")
+        from open_trading_agents.ui.configuration import configure_data_interactively
+
+        configure_data_interactively(_configuration_path(ctx, config))
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(f"Configuration failed: {exc}", style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
 @app.command()
-def doctor() -> None:
-    """Report installed harness executables without reading credentials or contacting providers."""
-    for harness in HarnessName:
-        typer.echo(f"{harness.value}: {shutil.which(harness.value) or 'not installed'}")
+def doctor(
+    ctx: typer.Context,
+    config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
+) -> None:
+    """Check local harness, agent-profile, and data-source configuration.
+
+    Args:
+        ctx: Command context carrying an optional parent configuration path.
+        config: Configuration file to inspect without contacting model or data providers.
+    """
+    from open_trading_agents.diagnostics import doctor_checks
+
+    for label, result in doctor_checks(_configuration_path(ctx, config)):
+        typer.echo(f"{label}: {result}")
 
 

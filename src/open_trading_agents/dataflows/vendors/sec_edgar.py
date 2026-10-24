@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -13,7 +12,7 @@ from typing import Any
 import requests
 
 from open_trading_agents import __version__
-from open_trading_agents.dataflows.config import get_config
+from open_trading_agents.dataflows.config import get_config, get_data_credential
 from open_trading_agents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from open_trading_agents.dataflows.files import replace_file
 
@@ -65,15 +64,13 @@ _ANNUAL_FORMS = ("10-K", "20-F", "40-F")
 
 
 def _user_agent() -> str:
-    """Who SEC sees. No account or key exists; callers identify themselves.
+    """Identify SEC requests using the configured contact or the existing package fallback.
 
-    www.sec.gov, which serves the ticker map, refuses a User-Agent carrying no
-    contact address: a client name alone or with a project URL gets 403, one
-    with an address gets 200. So the default carries a placeholder address and
-    the package version. Set SEC_EDGAR_USER_AGENT to your own name and address
-    so SEC can reach you about your traffic rather than the project.
+    Returns:
+        The data.sec_edgar_user_agent value, or the package name, version, and
+        placeholder contact when no identity is configured.
     """
-    configured = os.getenv("SEC_EDGAR_USER_AGENT", "").strip()
+    configured = get_data_credential("sec_edgar_user_agent").strip()
     return configured or f"OpenTradingAgents/{__version__} (contact@example.com)"
 
 
@@ -85,10 +82,11 @@ def _fetch_json(url: str) -> dict:
         return response.json()
     except requests.RequestException as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
+        failure = VendorUnavailableError(f"SEC EDGAR request failed ({status or type(exc).__name__})")
+    except ValueError:
+        failure = VendorUnavailableError("SEC EDGAR returned an unreadable response")
 
-        raise VendorUnavailableError(f"SEC EDGAR request failed ({status or type(exc).__name__})") from exc
-    except ValueError as exc:
-        raise VendorUnavailableError("SEC EDGAR returned an unreadable response") from exc
+    raise failure
 
 
 def _cached_json(url: str, name: str) -> dict:

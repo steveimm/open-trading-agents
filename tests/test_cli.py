@@ -54,10 +54,10 @@ def test_run_rejects_shared_storage_override() -> None:
 
 def test_configure_no_longer_selects_a_run_tier() -> None:
     """Configure edits one reusable profile while role selection belongs to analysis startup."""
-    help_result = runner.invoke(app, ["configure", "--help"])
+    help_result = runner.invoke(app, ["configure", "agents", "--help"])
     assert help_result.exit_code == 0
     assert "--tier" not in help_result.output
-    assert runner.invoke(app, ["configure", "--tier", "deep"]).exit_code == 2
+    assert runner.invoke(app, ["configure", "agents", "--tier", "deep"]).exit_code == 2
 
 
 @pytest.mark.parametrize("flags,existing_config", [([], False), (["--ticker", "NVDA", "--headless"], True),
@@ -99,10 +99,11 @@ def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch
         raise AssertionError("Maintenance command checked presets")
 
     monkeypatch.setattr(cli, "list_presets", unexpected)
-    for options in (["--help"], ["configure", "--help"], ["backtest", "--help"], ["resume", "--help"], ["doctor"]):
+    for options in (["--help"], ["configure", "--help"], ["configure", "agents", "--help"],
+                    ["configure", "data", "--help"], ["backtest", "--help"], ["resume", "--help"], ["doctor"]):
         result = runner.invoke(app, options)
         assert result.exit_code == 0, result.output
-    configured_result = runner.invoke(app, ["configure", "--harness", "pi", "--model", "setup-model"])
+    configured_result = runner.invoke(app, ["configure", "agents", "--harness", "pi", "--model", "setup-model"])
     assert configured_result.exit_code == 0, configured_result.output
     directory = tmp_path / "saved-run"
     directory.mkdir()
@@ -110,6 +111,79 @@ def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch
     monkeypatch.setattr(cli, "Workflow", SimpleNamespace(resume=lambda path: resumed))
     monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: resumed)
     assert runner.invoke(app, ["resume", str(directory), "--headless"]).exit_code == 0
+
+
+@pytest.mark.parametrize("section", ["agents", "data"])
+def test_configure_menu_exposes_agent_and_data_editors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str) -> None:
+    """Route the top-level setup menu without requiring a preset or creating run files.
+
+    Args:
+        tmp_path: Isolated application and configuration location.
+        monkeypatch: Scoped setup-menu replacements.
+        section: Selected configuration category.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
+    monkeypatch.setattr(configuration_ui, "select_configuration_section", lambda: section)
+    received: list[tuple[str, Path]] = []
+    monkeypatch.setattr(configuration_ui, "configure_interactively", lambda path: received.append(("agents", path)))
+    monkeypatch.setattr(configuration_ui, "configure_data_interactively", lambda path: received.append(("data", path)))
+    path = tmp_path / "selected.toml"
+
+    result = runner.invoke(app, ["configure", "--config", str(path)])
+
+    assert result.exit_code == 0, result.output
+    assert received == [(section, path)]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("placement", ["parent", "command"])
+def test_configure_data_accepts_the_selected_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, placement: str) -> None:
+    """Expose data setup directly with either supported configuration-option placement.
+
+    Args:
+        tmp_path: Isolated configuration location.
+        monkeypatch: Scoped data-editor replacement.
+        placement: Whether --config appears before or after the data subcommand.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
+    received: list[Path] = []
+    monkeypatch.setattr(configuration_ui, "configure_data_interactively", received.append)
+    path = tmp_path / "selected.toml"
+    args = ["configure", "--config", str(path), "data"] if placement == "parent" else ["configure", "data", "--config", str(path)]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert received == [path]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("placement", ["parent", "command"])
+def test_doctor_reports_selected_data_config_without_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, placement: str) -> None:
+    """Show data-source readiness for the selected file while keeping credential values out of output.
+
+    Args:
+        tmp_path: Isolated application and custom configuration location.
+        monkeypatch: Scoped home-directory replacement.
+        placement: Whether --config appears before or after doctor.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    source = tmp_path / "custom.toml"
+    source.write_text('[data]\nfred_api_key = "fake-doctor-private-key"\n')
+    before = source.read_bytes()
+    args = ["--config", str(source), "doctor"] if placement == "parent" else ["doctor", "--config", str(source)]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert str(source) in result.output
+    assert "FRED: Configured" in result.output
+    assert "Profiles: Missing" in result.output
+    assert "fake-doctor-private-key" not in result.output
+    assert source.read_bytes() == before
+    assert not (tmp_path / ".open-trading-agents").exists()
 
 
 @pytest.mark.parametrize("command", ["run", "run-events", "resume", "resume-events", "backtest", "configure"])
@@ -149,7 +223,7 @@ def test_commands_distinguish_cancellation_from_runtime_failures(
         "resume": ["resume", str(tmp_path), "--headless"],
         "resume-events": ["resume", str(tmp_path), "--events"],
         "backtest": ["backtest", "NVDA", "--start", "2024-03-15", "--end", "2024-03-15"],
-        "configure": ["configure", "--model", "fixture"],
+        "configure": ["configure", "agents", "--model", "fixture"],
     }
     result = runner.invoke(app, arguments[command])
 
@@ -375,13 +449,14 @@ def test_unattended_runs_use_the_default_profile(command: str, tmp_path: Path, m
         portfolio: Portfolio | None,
         *,
         output_dir: Path | None = None,
+        config_path: Path | None = None,
     ) -> Settings:
         """Capture a new analysis before any native sessions or data requests start."""
         received.append(settings)
         return settings
 
     async def sweep(tickers: list[str], grid: object, settings: Settings,
-                    portfolio: Portfolio | None, run_id: str | None) -> SimpleNamespace:
+                    portfolio: Portfolio | None, run_id: str | None, *, config_path: Path | None = None) -> SimpleNamespace:
         """Capture a new backtest before any native sessions or data requests start."""
         received.append(settings)
         return SimpleNamespace(summary="Saved fixture", directory=tmp_path, failures=[])

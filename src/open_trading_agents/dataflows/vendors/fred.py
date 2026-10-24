@@ -1,10 +1,10 @@
 # Adapted from TauricResearch/TradingAgents (Apache-2.0).
 # Imports, typing, configuration and tool integration modified for Open Trading Agents.
 import logging
-import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from open_trading_agents.dataflows.config import get_data_credential
 from open_trading_agents.dataflows.errors import VendorNotConfiguredError
 from open_trading_agents.dataflows.net import get_scrubbed
 
@@ -75,12 +75,20 @@ class FredNotConfiguredError(VendorNotConfiguredError):
 
 
 def get_api_key() -> str:
-    """Retrieve the FRED API key from the environment."""
-    api_key = os.getenv("FRED_API_KEY")
+    """Read the FRED API key from the selected application configuration.
+
+    Returns:
+        The configured key.
+
+    Raises:
+        FredNotConfiguredError: No FRED key is saved in the configuration.
+    """
+    api_key = get_data_credential("fred_api_key")
     if not api_key:
         raise FredNotConfiguredError(
-            "FRED_API_KEY environment variable is not set. Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html."
+            "FRED API key is not configured. Run 'uv run open-trading-agents configure data' or set data.fred_api_key in config.toml."
         )
+
     return api_key
 
 
@@ -130,7 +138,7 @@ def _request(path: str, params: dict) -> dict:
             message = response.json().get("error_message", response.text)
         except ValueError:
             message = response.text
-        raise ValueError(f"FRED request failed: {message}")
+        raise ValueError(f"FRED request failed: {str(message).replace(api_key, '***')}") from None
     return response.json()
 
 
