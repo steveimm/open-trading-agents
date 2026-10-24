@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 from dataclasses import asdict
@@ -8,9 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from markdown_it import MarkdownIt
-
 from open_trading_agents.domain import AgentEvent
+from open_trading_agents.report_html import render_report
 from open_trading_agents.usage import summarize_usage
 
 type ReportEntry = tuple[str, str, str]
@@ -208,13 +206,6 @@ def write_reports(directory: Path, ticker: str, trade_date: str, outputs: dict[s
     (report_dir / "settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
     write_transcript(directory / "transcript.jsonl", events)
     if include_html:
-        renderer = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
-        body = renderer.render(combined)
-        page = f"""<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">
-<title>{html.escape(ticker)} analysis</title>
-<style>body{{max-width:960px;margin:2rem auto;padding:0 1rem;font:16px/1.6 system-ui;color:#17202a;background:#fafafa}}pre{{overflow:auto}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:.4rem;text-align:left}}h1,h2{{line-height:1.2}}code{{overflow-wrap:anywhere}}</style>
-<body>{body}</body></html>"""
+        page = render_report(ticker, trade_date, rating, details, parts)
         (report_dir / "complete_report.html").write_text(page, encoding="utf-8")
     return target

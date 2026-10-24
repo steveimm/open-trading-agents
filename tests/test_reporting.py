@@ -68,12 +68,15 @@ def test_html_export_keeps_model_markup_inert(tmp_path: Path) -> None:
     """Prevent model text from introducing scripts, remote images, or JavaScript links."""
     target = write_reports(tmp_path, 'TEST<script>bad()</script>', "2024-03-15",
                            {"Report": '<script>alert(1)</script>\n\n![pixel](https://example.com/pixel.png)\n\n[bad](javascript:alert(1))'},
-                           "REVIEW", {}, [])
+                           "REVIEW", {"quick_harness": '<img src="https://example.com/harness">',
+                                      "quick_model": '<script>model()</script>'}, [])
     page = target.with_suffix(".html").read_text()
     assert "<script>" not in page
     assert "<img" not in page
     assert 'href="javascript:' not in page
     assert "&lt;script&gt;" in page
+    assert "&lt;script&gt;model()&lt;/script&gt;" in page
+    assert "&lt;img" in page
     assert "default-src 'none'" in page
 
 
@@ -130,3 +133,24 @@ def test_runtime_metadata_groups_observed_models_and_labels_configuration(tmp_pa
     markdown = target.read_text()
     assert "Runtime: Harness: pi · Provider: not reported · Model: not reported" in markdown
     assert "Configured quick runtime: Harness: pi · Provider: not reported · Model: configured-but-unused" in markdown
+
+
+def test_html_report_preserves_team_hierarchy_and_links_complete_sections(tmp_path: Path) -> None:
+    """Keep model headings below team/role headings and make evidence tables readable."""
+    outputs = {"Market Analyst": "# Evidence\n\n| Metric | Value |\n| --- | --- |\n| Return | 25% |",
+               "Portfolio Manager": "## Executive summary\n\nHold."}
+    target = write_reports(tmp_path, "NVDA", "2024-03-15", outputs, "Hold", {}, [])
+    page = target.with_suffix(".html").read_text()
+    assert '<h2>I. Analyst Team Reports</h2>' in page
+    assert '<h3 id="s1-1">Market Analyst</h3>' in page
+    assert '<h4>Evidence</h4>' in page
+    assert '<h5>Executive summary</h5>' in page
+    assert '<div class="table"><table>' in page
+    assert '<nav class="contents" aria-label="Sections">' in page
+    assert 'href="#s1-1"' in page
+    assert 'href="#s2-1"' in page
+    assert '<h3 id="s2-1">Portfolio Manager</h3>' in page
+    assert 'class="rating level">Hold' in page
+    assert 'prefers-color-scheme: dark' in page
+    assert '@media print' in page
+    assert 'Tauric' not in page
