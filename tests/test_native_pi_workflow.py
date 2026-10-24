@@ -214,8 +214,8 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
 
     monkeypatch.setattr(FinancialTools, "get_social_sentiment", social_evidence)
     monkeypatch.setattr("open_trading_agents.memory.fetch_returns", outcomes)
-    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,),
-                        model="fixture-model", provider="fixture"), research_rounds=2, risk_rounds=1,
+    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,)),
+                        research_rounds=2, risk_rounds=1,
                         allow_execution=False, web_research=False, memory_enabled=True)
     memory = MemoryLog(settings.state_dir / "memory.sqlite")
     prior_id = memory.record("NVDA", "2026-01-02", "Overweight", "Synthetic prior decision", "fixture-prior")
@@ -267,6 +267,11 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
         assert store.metadata("status") == "complete"
         rows = store.db.execute("SELECT agent,native_id FROM sessions").fetchall()
         assert len(rows) == len({row["native_id"] for row in rows}) == 13
+        runtime_agents = store.metadata("runtime_agents")
+        assert {row["agent"] for row in runtime_agents} == {row["agent"] for row in rows}
+        assert all(row["harness"] == "pi" and row["model"] == "fixture-model" and row["provider"] == "fixture"
+                   for row in runtime_agents)
+        assert len(runtime_agents) == len(rows)
         for row in rows:
             session_file = Path(row["native_id"])
             contents = await asyncio.to_thread(session_file.read_text)
@@ -285,6 +290,9 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
     assert (reports / "complete_report.md").is_file()
     assert (reports / "complete_report.html").is_file()
     assert (result.directory / "transcript.jsonl").is_file()
+    report_settings = json.loads((reports / "settings.json").read_text())
+    assert report_settings["quick_model"] is None and report_settings["deep_model"] is None
+    assert report_settings["runtime_agents"] == runtime_agents
     usage = json.loads((reports / "usage.json").read_text())
     assert usage["totals"]["reported_requests"] == 30
     assert usage["totals"]["input_tokens"] == 3000

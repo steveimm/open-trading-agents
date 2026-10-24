@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from open_trading_agents import __version__
 from open_trading_agents.config import Portfolio, Settings, validate_date
 from open_trading_agents.dataflows.config import default_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
@@ -88,6 +89,9 @@ class Workflow:
                                        "asset_type": self.asset_type, "config": self.data_config})
             replace_file(self.context_file, lambda temporary: Path(temporary).write_text(context_json))
         self.store.set_metadata("input", identity)
+        if not self.store.metadata("version"):
+            self.store.set_metadata("version", __version__)
+        self.runtime_agents: list[dict[str, str | None]] = self.store.metadata("runtime_agents", [])
 
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
@@ -138,6 +142,11 @@ class Workflow:
             event = replace(event, data={**event.data, "conversation_turn_id": conversation_turn})
         if event.kind == "session" and event.data.get("session_id"):
             self.store.save_session(event.agent, event.data["session_id"])
+        if event.kind == "model":
+            identity = {"agent": event.agent, **{key: event.data.get(key) for key in ("harness", "provider", "model")}}
+            if identity not in self.runtime_agents:
+                self.runtime_agents.append(identity)
+                self.store.set_metadata("runtime_agents", self.runtime_agents)
         if event.data.get("prompt_accepted") and event.agent in self.active_steps:
             self.store.set_metadata(f"delivered:{self.active_steps[event.agent]}", True)
         if self.recorder:
@@ -174,6 +183,7 @@ class Workflow:
             return saved["output"]
         role = ROLES[role_key]
         name = session_name or role.name
+        harness = self.settings.model_settings(role.deep)
         prior_session = self.store.session(name)
         await self._event("agent_start", role.stage, name)
         if name not in self.sessions:
@@ -186,7 +196,7 @@ class Workflow:
                              (sys.executable, "-m", "open_trading_agents.tools", "--context", str(self.context_file),
                               "--tools", ",".join(tools)) if tools else (),
                              max_tool_rounds=self.settings.max_tool_rounds, allow_execution=self.settings.allow_execution)
-            self.sessions[name] = await self.session_factory(self.settings.model_settings(role.deep).runtime(), spec, self.emit)
+            self.sessions[name] = await self.session_factory(harness.runtime(), spec, self.emit)
             if self.sessions[name].session_id:
                 self.store.save_session(name, self.sessions[name].session_id)
         if saved and prior_session and self.store.metadata(f"delivered:{key}", False):
@@ -204,6 +214,8 @@ class Workflow:
             raise
         finally:
             self.active_steps.pop(name, None)
+            if not any(row["agent"] == name and row["harness"] == harness.kind for row in self.runtime_agents):
+                await self._event("model", role.stage, name, harness=harness.kind, provider=None, model=None)
         self.store.save_session(name, result.session_id)
         self.store.finish_step(key, result.text)
         await self._event("agent_end", role.stage, name, output=result.text)
@@ -538,12 +550,16 @@ class Workflow:
             for future in tuple(self.screening_futures):
                 future.cancel()
             await asyncio.gather(*(session.close() for session in self.sessions.values()), return_exceptions=True)
+            quick, deep = self.settings.model_settings(), self.settings.model_settings(True)
             report_settings = {
-                "harness": self.settings.harness.kind, "quick_model": self.settings.model_settings().model,
-                "deep_model": self.settings.model_settings(True).model, "analysts": self.settings.analysts,
+                "version": self.store.metadata("version"), "runtime_agents": self.runtime_agents,
+                "harness": self.settings.harness.kind, "quick_harness": quick.kind, "deep_harness": deep.kind,
+                "quick_provider": quick.provider, "deep_provider": deep.provider,
+                "quick_model": quick.model, "deep_model": deep.model, "analysts": self.settings.analysts,
                 "research_rounds": self.settings.research_rounds, "risk_rounds": self.settings.risk_rounds,
                 "data_vendors": self.data_config["data_vendors"],
             }
+            self.store.set_metadata("report_settings", report_settings)
             try:
                 await asyncio.to_thread(self.recorder.close)
                 await asyncio.to_thread(self._export_reports, report_settings)
