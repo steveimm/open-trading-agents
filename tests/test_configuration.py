@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from open_trading_agents import cli
-from open_trading_agents.config import load_settings, save_harness_selection
+from open_trading_agents.config import HarnessSettings, Settings, load_preset, load_settings, preset_path, save_harness_selection
 
 runner = CliRunner()
 
@@ -154,3 +154,33 @@ def test_claude_provider_configuration_is_left_to_native_harness(tmp_path: Path)
     assert result.exit_code == 1
     assert "Claude Code selects its provider" in result.output
     assert not path.exists()
+
+
+def test_claude_provider_override_is_rejected_by_all_configuration_entry_points(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply the native-provider restriction to files, profiles, and run flags.
+
+    Args:
+        tmp_path: Isolated configuration storage.
+        monkeypatch: Redirect the profile directory away from user settings.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    invalid = {"kind": "claude", "provider": "ignored-provider"}
+    path = tmp_path / "config.toml"
+    path.write_text('[harness]\nkind = "claude"\nprovider = "ignored-provider"\n')
+    profile = preset_path("invalid")
+    profile.parent.mkdir(parents=True)
+    profile.write_text('harness = "claude"\nprovider = "ignored-provider"\n')
+
+    with pytest.raises(ValueError, match="Claude Code selects its provider"):
+        HarnessSettings.model_validate(invalid)
+    with pytest.raises(ValueError, match="Claude Code selects its provider"):
+        load_settings(path)
+    with pytest.raises(ValueError, match="Claude Code selects its provider"):
+        load_preset("invalid")
+    with pytest.raises(ValueError, match="Claude Code selects its provider"):
+        cli.runtime_overrides(Settings(), cli.HarnessName.claude, "selected-model", "ignored-provider")
+
+    assert HarnessSettings(kind="claude", provider="  ").provider is None

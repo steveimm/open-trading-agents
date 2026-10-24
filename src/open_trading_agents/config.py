@@ -75,6 +75,21 @@ class HarnessSettings(BaseModel):
         """
         return (value.strip() or None) if value is not None else None
 
+    @model_validator(mode="after")
+    def validate_provider(self) -> HarnessSettings:
+        """Keep Claude's provider selection within its native configuration.
+
+        Returns:
+            Settings whose selectors can be applied by the chosen adapter.
+
+        Raises:
+            ValueError: A provider override is supplied for Claude Code.
+        """
+        if self.kind == "claude" and self.provider:
+            raise ValueError("Claude Code selects its provider through its native configuration.")
+
+        return self
+
     def runtime(self) -> HarnessConfig:
         """Create the immutable CLI connection configuration.
 
@@ -226,14 +241,14 @@ def load_preset(name: str) -> HarnessSettings:
     if not selected.is_file():
         available = ", ".join(list_presets()) or "none"
         raise ValueError(f"Unknown preset {name!r}. Available presets: {available}")
+
     with selected.open("rb") as handle:
         selections = tomllib.load(handle)
     if not isinstance(selections.get("harness"), str) or set(selections) - {"harness", "provider", "model", "effort"}:
         raise ValueError(f"Preset {name!r} must contain only harness, provider, model, and effort, with harness set to pi, codex, or claude. Recreate it with 'open-trading-agents configure'.")
-    profile = HarnessSettings.model_validate({"kind": selections["harness"], **{key: value for key, value in selections.items() if key != "harness"}})
-    if profile.kind == "claude" and profile.provider:
-        raise ValueError("Claude Code selects its provider through its native configuration.")
-    return profile
+
+    selections["kind"] = selections.pop("harness")
+    return HarnessSettings.model_validate(selections)
 
 
 def load_settings(path: Path | None = None, use_default_preset: bool = False) -> Settings:
@@ -319,8 +334,6 @@ def _set_harness_tables(document: TOMLDocument, harness: HarnessSettings, quick:
         if selection is None:
             document.pop(name, None)
             continue
-        if selection.kind == "claude" and selection.provider:
-            raise ValueError("Claude Code selects its provider through its native configuration.")
         if name not in document:
             document[name] = tomlkit.table()
         values = selection.model_dump(mode="json")
@@ -364,8 +377,7 @@ def save_preset(name: str, settings: HarnessSettings, overwrite: bool = False) -
         ValueError: The preset name or selections are invalid.
     """
     path = preset_path(name)
-    if settings.kind == "claude" and settings.provider:
-        raise ValueError("Claude Code selects its provider through its native configuration.")
+    settings = HarnessSettings.model_validate(settings.model_dump())
     document = tomlkit.document()
     document.update(harness=settings.kind, provider=settings.provider or "", model=settings.model or "", effort=settings.effort or "")
     _write_document(path, document, overwrite=overwrite)
@@ -477,9 +489,6 @@ def save_harness_selection(
     settings = Settings.model_validate(document.unwrap())
     name = "harness" if tier == "default" else tier
     current = getattr(settings, name) or settings.harness
-    kind = harness or current.kind
-    if kind == "claude" and provider is not None and provider.strip():
-        raise ValueError("Claude Code selects its provider through its native configuration. Omit --provider.")
     if name not in document:
         document[name] = tomlkit.table()
     selected = document[name]
