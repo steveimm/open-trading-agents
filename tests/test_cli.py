@@ -21,6 +21,25 @@ def test_help_omits_completion_and_replay() -> None:
     assert runner.invoke(app, ["replay"]).exit_code == 2
 
 
+@pytest.mark.parametrize("command", ["analyze", "backtest"])
+def test_run_commands_reject_removed_preset_argument(command: str) -> None:
+    """Presets are selected per agent role in startup rather than through a run-level flag."""
+    help_result = runner.invoke(app, [command, "--help"])
+    assert help_result.exit_code == 0
+    assert "--preset" not in help_result.output
+    rejected = runner.invoke(app, [command, "NVDA", "--preset", "daily"])
+    assert rejected.exit_code == 2
+    assert "No such option: --preset" in rejected.output
+
+
+def test_configure_no_longer_selects_a_run_tier() -> None:
+    """Configure edits one reusable profile while role selection belongs to analysis startup."""
+    help_result = runner.invoke(app, ["configure", "--help"])
+    assert help_result.exit_code == 0
+    assert "--tier" not in help_result.output
+    assert runner.invoke(app, ["configure", "--tier", "deep"]).exit_code == 2
+
+
 def test_headless_requires_explicit_ticker_before_any_model_call() -> None:
     """Unattended invocations fail with actionable input instructions."""
     result = runner.invoke(app, ["analyze", "--headless"])
@@ -69,11 +88,12 @@ def test_portfolio_alias_is_not_mistaken_for_an_absent_position() -> None:
 def test_switching_harness_discards_old_backend_specific_configuration(tmp_path: Path) -> None:
     """Changing CLIs cannot retain another harness's executable or provider/model selectors."""
     config = tmp_path / "settings.toml"
-    config.write_text('[harness]\nkind="pi"\nmodel="local-model"\nprovider="local-provider"\ncommand=["special-pi"]\nextra_args=["--thinking","high"]\n')
+    config.write_text('[harness]\nkind="pi"\nmodel="local-model"\nprovider="local-provider"\neffort="high"\ncommand=["special-pi"]\nextra_args=["--thinking","high"]\n')
     settings = configured(config, HarnessName.claude, None, None)
     assert settings.harness.kind == "claude"
     assert settings.harness.model is None
     assert settings.harness.provider is None
+    assert settings.harness.effort is None
     assert settings.harness.command == ()
     assert settings.harness.extra_args == ()
 
@@ -89,48 +109,46 @@ def test_partial_tier_inherits_harness_and_survives_saved_run_roundtrip(tmp_path
     assert restored.model_settings(True) == settings.model_settings(True)
 
 
-def test_preset_overrides_global_models_before_explicit_cli_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Apply a named runtime to one invocation without rewriting the shared configuration."""
+def test_default_profile_overrides_global_models_before_explicit_cli_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apply the default runtime profile without rewriting the shared configuration."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     path = tmp_path / ".open-trading-agents" / "config.toml"
     path.parent.mkdir()
-    original = 'research_rounds=3\n[harness]\nkind="pi"\nmodel="global-model"\n[deep]\nmodel="stale-manager"\n'
-    path.write_text(original)
-    save_preset("claude-work", Settings(harness=HarnessSettings(kind="claude", model="preset-model")))
-    selected = configured(None, None, None, None, "claude-work")
+    path.write_text('research_rounds=3\n[harness]\nkind="pi"\nmodel="global-model"\n[deep]\nmodel="stale-manager"\n')
+    save_preset("claude-work", HarnessSettings(kind="claude", model="preset-model", effort="high"))
+    set_default_preset(path, "claude-work")
+    original = path.read_text()
+    selected = configured(None, None, None, None)
     assert selected.research_rounds == 3
-    assert selected.harness == HarnessSettings(kind="claude", model="preset-model")
+    assert selected.harness == HarnessSettings(kind="claude", model="preset-model", effort="high")
     assert selected.quick is None and selected.deep is None
-    overridden = configured(None, HarnessName.pi, "one-run-model", "local", "claude-work")
-    assert overridden.harness == HarnessSettings(kind="pi", model="one-run-model", provider="local")
+    overridden = configured(None, HarnessName.pi, "one-run-model", "local", "low")
+    assert overridden.harness == HarnessSettings(kind="pi", model="one-run-model", provider="local", effort="low")
     assert path.read_text() == original
 
 
-def test_explicit_preset_and_cli_flags_override_default_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resolve default, named override, and command-line selectors without rewriting the default selection."""
+def test_cli_flags_override_default_profile_for_both_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve a shared default profile and explicit runtime flags without rewriting the default selection."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    save_preset("daily", Settings(harness=HarnessSettings(model="daily-model"), deep=HarnessSettings(model="daily-manager")))
-    save_preset("other", Settings(harness=HarnessSettings(kind="claude", model="other-model")))
+    save_preset("daily", HarnessSettings(model="daily-model", effort="high"))
     path = default_config_path()
     set_default_preset(path, "daily")
     original = path.read_text()
     default = configured(None, None, None, None)
     assert default.model_settings().model == "daily-model"
-    assert default.model_settings(True).model == "daily-manager"
-    explicit = configured(None, None, None, None, preset="other")
-    assert explicit.model_settings().kind == "claude" and explicit.model_settings().model == "other-model"
-    overridden = configured(None, HarnessName.codex, "one-run-model", "local")
+    assert default.model_settings(True).model == "daily-model"
+    assert default.model_settings(True).effort == "high"
+    overridden = configured(None, HarnessName.codex, "one-run-model", "local", "medium")
     for deep in (False, True):
-        assert overridden.model_settings(deep) == HarnessSettings(kind="codex", model="one-run-model", provider="local")
+        assert overridden.model_settings(deep) == HarnessSettings(kind="codex", model="one-run-model", provider="local", effort="medium")
     assert path.read_text() == original
 
 
 @pytest.mark.parametrize("command", ["analyze", "backtest"])
-@pytest.mark.parametrize("explicit", [False, True])
-def test_new_runs_use_the_requested_preset(command: str, explicit: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Route default and explicitly named selections into both execution paths without changing native credentials."""
+def test_unattended_runs_use_the_default_profile(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the configured default profile into unattended runs without changing native credentials."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    save_preset("local", Settings(harness=HarnessSettings(kind="pi", provider="local", model="selected-model")))
+    save_preset("local", HarnessSettings(kind="pi", provider="local", model="selected-model", effort="high"))
     set_default_preset(default_config_path(), "local")
     received: list[Settings] = []
 
@@ -149,8 +167,7 @@ def test_new_runs_use_the_requested_preset(command: str, explicit: bool, tmp_pat
     monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: None)
     monkeypatch.setattr(backtest, "run_backtest", sweep)
     options = ["--headless"] if command == "analyze" else ["--start", "2026-01-02", "--end", "2026-01-02"]
-    preset = ["--preset", "local"] if explicit else []
-    result = runner.invoke(app, [command, "NVDA", *preset, *options])
+    result = runner.invoke(app, [command, "NVDA", *options])
     assert result.exit_code == 0, result.output
     assert len(received) == 1
-    assert received[0].harness == HarnessSettings(kind="pi", provider="local", model="selected-model")
+    assert received[0].harness == HarnessSettings(kind="pi", provider="local", model="selected-model", effort="high")
