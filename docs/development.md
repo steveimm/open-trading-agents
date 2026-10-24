@@ -50,3 +50,5 @@ When changing package layout, also test the built wheel outside the checkout. Ch
 ## Reference
 
 The adapted source is [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents/tree/e8f5503e9b86d5c2710b0c76b1f686703968c9df), revision `e8f5503e9b86d5c2710b0c76b1f686703968c9df` (0.7.0). Attribution is in the [README](../README.md#credits), and the license is in [LICENSE](../LICENSE).
+
+See the [detailed reference comparison](reference-comparison.md) for preserved features, implementation changes, superseded designs, remaining differences, and the corresponding commit history.
