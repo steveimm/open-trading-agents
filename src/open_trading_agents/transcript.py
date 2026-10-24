@@ -287,10 +287,9 @@ class TranscriptIndex:
         Returns:
             One terminal-width row with a bounded render cache.
         """
-        index = bisect.bisect_right(self.offsets, row) - 1
+        index, local = self.cache_key(row)
         if index < 0 or index >= len(self.starts):
             return Strip.blank(self.width, base_style)
-        local = row - self.offsets[index]
         key = index, local
         if key not in self.cache:
             line = self.document.lines[index]
@@ -306,6 +305,18 @@ class TranscriptIndex:
         strip = self.cache[key]
         self.cache.move_to_end(key)
         return strip.adjust_cell_length(self.width, base_style).apply_style(base_style)
+
+    def cache_key(self, row: int) -> tuple[int, int]:
+        """Identify a rendered row for a shared viewport cache budget.
+
+        Args:
+            row: Wrapped row offset.
+
+        Returns:
+            Logical line and its wrapped row index.
+        """
+        index = bisect.bisect_right(self.offsets, row) - 1
+        return index, row - self.offsets[index] if index >= 0 else 0
 
 
 class FollowScrollView(ScrollView):
