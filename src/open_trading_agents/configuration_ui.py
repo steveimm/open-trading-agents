@@ -254,7 +254,7 @@ def _agent_profile(label: str, current: HarnessSettings, profiles: dict[str, Har
         default = preferred
     if inherit_working and same_as is not None:
         default = 0
-    choice = _choose(label, [*labels, "Configure for this run…"], default)
+    choice = _choose(label, [*labels, "Configure for this run"], default)
     return _runtime(current, catalogs) if choice == len(selections) else selections[choice]
 
 
