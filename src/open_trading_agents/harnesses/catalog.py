@@ -199,7 +199,7 @@ async def _discover(config: HarnessSettings) -> ModelCatalog:
         args.extend(["--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-approve", "--list-models"])
         environment["PI_OFFLINE"] = "1"
     elif config.kind == "codex":
-        args.extend(["app-server", "-c", "features.api_key_model_discovery=false"])
+        args.append("app-server")
         if config.provider:
             args.extend(["-c", f"model_provider={json.dumps(config.provider)}"])
     else:
