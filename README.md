@@ -14,9 +14,9 @@ uv run open-trading-agents
 
 Configuration saves a **named preset** containing your harness, provider, model, and reasoning effort. At least one saved preset is required to start an analysis. Run `configure` again to create, update, or delete profiles.
 
-The run wizard asks for the ticker, analysis date, research depth, working-agent profile, decision-manager profile, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select, type to filter, and Enter to confirm. `(default)` marks the initial choice.
+The run wizard asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(default)` marks the initial choice.
 
-After choosing the two profiles, select **Continue** to use them for the run, or **Advanced** to assign profiles to individual agents.
+Choose **Simple** to edit the working-agent and decision-manager profiles, or **Advanced** to assign profiles directly to individual agents. Select a row to change it, then choose **Continue** at the bottom when finished. Rows show the selected preset name or a compact model summary.
 
 To supply the ticker and date directly:
 

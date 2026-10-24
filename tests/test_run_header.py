@@ -33,9 +33,9 @@ async def test_run_header_shows_selected_tiers_without_stage_duplication_or_hidd
         assert "Open Trading Agents · NVDA" in header and "Total " in header
         assert "Running" not in header and "Analysis" not in header
         assert "working" in details.lower() and "manager" in details.lower()
-        for value in ("pi", "local-provider", working.model, "low", "codex", decision.model, "high"):
+        for value in ("pi", working.model, "low", "codex", decision.model, "high"):
             assert value in details
-        for value in ("private-command", "private-environment-value", "private-argument"):
+        for value in ("local-provider", "private-command", "private-environment-value", "private-argument"):
             assert value not in details + str(config.tooltip)
         assert "…" not in details and "..." not in details
         assert config.display and config.region.bottom <= app.query_one("#stage-tabs").region.y
@@ -89,41 +89,41 @@ async def test_individual_profiles_follow_visible_agent_without_expanding_the_he
             assert app.query_one("#shortcuts", Static).region.bottom <= size[1]
             assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0
 
-        assert_header("Market Analyst · pi · local · market-model · low")
+        assert_header("Market Analyst · pi · market-model · low")
         tooltip = str(config.tooltip)
         for name, profile in profiles.items():
             assert name in tooltip and profile.model in tooltip
-        for value in ("private-command", "private-environment-value", "private-argument"):
+        for value in ("local", "private-command", "private-environment-value", "private-argument"):
             assert value not in tooltip
 
         await pilot.press("right")
-        assert_header("News Analyst · claude · Harness default · news-model · high")
+        assert_header("News Analyst · claude · news-model · high")
         await pilot.press("f")
         assert app.fullscreen
-        assert_header("News Analyst · claude · Harness default · news-model · high")
+        assert_header("News Analyst · claude · news-model · high")
         await pilot.press("f", "tab")
-        assert_header("Bull Researcher · pi · local · bull-model · low")
+        assert_header("Bull Researcher · pi · bull-model · low")
 
         await app.receive(AgentEvent("turn_start", "Bear Researcher", "research", data={"round": 1, "turn": 2, "total_rounds": 1}))
         app.flush_events()
         await pilot.pause()
-        assert_header("Bear Researcher · codex · Harness default · bear-model · high")
+        assert_header("Bear Researcher · codex · bear-model · high")
         await pilot.press("left", "left", "f")
         assert app._debate_fullscreen["research"] is app.prompt_views["research"]["Bull Researcher"]
-        assert_header("Bull Researcher · pi · local · bull-model · low")
+        assert_header("Bull Researcher · pi · bull-model · low")
         await pilot.press("f", "right", "right")
-        assert_header("Bear Researcher · codex · Harness default · bear-model · high")
+        assert_header("Bear Researcher · codex · bear-model · high")
 
         for name, key in (("Research Manager", "research_manager"), ("Trader", "trader"), ("Aggressive Analyst", "aggressive")):
             await pilot.press("tab")
-            assert_header(f"{name} · pi · local · {key}-model · low")
+            assert_header(f"{name} · pi · {key}-model · low")
         await app.receive(AgentEvent("turn_start", "Conservative Analyst", "risk", data={"round": 1, "turn": 2, "total_rounds": 1}))
         app.flush_events()
         await pilot.pause()
-        assert_header("Conservative Analyst · pi · local · conservative-model · low")
+        assert_header("Conservative Analyst · pi · conservative-model · low")
         for _ in range(2):
             await pilot.press("tab")
-            assert_header("Portfolio Manager · pi · local · portfolio_manager-model · low")
+            assert_header("Portfolio Manager · pi · portfolio_manager-model · low")
 
 
 @pytest.mark.parametrize("individual", [False, True])
@@ -172,6 +172,7 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(
         assert set(profiles) == {role.name for role in ROLES.values()}
         assert profiles["Bull Researcher"] == HarnessConfig(kind="codex", model="selected-bull", effort="medium")
         assert profiles["Market Analyst"] == settings.model_settings().runtime()
+        assert profiles["Market Analyst"].provider == "local"
         assert profiles["Research Manager"] == settings.model_settings(True).runtime()
     else:
         assert received["agent_configs"] is None

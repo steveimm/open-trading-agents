@@ -23,7 +23,7 @@ def test_configure_creates_user_settings_without_model_requests(tmp_path: Path, 
     assert settings.harness.kind == "pi"
     assert settings.harness.provider == "local"
     assert settings.harness.model == "research-model"
-    assert "Saved default: pi / local / research-model" in result.output
+    assert "Saved default: pi / research-model / Harness default" in result.output
 
 
 def test_configuration_preserves_unrelated_values_comments_and_permissions(tmp_path: Path) -> None:

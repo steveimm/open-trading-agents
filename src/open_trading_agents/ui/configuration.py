@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -49,8 +50,9 @@ def _choose(label: str, choices: list[str], default: int = 0) -> int:
     try:
         selected = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
-            instruction="(↑/↓ select · Enter confirm · type to filter)",
-            use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_search_filter=True,
+            instruction="(↑/↓ select · Enter confirm)",
+            use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
+            erase_when_done=True,
         ).unsafe_ask()
     except (KeyboardInterrupt, EOFError) as exc:
         raise typer.Abort() from exc
@@ -81,7 +83,7 @@ def _describe(settings: HarnessSettings) -> str:
     Returns:
         A short description suitable for an inheritance choice.
     """
-    return f"{settings.kind} / {settings.provider or 'Harness default'} / {settings.model or 'Harness default'} / {settings.effort or 'Harness default'}"
+    return f"{settings.kind} / {settings.model or 'Harness default'} / {settings.effort or 'Harness default'}"
 
 
 def _provider(current: HarnessSettings, catalog: ModelCatalog) -> str | None:
@@ -257,6 +259,37 @@ def select_research_depth(settings: Settings) -> Settings:
     return settings.model_copy(update={"research_rounds": research, "risk_rounds": risk})
 
 
+@dataclass(frozen=True)
+class ProfileChoice:
+    settings: HarnessSettings
+    name: str | None = None
+    inherited: bool = False
+
+
+def _profile_label(
+    settings: HarnessSettings,
+    profiles: dict[str, HarnessSettings],
+    name: str | None = None,
+    default_preset: str | None = None,
+) -> str:
+    """Show a selected preset name, falling back to a compact runtime description.
+
+    Args:
+        settings: Effective profile shown in the editor.
+        profiles: Available saved profiles.
+        name: Exact preset chosen during this editing session.
+        default_preset: Preferred matching preset when no explicit name was chosen.
+
+    Returns:
+        A preset name or harness/model/effort summary.
+    """
+    for candidate in (name, default_preset):
+        if candidate is not None and profiles.get(candidate) == settings:
+            return candidate
+
+    return next((key for key, profile in profiles.items() if profile == settings), _describe(settings))
+
+
 def _agent_profile(
     label: str,
     current: HarnessSettings,
@@ -266,7 +299,8 @@ def _agent_profile(
     same_as: HarnessSettings | None = None,
     inherit_default: bool = False,
     same_as_label: str = "Same as working agents",
-) -> HarnessSettings:
+    current_name: str | None = None,
+) -> ProfileChoice:
     """Select a saved profile or configure a runtime for a group or individual role.
 
     Args:
@@ -278,80 +312,160 @@ def _agent_profile(
         same_as: Runtime offered as an explicit inheritance choice.
         inherit_default: Whether inheritance is initially selected.
         same_as_label: Name of the group whose runtime can be inherited.
+        current_name: Exact preset name most recently selected for this row.
 
     Returns:
-        The selected runtime without persisting the run's role assignments.
+        The runtime, selected preset name, and whether the inheritance option was chosen.
     """
     labels: list[str] = []
-    selections: list[HarnessSettings] = []
+    selections: list[ProfileChoice] = []
     if same_as is not None:
-        labels.append(f"{same_as_label} · {_describe(same_as)}")
-        selections.append(same_as)
-    if current not in profiles.values() and current not in selections:
+        labels.append(f"{same_as_label} · {_profile_label(same_as, profiles, default_preset=default_preset)}")
+        selections.append(ProfileChoice(same_as, inherited=True))
+    if current not in profiles.values():
         labels.append(f"Current settings · {_describe(current)}")
-        selections.append(current)
+        selections.append(ProfileChoice(current))
     preferred = None
     for name, profile in profiles.items():
         labels.append(f"{name} · {_describe(profile)}")
-        if name == default_preset and profile == current:
+        if name == (current_name or default_preset) and profile == current:
             preferred = len(selections)
-        selections.append(profile)
+        selections.append(ProfileChoice(profile, name))
     native = HarnessSettings(kind=current.kind)
-    if native not in selections:
+    if not any(choice.settings == native for choice in selections):
         labels.append(f"Harness default · {current.kind}")
-        selections.append(native)
-    default = selections.index(current) if current in selections else 0
+        selections.append(ProfileChoice(native))
+    default = next((index for index, choice in enumerate(selections) if choice.settings == current and not choice.inherited), 0)
     if preferred is not None:
         default = preferred
     if inherit_default and same_as is not None:
         default = 0
     choice = _choose(label, [*labels, "Configure for this run"], default)
-    return _runtime(current, catalogs) if choice == len(selections) else selections[choice]
+    return ProfileChoice(_runtime(current, catalogs)) if choice == len(selections) else selections[choice]
 
 
 def select_agent_settings(settings: Settings) -> Settings:
-    """Select group runtimes and optional per-role overrides for a new analysis.
+    """Choose a Simple or Advanced editor before assigning profiles for a run.
 
     Args:
         settings: Current application settings and optional default profile.
 
     Returns:
-        New settings with working-agent, decision-manager, and individual role selections.
+        Copied run settings containing the editor's final assignments.
     """
     profiles = {name: load_preset(name) for name in list_presets()}
     catalogs: dict[str, ModelCatalog] = {}
-    working = _agent_profile("Working agents", settings.model_settings(), profiles, settings.default_preset, catalogs)
-    decision = _agent_profile("Decision manager", settings.model_settings(True), profiles, settings.default_preset, catalogs,
-                              same_as=working, inherit_default=settings.deep is None)
-    selected = settings.model_copy(deep=True, update={"quick": working.model_copy(deep=True), "deep": decision.model_copy(deep=True)})
-    if _choose("Agent configuration", ["Continue", "Advanced"]) == 0:
-        return selected
+    mode = _choose("Agent configuration", ["Simple", "Advanced"])
+    selected = settings.model_copy(deep=True)
+    if mode == 0:
+        return _simple_agent_settings(selected, profiles, catalogs)
 
-    roles = list(ROLES)
+    return _advanced_agent_settings(selected, profiles, catalogs)
+
+
+def _simple_agent_settings(
+    selected: Settings,
+    profiles: dict[str, HarnessSettings],
+    catalogs: dict[str, ModelCatalog],
+) -> Settings:
+    """Edit the working and manager profiles in one reusable list.
+
+    Args:
+        selected: Private copy of settings for this run.
+        profiles: Saved profiles offered for either group.
+        catalogs: Cached native choices for custom configuration.
+
+    Returns:
+        Group assignments with individual overrides cleared for this run.
+    """
+    selected.agents = {}
+    inherited_manager = selected.deep is None
+    if inherited_manager:
+        selected.deep = selected.model_settings().model_copy(deep=True)
+
+    groups = (("quick", "Working agents"), ("deep", "Decision manager"))
+    names: dict[str, str | None] = {}
+    cursor = len(groups)
     while True:
-        labels = [f"{ROLES[key].name} · {_describe(selected.model_settings(role=key))}" for key in roles]
-        choice = _choose("Advanced agent configuration", ["Continue", *labels])
-        if choice == 0:
+        working = selected.model_settings()
+        manager = selected.model_settings(True)
+        labels = [f"{label} · {_profile_label(profile, profiles, names.get(key), selected.default_preset)}"
+                  for (key, label), profile in zip(groups, (working, manager), strict=True)]
+        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
+        if cursor == len(groups):
             return selected
 
-        key = roles[choice - 1]
+        key, label = groups[cursor]
+        choice = _agent_profile(
+            label,
+            working if cursor == 0 else manager,
+            profiles,
+            selected.default_preset,
+            catalogs,
+            same_as=working if cursor == 1 else None,
+            inherit_default=inherited_manager if cursor == 1 else False,
+            current_name=names.get(key),
+        )
+        profile = HarnessSettings.model_validate(choice.settings.model_dump())
+        if key == "quick":
+            selected.quick = profile
+            names[key] = choice.name
+            if inherited_manager:
+                selected.deep = profile.model_copy(deep=True)
+                names["deep"] = choice.name
+        else:
+            inherited_manager = choice.inherited
+            selected.deep = profile
+            names[key] = names.get("quick") if choice.inherited else choice.name
+
+
+def _advanced_agent_settings(
+    selected: Settings,
+    profiles: dict[str, HarnessSettings],
+    catalogs: dict[str, ModelCatalog],
+) -> Settings:
+    """Edit individual roles directly without asking for group assignments first.
+
+    Args:
+        selected: Private copy of settings for this run.
+        profiles: Saved profiles offered for each role.
+        catalogs: Cached native choices for custom configuration.
+
+    Returns:
+        Run settings with updated individual role assignments.
+    """
+
+    roles = list(ROLES)
+    names: dict[str, str | None] = {}
+    cursor = len(roles)
+    while True:
+        labels = [f"{ROLES[key].name} · {_profile_label(selected.model_settings(role=key), profiles, names.get(key), selected.default_preset)}"
+                  for key in roles]
+        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
+        if cursor == len(roles):
+            return selected
+
+        key = roles[cursor]
         role = ROLES[key]
         inherited = selected.model_settings(deep=role.deep)
         current = selected.model_settings(role=key)
-        profile = _agent_profile(
+        choice = _agent_profile(
             role.name,
             current,
             profiles,
             selected.default_preset,
             catalogs,
             same_as=inherited,
-            inherit_default=current == inherited,
-            same_as_label="Same as decision manager" if role.deep else "Same as working agents",
+            inherit_default=key not in selected.agents,
+            same_as_label="Default profile",
+            current_name=names.get(key),
         )
-        if profile == inherited:
+        if choice.inherited:
             selected.agents.pop(key, None)
+            names.pop(key, None)
         else:
-            selected.agents[key] = HarnessSettings.model_validate(profile.model_dump())
+            selected.agents[key] = HarnessSettings.model_validate(choice.settings.model_dump())
+            names[key] = choice.name
 
 
 def _preset() -> tuple[str, bool]:

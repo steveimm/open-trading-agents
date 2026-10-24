@@ -70,15 +70,15 @@ def duration(seconds: float) -> str:
 
 
 def _model_selection(config: HarnessConfig) -> str:
-    """Describe public model selectors without commands or environment values.
+    """Describe the harness, model, and effort selected for a role.
 
     Args:
-        config: Selected harness and optional provider, model, and effort.
+        config: Effective runtime configuration for the role.
 
     Returns:
         One sanitized line of model settings.
     """
-    values = (config.kind, config.provider or "Harness default", config.model or "Harness default", config.effort or "Harness default")
+    values = (config.kind, config.model or "Harness default", config.effort or "Harness default")
     return " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
 
 

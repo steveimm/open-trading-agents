@@ -26,6 +26,7 @@ def menus(monkeypatch: pytest.MonkeyPatch) -> list[Question]:
     def capture(*args: Any, **kwargs: Any) -> Question:
         """Retain each native menu while forwarding its original arguments."""
         question = select(*args, **kwargs)
+        assert question.application.erase_when_done
         captured.append(question)
         return question
 
@@ -59,12 +60,20 @@ def test_default_and_cursor_options_have_no_reverse_or_background_highlight(menu
         assert not attributes.bgcolor
 
 
-def test_typing_filters_choices_without_changing_model_identifiers(menus: list[Question]) -> None:
-    """Filtering a decorated menu must still resolve the unmodified model choice index."""
+@pytest.mark.parametrize("keys, expected", [("cloud", 0), ("j", 0), ("k", 0), ("\x0e", 0), ("\x10", 0), ("cloud\x1b[B", 1)])
+def test_only_arrow_keys_change_selection(menus: list[Question], keys: str, expected: int) -> None:
+    """Ignore typed search text and alternate shortcuts while preserving arrow navigation.
+
+    Args:
+        menus: Captured terminal menus.
+        keys: Typed characters and optional arrow keys before confirmation.
+        expected: Selected index after the supported navigation keys.
+    """
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
-        keyboard.send_text("cloud\r")
-        assert configuration_ui._choose("Model", ["local-small", "cloud-large", "local-large"], default=0) == 1
+        keyboard.send_text(f"{keys}\r")
+        assert configuration_ui._choose("Model", ["local-small", "cloud-large", "local-large"], default=0) == expected
     control = next(control for control in menus[0].application.layout.find_all_controls() if isinstance(control, InquirerControl))
     assert control.choices[0].title == "local-small (default)"
-    assert control.get_pointed_at().value == 1
-    assert control.get_pointed_at().title == "cloud-large"
+    assert control.search_filter is None
+    assert control.filtered_choices == control.choices
+    assert control.get_pointed_at().value == expected

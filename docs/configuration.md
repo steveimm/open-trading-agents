@@ -12,7 +12,7 @@ Choose **Create or update profile**, select the harness, provider, model, and re
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
-Use Up/Down to move the pointer, type to filter choices, and Enter to confirm. The initial choice has a `(default)` suffix. Ctrl+C cancels setup without saving.
+Use Up/Down to move the pointer and Enter to confirm. The initial choice has a `(default)` suffix. Ctrl+C cancels setup without saving.
 
 To remove a preset, choose **Delete saved profile**, select its name, and confirm. Deleting the default clears its default selection in the selected and global configuration. Other presets and saved runs are retained.
 
@@ -54,11 +54,15 @@ uv run open-trading-agents configure --harness pi --provider local --model my-mo
 
 These flags do not create a named preset. Use the interactive wizard to save one before the first analysis. Empty `--model ""`, `--provider ""`, or `--effort ""` values reset the corresponding selector to its harness default.
 
-## Individual agent profiles
+## Run profile selection
 
-After choosing the working-agent and decision-manager profiles, **Continue** keeps those group selections. Choose **Advanced** to edit individual analysts, the bull and bear researchers, the trader, the risk participants, either manager, or the supporting reflection and screening agents.
+Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an editable list. Select a row to change its profile, return to the list, and choose **Continue** at the bottom when finished. Rows display the selected preset name, or the harness, model, and effort when no saved preset matches.
 
-Select a role, then choose a saved profile or **Configure for this run**. Repeat for any other roles, then select **Continue**. **Same as working agents** or **Same as decision manager** restores that role's group default. Unassigned roles inherit their group profile. These choices are saved with the run for resume and do not modify your presets or configuration file.
+**Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
+
+**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, reflection agent, or screening agent. Choose a saved profile or **Configure for this run**. **Default profile** restores the role's initial group profile.
+
+These choices are saved with the run for resume and do not modify your presets or configuration file. Cancelling either editor discards its changes.
 
 To retain individual assignments across runs, including unattended runs, add role sections to `config.toml`:
 

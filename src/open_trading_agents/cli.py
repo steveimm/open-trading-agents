@@ -349,7 +349,7 @@ def configure(
         settings = save_harness_selection(config, harness=harness.value if harness is not None else None,
                                           model=model, provider=provider, effort=effort)
         selected = settings.harness
-        typer.echo(f"Saved default: {selected.kind} / {selected.provider or 'Harness default'} / {selected.model or 'Harness default'} / {selected.effort or 'Harness default'}")
+        typer.echo(f"Saved default: {selected.kind} / {selected.model or 'Harness default'} / {selected.effort or 'Harness default'}")
         typer.echo(f"Config: {config.expanduser().resolve()}")
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Configuration failed: {exc}", style="red", markup=False)
