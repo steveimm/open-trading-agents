@@ -105,6 +105,19 @@ def test_replacing_the_selected_preset_keeps_it_as_default(wizard: Path, monkeyp
     assert "Default preset: daily" in result.output
 
 
+def test_replacing_the_selected_preset_can_clear_its_default_status(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declining default status for the selected name removes the marker without deleting the preset."""
+    save_preset("daily", Settings(harness=HarnessSettings(kind="pi", provider="local", model="small")))
+    wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\nprovider = "local"\nmodel = "small"\n')
+    select_choices(monkeypatch, [None, None, 2, None, None, 0, 0, 1])
+    result = runner.invoke(cli.app, ["configure"], input="daily\n")
+    assert result.exit_code == 0, result.output
+    assert "default_preset" not in tomllib.loads(wizard.read_text())
+    assert load_settings().default_preset is None
+    assert load_settings(preset="daily").harness.model == "large"
+    assert "Default preset:" not in result.output
+
+
 def test_cancel_at_default_preset_selection_writes_nothing(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Gather the final preset preference before changing the config or creating a preset."""
     wizard.parent.mkdir(parents=True)
