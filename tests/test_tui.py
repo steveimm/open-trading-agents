@@ -189,7 +189,7 @@ async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections()
         assert not app.check_action("detail", (1,))
         await app.receive(AgentEvent("reasoning", "Market Analyst", "analysis", "Check evidence.", {"message_id": "r"}))
         app.flush_events()
-        assert "previous section" in str(footer.render()) and "next section" in str(footer.render())
+        assert "[ prev · ] next" in str(footer.render())
         assert "Space expand/collapse" in str(footer.render())
         await pilot.press("f")
         assert app.fullscreen

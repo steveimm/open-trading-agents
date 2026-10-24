@@ -107,8 +107,8 @@ class TradingApp(App[None]):
         Binding("end", "navigate('end')", "Follow stream", priority=True),
         Binding("enter,f", "fullscreen", "Expand", priority=True),
         Binding("escape", "restore", "Restore", priority=True),
-        Binding("left_square_bracket", "detail(-1)", "Previous section", show=False, priority=True),
-        Binding("right_square_bracket", "detail(1)", "Next section", show=False, priority=True),
+        Binding("left_square_bracket", "detail(-1)", "Prev", show=False, priority=True),
+        Binding("right_square_bracket", "detail(1)", "Next", show=False, priority=True),
         Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
         Binding("m", "memory", "Supporting analysis", show=False, priority=True),
         Binding("ctrl+c,q", "stop", "Quit", priority=True),
@@ -494,7 +494,7 @@ class TradingApp(App[None]):
             parts.append(("f/Esc grid" if compact else "f/Esc restore grid") if self.fullscreen
                          else ("f full" if compact else "Enter/f fullscreen"))
         if self._action_available("detail"):
-            parts.extend(["[ prev · ] next" if compact else "[ previous section · ] next section",
+            parts.extend(["[ prev · ] next",
                           "Space toggle" if compact else "Space expand/collapse"])
         if not view.following:
             parts.append("End follow")
