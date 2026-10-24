@@ -10,7 +10,6 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from open_trading_agents.dataflows.calculation import calculate
 from open_trading_agents.dataflows.config import run_config
 from open_trading_agents.dataflows.date_window import as_of, as_of_window
 from open_trading_agents.dataflows.errors import NoMarketDataError, VendorUnavailableError
@@ -37,7 +36,6 @@ TOOL_NAMES = (
     "get_social_sentiment",
     "search_web",
     "fetch_webpage",
-    "calculate",
 )
 
 
@@ -310,19 +308,6 @@ class FinancialTools:
             Source evidence without scripts, images, subresource requests, or unsupported historical claims.
         """
         return fetch_webpage(url, self.context.trade_date, max_chars)
-
-    def calculate(self, expression: str, variables: dict[str, Any] | None = None) -> str:
-        """Verify arithmetic, percentages, sizing, and statistics using deterministic calculations.
-
-        Args:
-            expression: Arithmetic (+ - * / // ** %) with abs, sum, min, max, round, len, mean, median,
-                stdev, pstdev, sqrt, log, log10, floor, ceil, numeric lists, or list indices.
-            variables: Optional named finite numbers or numeric lists used by the expression.
-
-        Returns:
-            Computed result or a clear error. Inputs are already present in the tool call. This tool cannot execute scripts.
-        """
-        return calculate(expression, variables)
 
 
 def create_server(context: ToolContext, names: tuple[str, ...] = TOOL_NAMES) -> MCPServer:

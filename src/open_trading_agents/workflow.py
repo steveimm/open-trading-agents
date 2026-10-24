@@ -188,7 +188,7 @@ class Workflow:
         await self._event("agent_start", role.stage, name)
         if name not in self.sessions:
             workspace = self.directory / "agents" / "".join(c if c.isalnum() else "_" for c in name)
-            tools = ("calculate", *role.tools)
+            tools = role.tools
             if role_key in ("market", "social", "news", "fundamentals") and self.settings.web_research:
                 tools = (*tools, "search_web", "fetch_webpage")
             instructions = system_prompt(role, self.settings.output_language)
