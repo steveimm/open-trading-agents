@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from ddgs import DDGS
+from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 
 from open_trading_agents.dataflows.config import get_config
 
@@ -23,6 +24,8 @@ MAX_TEXT_CHARS = 20_000
 MAX_REDIRECTS = 3
 REQUEST_SECONDS = 20.0
 SEARCH_BACKENDS = frozenset({"yahoo", "duckduckgo", "brave", "bing", "google", "mojeek", "startpage", "yandex", "wikipedia"})
+SEARCH_ATTEMPTS = 2
+SEARCH_RETRY_DELAY = 0.5
 _BLOCK_TAGS = frozenset({"p", "div", "article", "section", "li", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6"})
 _IGNORE_TAGS = frozenset({"script", "style", "noscript", "iframe", "svg", "canvas", "template", "nav", "form", "button"})
 _VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
@@ -100,6 +103,7 @@ class _PinnedConnection(http.client.HTTPConnection):
             address: One of the already validated public destination addresses.
             timeout: Socket connection/read timeout.
         """
+        self.default_port = 443 if target.secure else 80
         super().__init__(target.hostname, target.port, timeout=timeout)
         self.target = target
         self.address = address
@@ -416,6 +420,32 @@ def fetch_webpage(url: str, trade_date: str, max_chars: int = MAX_TEXT_CHARS) ->
         return json.dumps({"source_url": url, "analysis_date": trade_date, "error": f"DATA_UNAVAILABLE: {exc}"}, ensure_ascii=False)
 
 
+def _search_failure(error: Exception) -> tuple[str, bool]:
+    """Classify search failures without exposing URLs, proxy credentials, or raw diagnostics.
+
+    Args:
+        error: Exception raised by the search client.
+
+    Returns:
+        A public explanation and whether a bounded retry may help.
+    """
+    if isinstance(error, RatelimitException):
+        return "Search backend rate-limited the request. Retry later", False
+    if isinstance(error, TimeoutException):
+        return "Search backend timed out", True
+    if isinstance(error, DDGSException):
+        message = str(error)
+        status = re.search(r"\b(?:HTTP(?: status)?|status(?: code)?)\s*[:=]?\s*([45]\d{2})\b", message, re.IGNORECASE)
+        if status:
+            code = int(status.group(1))
+            return f"Search backend returned HTTP {code}", code >= 500
+        if message.strip().lower() == "no results found.":
+            return "Search backend returned no usable results", True
+        return "Search backend failed (DDGSException)", True
+
+    return f"Search failed ({type(error).__name__})", False
+
+
 def search_web(query: str, trade_date: str, limit: int = 5) -> str:
     """Search explicitly selected public engines and return citeable source links.
 
@@ -435,17 +465,24 @@ def search_web(query: str, trade_date: str, limit: int = 5) -> str:
     backends = [part.strip().lower() for part in configured.split(",") if part.strip()]
     if not backends or not set(backends) <= SEARCH_BACKENDS:
         raise ValueError(f"Choose explicit web_search_backend values from: {', '.join(sorted(SEARCH_BACKENDS))}")
-    try:
-        results = DDGS(timeout=8).text(query, max_results=limit, backend=",".join(backends))
-    except Exception as exc:
-        return json.dumps(
-            {
-                "query": query,
-                "backend": configured,
-                "analysis_date": trade_date,
-                "error": f"DATA_UNAVAILABLE: search failed ({type(exc).__name__})",
-            }
-        )
+    for attempt in range(SEARCH_ATTEMPTS):
+        try:
+            results = DDGS(timeout=8).text(query, max_results=limit, backend=",".join(backends))
+            break
+        except Exception as exc:
+            reason, retryable = _search_failure(exc)
+            if retryable and attempt + 1 < SEARCH_ATTEMPTS:
+                time.sleep(SEARCH_RETRY_DELAY)
+                continue
+            return json.dumps(
+                {
+                    "query": query,
+                    "backend": configured,
+                    "analysis_date": trade_date,
+                    "attempts": attempt + 1,
+                    "error": f"DATA_UNAVAILABLE: {reason}",
+                }
+            )
     sources = []
     for result in results:
         link = _link_url(str(result.get("href") or result.get("url") or ""), "https://search.yahoo.com/")

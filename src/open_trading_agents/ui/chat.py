@@ -113,6 +113,32 @@ class ChatSection:
         self.source += text
         self.document.append(text, CHANNEL_COLORS.get(self.kind, "#b7c2d4"))
 
+    def visible_rows(self, width: int) -> tuple[int, int]:
+        """Index display rows while excluding assistant text's boundary whitespace.
+
+        Args:
+            width: Available terminal cells for the section body.
+
+        Returns:
+            The first source row and visible height, preserving interior blank lines.
+        """
+        self.index.sync(width)
+        if self.kind != "text":
+            return 0, self.index.height
+
+        lines = self.document.lines
+        first, last = 0, len(lines) - 1
+        while first <= last and not lines[first].plain.strip():
+            first += 1
+        while last >= first and not lines[last].plain.strip():
+            last -= 1
+        if first > last:
+            return 0, 0
+
+        start = self.index.offsets[first]
+        end = self.index.row_at(last, len(lines[last].plain.rstrip()) - 1) + 1
+        return start, end - start
+
 
 @dataclass(eq=False)
 class ChatBubble:
@@ -134,6 +160,7 @@ class ChatPart:
     height: int
     bubble: ChatBubble | None = None
     section: ChatSection | None = None
+    start_row: int = 0
 
     @property
     def disclosure(self) -> ChatBubble | ChatSection | None:
@@ -427,7 +454,7 @@ class ChatView(FollowScrollView):
             return None
         part = self._parts[index]
         if part.kind == "body" and part.section is not None:
-            return (part.key, *part.section.index.source_at(int(self.scroll_y) - self._offsets[index]))
+            return (part.key, *part.section.index.source_at(part.start_row + int(self.scroll_y) - self._offsets[index]))
         return part.key, 0, 0
 
     def sync(self) -> None:
@@ -452,8 +479,9 @@ class ChatView(FollowScrollView):
             if section.collapsible and header:
                 parts.append(ChatPart(f"header:{section.key}", "detail", 1, bubble, section))
             if not section.collapsed and section.source:
-                section.index.sync(max(1, width - 4))
-                parts.append(ChatPart(f"body:{section.key}", "body", section.index.height, bubble, section))
+                start, height = section.visible_rows(max(1, width - 4))
+                if height:
+                    parts.append(ChatPart(f"body:{section.key}", "body", height, bubble, section, start))
 
         if self.show_systems:
             for section in self.systems.values():
@@ -489,7 +517,8 @@ class ChatView(FollowScrollView):
             self.scroll_end(animate=False, immediate=True)
         elif anchor and anchor[0] in lookup:
             part = next(p for p in parts if p.key == anchor[0])
-            offset = part.section.index.row_at(anchor[1], anchor[2]) if part.kind == "body" and part.section else 0
+            offset = part.section.index.row_at(anchor[1], anchor[2]) - part.start_row if part.kind == "body" and part.section else 0
+            offset = max(0, min(offset, part.height - 1))
             self.scroll_to(y=lookup[anchor[0]] + offset, animate=False, immediate=True)
         self.refresh()
         self.call_after_refresh(self.sync)
@@ -692,7 +721,7 @@ class ChatView(FollowScrollView):
                 return Strip.join([Strip([Segment("│ ", border)]), label, Strip([Segment(" │", border)])]).adjust_cell_length(width, self.rich_style)
             return self._line(f"  {marker} {section.title}", style, width)
         if part.kind == "body" and section is not None:
-            content_row = row - self._offsets[index]
+            content_row = part.start_row + row - self._offsets[index]
             body = section.index.render(content_row, self.app.console, self.rich_style)
             cache_key = section.index, section.index.cache_key(content_row)
             self._cache[cache_key] = body

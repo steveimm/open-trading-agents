@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 
 from open_trading_agents.dataflows import web
 from open_trading_agents.dataflows.config import run_config
@@ -87,6 +88,26 @@ def test_connection_uses_pinned_ip_and_original_tls_hostname(monkeypatch: pytest
     connection.connect()
     connect.assert_called_once_with(("93.184.216.34", 443), 3)
     context.wrap_socket.assert_called_once_with(raw_socket, server_hostname="example.org")
+
+
+@pytest.mark.parametrize("secure,port,host", [(True, 443, "example.org"), (True, 8443, "example.org:8443"),
+                                             (False, 80, "example.org"), (False, 8080, "example.org:8080")])
+def test_pinned_connection_formats_host_for_its_protocol(secure: bool, port: int, host: str) -> None:
+    """Keep default HTTPS ports out of Host while retaining explicitly nonstandard ports.
+
+    Args:
+        secure: Whether this request uses TLS.
+        port: Destination port.
+        host: Expected HTTP Host value.
+    """
+    scheme = "https" if secure else "http"
+    target = web.PublicTarget(f"{scheme}://{host}/article", "example.org", port, ("93.184.216.34",), "/article", secure)
+    connection = web._PinnedConnection(target, target.addresses[0], 3)
+    connection.sock = Mock()
+    connection.request("GET", target.path)
+
+    request = b"".join(call.args[0] for call in connection.sock.sendall.call_args_list)
+    assert f"\r\nHost: {host}\r\n".encode() in request
 
 
 def _response(body: bytes, headers: dict[str, str] | None = None) -> Mock:
@@ -185,6 +206,60 @@ def test_search_preserves_citations_filters_known_future_dates_and_uses_explicit
     client.text.assert_called_once_with("company results", max_results=3, backend="yahoo")
     with run_config({"web_search_backend": "auto"}), pytest.raises(ValueError, match="explicit"):
         web.search_web("company results", "2024-03-15")
+
+
+def test_search_retries_transient_empty_backend_response_without_switching_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recover a temporary DDGS failure while honoring the configured backend and query."""
+    client = Mock()
+    client.text.side_effect = [DDGSException("No results found."),
+                               [{"title": "Source", "href": "https://example.org/article", "body": "Evidence"}]]
+    monkeypatch.setattr(web, "DDGS", Mock(return_value=client))
+    pause = Mock()
+    monkeypatch.setattr(web.time, "sleep", pause)
+
+    with run_config({"web_search_backend": "yahoo"}):
+        result = json.loads(web.search_web("CoreWeave backlog $104 billion AI contracts", "2026-10-24", 5))
+
+    assert "error" not in result and result["sources"][0]["url"] == "https://example.org/article"
+    assert client.text.call_count == 2
+    for call in client.text.call_args_list:
+        assert call.args == ("CoreWeave backlog $104 billion AI contracts",)
+        assert call.kwargs == {"max_results": 5, "backend": "yahoo"}
+    pause.assert_called_once_with(web.SEARCH_RETRY_DELAY)
+
+
+@pytest.mark.parametrize("error,reason,attempts", [
+    (DDGSException("No results found."), "no usable results", 2),
+    (TimeoutException("private connection details"), "timed out", 2),
+    (RatelimitException("private connection details"), "rate-limited", 1),
+    (DDGSException("HTTP 403 for https://user:private@example.org"), "HTTP 403", 1),
+    (DDGSException("HTTP 503 for https://user:private@example.org"), "HTTP 503", 2),
+    (RuntimeError("private connection details"), "RuntimeError", 1),
+])
+def test_search_failure_is_bounded_and_does_not_expose_raw_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, reason: str, attempts: int,
+) -> None:
+    """Report useful failure categories without leaking proxy addresses or repeating rejected requests.
+
+    Args:
+        monkeypatch: Isolated client and delay replacements.
+        error: Simulated provider or client failure.
+        reason: Public failure category.
+        attempts: Expected bounded request count.
+    """
+    client = Mock()
+    client.text.side_effect = error
+    monkeypatch.setattr(web, "DDGS", Mock(return_value=client))
+    pause = Mock()
+    monkeypatch.setattr(web.time, "sleep", pause)
+
+    with run_config({"web_search_backend": "yahoo"}):
+        result = json.loads(web.search_web("company results", "2024-03-15"))
+
+    assert reason in result["error"]
+    assert result["attempts"] == client.text.call_count == attempts
+    assert pause.call_count == attempts - 1
+    assert "private" not in json.dumps(result) and "example.org" not in json.dumps(result)
 
 
 @pytest.mark.asyncio

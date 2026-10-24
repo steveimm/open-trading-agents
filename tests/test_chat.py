@@ -221,6 +221,72 @@ async def test_reasoning_and_tool_details_toggle_with_keyboard_and_mouse() -> No
         assert not view.following
 
 
+@pytest.mark.parametrize("trailing", ["\n" * 7, " " * 700])
+async def test_text_boundaries_do_not_create_gaps_before_parallel_tools(trailing: str) -> None:
+    """Keep raw streamed whitespace while rendering tool calls directly after visible text.
+
+    Args:
+        trailing: Extra blank lines or soft-wrapped whitespace supplied by the harness.
+    """
+    view = ChatView(id="chat")
+    body = "I have the news lists.\n\n    Check the evidence."
+    source = "\n \n" + body + trailing
+    metadata = {"message_id": "preface"}
+    async with ChatTestApp(view).run_test(size=(100, 35)) as pilot:
+        for chunk in ("\n \n", body, trailing):
+            view.consume(AgentEvent("text", "News Analyst", "analysis", chunk, metadata))
+            view.sync()
+        for number, name in enumerate(("get_macro_indicators", "search_web")):
+            view.consume(AgentEvent("tool_start", "News Analyst", "analysis", "{}",
+                                    {"tool": name, "tool_call_id": str(number)}))
+        view.consume(AgentEvent("text", "News Analyst", "analysis", source, {**metadata, "final": True}))
+        view.sync()
+        await pilot.pause()
+
+        for width in (100, 60):
+            await pilot.resize_terminal(width, 35)
+            await pilot.pause()
+            rows = ["".join(segment.text for segment in view.render_line(row)) for row in range(view.virtual_size.height)]
+            first = next(index for index, row in enumerate(rows) if "I have the news lists." in row)
+            last = next(index for index, row in enumerate(rows) if "Check the evidence." in row)
+            tool = next(index for index, row in enumerate(rows) if "▸ get_macro_indicators" in row)
+            assert first == 1
+            assert last == first + 2
+            assert "│     Check the evidence." in rows[last]
+            assert tool == last + 1 and "▸ search_web" in rows[tool + 1]
+            assert not rows[first + 1][2:-2].strip()
+
+        section = view.bubbles[0].sections[0]
+        assert section.source == section.document.plain() == source
+        assert source in view.plain()
+        tool_section = view.bubbles[0].sections[1]
+        view.consume(AgentEvent("tool_result", "News Analyst", "analysis", "\n\nExact result\n\n", {"tool_call_id": "0"}))
+        view._toggle(tool_section)
+        assert "Result\n\n\nExact result\n\n" in tool_section.document.plain()
+
+
+async def test_whitespace_only_output_reserves_no_rows_and_keeps_streamed_paragraphs() -> None:
+    """Restore interior paragraph spacing naturally when text follows pending whitespace."""
+    view = ChatView(id="chat")
+    metadata = {"message_id": "reply"}
+    async with ChatTestApp(view).run_test(size=(100, 30)) as pilot:
+        view.consume(AgentEvent("text", "Market Analyst", "analysis", "\n  \n", metadata))
+        view.sync()
+        await pilot.pause()
+        assert view.virtual_size.height == 2
+
+        for chunk in ("First paragraph.\n\n", "Second paragraph.\n\n\n"):
+            view.consume(AgentEvent("text", "Market Analyst", "analysis", chunk, metadata))
+            view.sync()
+        view.consume(AgentEvent("tool_start", "Market Analyst", "analysis", "{}", {"tool": "get_stock_data", "tool_call_id": "one"}))
+        view.sync()
+        await pilot.pause()
+        rows = ["".join(segment.text for segment in view.render_line(row)) for row in range(view.virtual_size.height)]
+        assert "First paragraph." in rows[1] and "Second paragraph." in rows[3]
+        assert "▸ get_stock_data" in rows[4]
+        assert view.bubbles[0].sections[0].source == "\n  \nFirst paragraph.\n\nSecond paragraph.\n\n\n"
+
+
 async def test_bottom_navigation_resumes_follow_without_resize_or_append_reset() -> None:
     """Return to live via ordinary downward scrolling while preserving intentional scrollback."""
     document = Transcript()
