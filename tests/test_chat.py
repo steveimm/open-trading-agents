@@ -231,3 +231,25 @@ async def test_pending_legacy_turn_reopens_its_existing_bubble() -> None:
         assert view.bubbles[0].status == "streaming"
         view.finish("stopped")
         assert view.bubbles[0].status == "stopped"
+
+
+async def test_reused_native_ids_do_not_mutate_previous_contributions() -> None:
+    """Scope transport identifiers to their contribution and distinguish later tool executions."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 30)):
+        for number in (1, 2):
+            metadata = {"conversation_turn_id": f"research:{number}:bull", "round": number, "turn": 1, "total_rounds": 2}
+            view.consume(AgentEvent("turn_start", "Bull Researcher", "research", data=metadata))
+            for tool_number in (1, 2):
+                view.consume(AgentEvent("tool_start", "Bull Researcher", "research", "{}",
+                                        {**metadata, "tool": "calculate", "tool_call_id": "reused"}))
+                view.consume(AgentEvent("tool_result", "Bull Researcher", "research", f"value-{number}-{tool_number}",
+                                        {**metadata, "tool_call_id": "reused", "final": True}))
+            view.consume(AgentEvent("text", "Bull Researcher", "research", f"argument-{number}",
+                                    {**metadata, "message_id": "reused-message"}))
+            view.consume(AgentEvent("agent_end", "Bull Researcher", "research", data={**metadata, "output": f"argument-{number}"}))
+        first, second = view.bubbles
+        assert [section.source for section in first.sections if section.kind == "text"] == ["argument-1"]
+        assert [section.source for section in second.sections if section.kind == "text"] == ["argument-2"]
+        assert "value-1-1" in first.sections[0].source and "value-1-2" in first.sections[1].source
+        assert "value-2-1" in second.sections[0].source and "value-2-2" in second.sections[1].source

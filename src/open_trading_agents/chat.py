@@ -109,11 +109,12 @@ class ChatView(FollowScrollView):
         self.systems: OrderedDict[str, ChatSection] = OrderedDict()
         self._turns: dict[str, ChatBubble] = {}
         self._current: dict[str, ChatBubble] = {}
-        self._messages: dict[tuple[str, str, str], ChatSection] = {}
-        self._tools: dict[tuple[str, str], ChatSection] = {}
-        self._arguments: dict[tuple[str, str], str] = {}
-        self._outputs: dict[tuple[str, str], str] = {}
-        self._argument_deltas: set[tuple[str, str]] = set()
+        self._messages: dict[tuple[ChatBubble, str, str], ChatSection] = {}
+        self._tools: dict[tuple[ChatBubble, str], ChatSection] = {}
+        self._arguments: dict[tuple[ChatBubble, str], str] = {}
+        self._outputs: dict[tuple[ChatBubble, str], str] = {}
+        self._argument_deltas: set[tuple[ChatBubble, str]] = set()
+        self._finished_tools: set[tuple[ChatBubble, str]] = set()
         self._seen: set[str] = set()
         self._parts: list[ChatPart] = []
         self._offsets = [0]
@@ -205,10 +206,10 @@ class ChatView(FollowScrollView):
                 return
             bubble = self._bubble(event)
             message = str(event.data.get("message_id") or bubble.key)
-            key = event.agent, message, kind
+            key = bubble, message, kind
             section = self._messages.get(key)
             if section is None:
-                section = ChatSection(f"{kind}:{event.agent}:{message}", kind, "Reasoning" if kind == "reasoning" else "",
+                section = ChatSection(f"{kind}:{event.event_id}", kind, "Reasoning" if kind == "reasoning" else "",
                                       kind == "reasoning", kind == "reasoning")
                 self._messages[key] = section
                 bubble.sections.append(section)
@@ -291,13 +292,20 @@ class ChatView(FollowScrollView):
             event: Native tool event.
             kind: Normalized tool_start or tool_result category.
         """
-        key = event.agent, str(event.data.get("tool_call_id") or event.event_id)
+        bubble = self._bubble(event)
+        key = bubble, str(event.data.get("tool_call_id") or event.event_id)
+        if kind == "tool_start" and key in self._finished_tools:
+            self._tools.pop(key, None)
+            self._arguments.pop(key, None)
+            self._outputs.pop(key, None)
+            self._argument_deltas.discard(key)
+            self._finished_tools.discard(key)
         section = self._tools.get(key)
         name = str(event.data.get("tool") or event.data.get("name") or event.data.get("tool_name") or "Tool")
         if section is None:
-            section = ChatSection(f"tool:{key[0]}:{key[1]}", "tool_result", name, True, True)
+            section = ChatSection(f"tool:{event.event_id}", "tool_result", name, True, True)
             self._tools[key] = section
-            self._bubble(event).sections.append(section)
+            bubble.sections.append(section)
         elif name != "Tool":
             section.title = name
         value = tool_text(event)
@@ -310,6 +318,8 @@ class ChatView(FollowScrollView):
                 self._arguments[key] = value
         else:
             self._outputs[key] = self._outputs.get(key, "") + value if event.data.get("delta") else value
+            if event.data.get("final") or not (event.data.get("delta") or event.data.get("snapshot")):
+                self._finished_tools.add(key)
             if event.data.get("is_error"):
                 section.kind = "error"
         arguments = self._arguments.get(key, "")
