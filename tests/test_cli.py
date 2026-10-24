@@ -4,30 +4,32 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from open_trading_agents import backtest, cli
+from open_trading_agents import backtest, cli, configuration_ui
 from open_trading_agents.cli import HarnessName, app, configured
 from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, default_config_path, save_preset, set_default_preset
 
 runner = CliRunner()
 
 
-def test_help_omits_completion_and_replay() -> None:
+def test_help_omits_completion_replay_and_analyze() -> None:
     """Expose only the supported user-facing commands and options."""
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "install-completion" not in result.output
     assert "show-completion" not in result.output
     assert "replay" not in result.output
+    assert "analyze" not in result.output
     assert runner.invoke(app, ["replay"]).exit_code == 2
+    assert runner.invoke(app, ["analyze"]).exit_code == 2
 
 
-@pytest.mark.parametrize("command", ["analyze", "backtest"])
-def test_run_commands_reject_removed_preset_argument(command: str) -> None:
+@pytest.mark.parametrize("prefix", [[], ["backtest"]])
+def test_run_commands_reject_removed_preset_argument(prefix: list[str]) -> None:
     """Presets are selected per agent role in startup rather than through a run-level flag."""
-    help_result = runner.invoke(app, [command, "--help"])
+    help_result = runner.invoke(app, [*prefix, "--help"])
     assert help_result.exit_code == 0
     assert "--preset" not in help_result.output
-    rejected = runner.invoke(app, [command, "NVDA", "--preset", "daily"])
+    rejected = runner.invoke(app, [*prefix, "--preset", "daily"])
     assert rejected.exit_code == 2
     assert "No such option: --preset" in rejected.output
 
@@ -40,11 +42,65 @@ def test_configure_no_longer_selects_a_run_tier() -> None:
     assert runner.invoke(app, ["configure", "--tier", "deep"]).exit_code == 2
 
 
-def test_headless_requires_explicit_ticker_before_any_model_call() -> None:
+@pytest.mark.parametrize("flags,existing_config", [([], False), (["--ticker", "NVDA", "--headless"], True),
+                                                  (["--ticker", "NVDA", "--events"], False)])
+def test_missing_preset_exits_before_input_settings_or_native_work(
+    flags: list[str], existing_config: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh launch explains setup without asking questions, reading config, or creating run files."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True), stdout=SimpleNamespace(isatty=lambda: True)))
+    if existing_config:
+        path = default_config_path()
+        path.parent.mkdir()
+        path.write_text("deliberately invalid TOML")
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        """Reject any setup, filesystem-producing workflow, or model lookup before the preset check."""
+        raise AssertionError("Work started before requiring a saved preset")
+
+    monkeypatch.setattr(cli.typer, "prompt", unexpected)
+    monkeypatch.setattr(cli, "configured", unexpected)
+    monkeypatch.setattr(cli, "Workflow", unexpected)
+    monkeypatch.setattr(configuration_ui, "discover_models", unexpected)
+    result = runner.invoke(app, flags)
+    assert result.exit_code == 1, result.output
+    assert result.output.strip() == "Run uv run open-trading-agents configure first to create a preset."
+    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+    if existing_config:
+        assert default_config_path().read_text() == "deliberately invalid TOML"
+
+
+def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep setup, inspection, help, and resuming saved work reachable before a preset exists."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    def unexpected() -> tuple[str, ...]:
+        """Reject a preset lookup for commands that do not start a new analysis."""
+        raise AssertionError("Maintenance command checked presets")
+
+    monkeypatch.setattr(cli, "list_presets", unexpected)
+    for options in (["--help"], ["configure", "--help"], ["backtest", "--help"], ["resume", "--help"], ["doctor"]):
+        result = runner.invoke(app, options)
+        assert result.exit_code == 0, result.output
+    configured_result = runner.invoke(app, ["configure", "--harness", "pi", "--model", "setup-model"])
+    assert configured_result.exit_code == 0, configured_result.output
+    directory = tmp_path / "saved-run"
+    directory.mkdir()
+    resumed = object()
+    monkeypatch.setattr(cli, "Workflow", SimpleNamespace(resume=lambda path: resumed))
+    monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: resumed)
+    assert runner.invoke(app, ["resume", str(directory), "--headless"]).exit_code == 0
+
+
+def test_headless_requires_explicit_ticker_before_any_model_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unattended invocations fail with actionable input instructions."""
-    result = runner.invoke(app, ["analyze", "--headless"])
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    save_preset("available", HarnessSettings())
+    result = runner.invoke(app, ["--headless"])
     assert result.exit_code == 2
-    assert "provide a ticker" in result.output
+    assert "provide --ticker" in result.output
 
 
 def test_config_resolves_storage_relative_to_its_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,7 +117,7 @@ def test_config_resolves_storage_relative_to_its_file(tmp_path: Path, monkeypatc
 
 def test_unknown_harness_is_rejected_by_cli() -> None:
     """Reject a misspelled backend rather than falling back silently."""
-    result = runner.invoke(app, ["analyze", "NVDA", "--harness", "wrong", "--headless"])
+    result = runner.invoke(app, ["--ticker", "NVDA", "--harness", "wrong", "--headless"])
     assert result.exit_code == 2
     assert "wrong" in result.output
 
@@ -144,7 +200,7 @@ def test_cli_flags_override_default_profile_for_both_roles(tmp_path: Path, monke
     assert path.read_text() == original
 
 
-@pytest.mark.parametrize("command", ["analyze", "backtest"])
+@pytest.mark.parametrize("command", ["run", "backtest"])
 def test_unattended_runs_use_the_default_profile(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Route the configured default profile into unattended runs without changing native credentials."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -166,8 +222,8 @@ def test_unattended_runs_use_the_default_profile(command: str, tmp_path: Path, m
     monkeypatch.setattr(cli, "Workflow", workflow)
     monkeypatch.setattr(cli, "run_workflow", lambda workflow, headless, events: None)
     monkeypatch.setattr(backtest, "run_backtest", sweep)
-    options = ["--headless"] if command == "analyze" else ["--start", "2026-01-02", "--end", "2026-01-02"]
-    result = runner.invoke(app, [command, "NVDA", *options])
+    options = ["--ticker", "NVDA", "--headless"] if command == "run" else ["backtest", "NVDA", "--start", "2026-01-02", "--end", "2026-01-02"]
+    result = runner.invoke(app, options)
     assert result.exit_code == 0, result.output
     assert len(received) == 1
     assert received[0].harness == HarnessSettings(kind="pi", provider="local", model="selected-model", effort="high")

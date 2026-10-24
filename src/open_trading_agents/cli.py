@@ -14,11 +14,19 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 
-from open_trading_agents.config import HarnessSettings, Settings, default_config_path, load_portfolio, load_settings, save_harness_selection
+from open_trading_agents.config import (
+    HarnessSettings,
+    Settings,
+    default_config_path,
+    list_presets,
+    load_portfolio,
+    load_settings,
+    save_harness_selection,
+)
 from open_trading_agents.domain import AgentEvent
 from open_trading_agents.workflow import RunResult, Workflow
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="Financial research through native agent harness sessions.")
+app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
 console = Console(stderr=True)
 
 
@@ -117,9 +125,10 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
     return result
 
 
-@app.command()
-def analyze(
-    ticker: Annotated[str | None, typer.Argument(help="Ticker or supported alias, for example NVDA or BTC-USD.")] = None,
+@app.callback(invoke_without_command=True, help="Start a research run, or choose a command to configure profiles or manage saved work.")
+def run(
+    ctx: typer.Context,
+    ticker: Annotated[str | None, typer.Option("--ticker", help="Ticker or supported alias, for example NVDA or BTC-USD.")] = None,
     analysis_date: Annotated[str | None, typer.Option("--date", help="Information cutoff, YYYY-MM-DD.")] = None,
     config: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
@@ -134,9 +143,10 @@ def analyze(
     headless: Annotated[bool, typer.Option(help="Run without the terminal UI.")] = False,
     events: Annotated[bool, typer.Option(help="Emit normalized JSONL events to stdout.")] = False,
 ) -> None:
-    """Analyze one instrument through the complete research and decision workflow.
+    """Start the research wizard when no maintenance command is selected.
 
     Args:
+        ctx: Command context identifying an optional subcommand.
         ticker: Instrument symbol.
         analysis_date: Analysis cutoff date.
         config: Optional TOML configuration.
@@ -152,10 +162,15 @@ def analyze(
         headless: Disable terminal rendering.
         events: Stream JSON events instead of concise progress.
     """
+    if ctx.invoked_subcommand is not None:
+        return
+    if not list_presets():
+        typer.echo("Run uv run open-trading-agents configure first to create a preset.")
+        raise typer.Exit(1)
     interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
     if ticker is None:
         if not interactive:
-            raise typer.BadParameter("provide a ticker, for example: open-trading-agents analyze NVDA --headless")
+            raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
         ticker = typer.prompt("Ticker")
     try:
         settings = configured(config, harness, model, provider, effort)

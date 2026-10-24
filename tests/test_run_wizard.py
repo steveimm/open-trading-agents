@@ -7,7 +7,7 @@ import typer
 from typer.testing import CliRunner
 
 from open_trading_agents import cli, configuration_ui
-from open_trading_agents.config import HarnessSettings, Portfolio, Settings
+from open_trading_agents.config import HarnessSettings, Portfolio, Settings, save_preset
 
 runner = CliRunner()
 
@@ -20,6 +20,7 @@ def run_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / ".open-trading-agents" / "config.toml"
     path.parent.mkdir()
     path.write_text('research_rounds = 1\nrisk_rounds = 1\n[harness]\nkind = "pi"\nmodel = "base-model"\n')
+    save_preset("available", HarnessSettings(kind="pi", model="base-model"))
     return path
 
 
@@ -74,7 +75,7 @@ def test_interactive_run_asks_ticker_then_depth_then_agents_before_starting(run_
     monkeypatch.setattr(cli.typer, "prompt", prompt)
     monkeypatch.setattr(configuration_ui, "select_research_depth", depth)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
-    result = runner.invoke(cli.app, ["analyze"])
+    result = runner.invoke(cli.app, [])
     assert result.exit_code == 0, result.output
     assert calls == ["Ticker", "depth", "agents", "workflow"]
     ticker, trade_date, settings = received[0]
@@ -82,11 +83,11 @@ def test_interactive_run_asks_ticker_then_depth_then_agents_before_starting(run_
     assert settings.model_settings().model == "worker" and settings.model_settings().effort == "low"
     assert settings.model_settings(True).model == "manager" and settings.model_settings(True).effort == "high"
     assert run_config.read_text() == original
-    assert tuple(run_config.parent.iterdir()) == (run_config,)
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
 
 @pytest.mark.parametrize("round_flags,expected", [(["--research-rounds", "2"], (2, 5)), (["--research-rounds", "2", "--risk-rounds", "4"], (2, 4))])
-def test_positional_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
+def test_supplied_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
     run_config: Path, monkeypatch: pytest.MonkeyPatch, round_flags: list[str], expected: tuple[int, int],
 ) -> None:
     """Skip only the supplied ticker prompt and apply explicit runtime flags after wizard choices."""
@@ -115,7 +116,7 @@ def test_positional_ticker_still_selects_depth_and_agents_and_explicit_flags_win
     monkeypatch.setattr(configuration_ui, "select_research_depth", depth)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
     result = runner.invoke(cli.app, [
-        "analyze", "NVDA", "--date", "2026-01-02", "--harness", "pi", "--provider", "local", "--model", "flag-model",
+        "--ticker", "NVDA", "--date", "2026-01-02", "--harness", "pi", "--provider", "local", "--model", "flag-model",
         "--effort", "medium", *round_flags,
     ])
     assert result.exit_code == 0, result.output
@@ -139,11 +140,11 @@ def test_cancelling_run_selection_creates_no_run_or_settings_changes(run_config:
         raise typer.Abort()
 
     monkeypatch.setattr(configuration_ui, "select_agent_settings", cancel)
-    result = runner.invoke(cli.app, ["analyze", "NVDA"])
+    result = runner.invoke(cli.app, ["--ticker", "NVDA"])
     assert result.exit_code == 1
     assert received == [] and calls == []
     assert run_config.read_text() == original
-    assert tuple(run_config.parent.iterdir()) == (run_config,)
+    assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
 
 @pytest.mark.parametrize("mode", ["headless", "events", "stdin-pipe", "stdout-pipe"])
@@ -162,7 +163,7 @@ def test_unattended_analysis_never_opens_startup_menus(run_config: Path, monkeyp
     monkeypatch.setattr(configuration_ui, "select_research_depth", unexpected)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", unexpected)
     flags = [f"--{mode}"] if mode in ("headless", "events") else []
-    result = runner.invoke(cli.app, ["analyze", "NVDA", *flags])
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", *flags])
     assert result.exit_code == 0, result.output
     assert calls == ["workflow"]
     assert received[0][2].harness.model == "base-model"
