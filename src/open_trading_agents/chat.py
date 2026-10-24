@@ -252,8 +252,8 @@ class ChatView(FollowScrollView):
             text: Authoritative evidence or the first legacy participant input.
         """
         if self._shared_input is None:
-            self._shared_input = ChatBubble("shared-input", "Input", "input", "Analysis results", "complete")
-            self._shared_input.sections.append(ChatSection("shared-evidence", "prompt", "Analysis results", False, True))
+            self._shared_input = ChatBubble("shared-input", "Input", "input", status="complete")
+            self._shared_input.sections.append(ChatSection("shared-evidence", "prompt", "Input", False, True))
             self.bubbles.insert(0, self._shared_input)
         self._shared_input.sections[0].replace(text)
 
@@ -559,7 +559,7 @@ class ChatView(FollowScrollView):
         for bubble in self.bubbles:
             parts.append(bubble.agent)
             for section in bubble.sections:
-                if section.title:
+                if section.title and bubble.kind != "input":
                     parts.append(section.title)
                 if not section.collapsed:
                     parts.append(section.document.plain())
