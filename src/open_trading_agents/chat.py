@@ -155,7 +155,7 @@ class ChatView(FollowScrollView):
                            and event.data.get("round") is not None and bubble.round_number == event.data["round"]
                            and bubble.turn_number == event.data.get("turn")), None)
             bubble = legacy or self._current.get(event.agent)
-            if bubble is None or (new and bubble.status != "streaming") or (turn and bubble.key in self._turns and bubble.key != turn):
+            if bubble is None or (new and bubble.status != "streaming" and legacy is None) or (turn and bubble.key in self._turns and bubble.key != turn):
                 bubble = ChatBubble(turn or event.event_id, event.agent)
                 self.bubbles.append(bubble)
             if turn:
@@ -244,6 +244,17 @@ class ChatView(FollowScrollView):
         else:
             return
         self._dirty = True
+
+    def finish(self, status: str = "complete") -> None:
+        """Stop live bubble indicators when a run completes or is interrupted.
+
+        Args:
+            status: Terminal presentation state for contributions still marked streaming.
+        """
+        for bubble in self.bubbles:
+            if bubble.status == "streaming":
+                bubble.status = status
+                self._dirty = True
 
     def _shared(self, text: str) -> None:
         """Insert or replace shared evidence once, including legacy saved runs.
@@ -419,7 +430,7 @@ class ChatView(FollowScrollView):
         color = "#e8b86d" if bubble and bubble.kind == "input" else "#668ab5"
         if part.kind == "top" and bubble is not None:
             suffix = f" · {bubble.title}" if bubble.title else ""
-            active = " · streaming" if bubble.status == "streaming" else " · error" if bubble.status == "error" else ""
+            active = f" · {bubble.status}" if bubble.status in {"streaming", "error", "stopped"} else ""
             fold = f"{'▸' if section.collapsed else '▾'} " if section is not None else ""
             style = "bold #f1e5b9 on #303547" if section is not None and section is self._selected else f"bold {color}"
             title = Text(f"╭ {fold}{bubble.agent}{suffix}{active} ", style=style)
@@ -431,7 +442,11 @@ class ChatView(FollowScrollView):
         if part.kind == "detail" and section is not None:
             marker = "▸" if section.collapsed else "▾"
             style = "bold #f1e5b9 on #303547" if section is self._selected else CHANNEL_COLORS.get(section.kind, "#b7c2d4")
-            return self._line(f"{'│ ' if bubble else '  '}{marker} {section.title}", style, width)
+            if bubble:
+                label = self._line(f"{marker} {section.title}", style, max(1, width - 4))
+                border = Style(color=color)
+                return Strip.join([Strip([Segment("│ ", border)]), label, Strip([Segment(" │", border)])]).adjust_cell_length(width, self.rich_style)
+            return self._line(f"  {marker} {section.title}", style, width)
         if part.kind == "body" and section is not None:
             content_row = row - self._offsets[index]
             body = section.index.render(content_row, self.app.console, self.rich_style)

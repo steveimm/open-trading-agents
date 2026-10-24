@@ -215,3 +215,19 @@ async def test_native_and_durable_final_output_repair_only_the_current_contribut
         assert "Partial" not in view.plain()
         assert "preliminary" not in view.plain()
         assert '{"expression":"1+1"}' in view.plain()
+
+
+async def test_pending_legacy_turn_reopens_its_existing_bubble() -> None:
+    """Keep interrupted text when a resumed workflow assigns a stable turn identity."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 30)):
+        metadata = {"round": 2, "turn": 1, "total_rounds": 3}
+        view.consume(AgentEvent("turn_start", "Bull Researcher", "research", data=metadata))
+        view.consume(AgentEvent("text", "Bull Researcher", "research", "Earlier partial output", {"message_id": "old"}))
+        view.consume(AgentEvent("error", "Bull Researcher", "research", "Interrupted"))
+        view.consume(AgentEvent("turn_start", "Bull Researcher", "research", data={**metadata, "conversation_turn_id": "research:2:bull"}))
+        assert len(view.bubbles) == 1
+        assert "Earlier partial output" in view.plain()
+        assert view.bubbles[0].status == "streaming"
+        view.finish("stopped")
+        assert view.bubbles[0].status == "stopped"
