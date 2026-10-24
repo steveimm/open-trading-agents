@@ -43,7 +43,7 @@ The application does not set temperature, top-p, or thinking effort. A harness m
 
 The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Running tabs show an animated circular spinner, completed tabs show a check mark, and failed tabs are marked explicitly. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
 
-Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble. Repeated per-agent input messages are omitted from the debate view entirely. System instructions, reasoning, and tool calls remain expandable. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
+Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble, and its title stays at the top while scrolling through that contribution. Repeated per-agent input messages are omitted from the debate view entirely. System instructions, reasoning, and tool calls remain expandable. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
 
 | Key | Action |
 | --- | --- |
