@@ -99,11 +99,12 @@ def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Pa
 
     path = tmp_path / "tradingagents.toml"
     path.write_text('[harness]\nkind="pi"\nmodel="old-model"\nprovider="old-provider"\n')
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
     monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(()))
     monkeypatch.setattr(configuration_ui, "effort_choices", lambda settings, catalog: ())
     monkeypatch.setattr(configuration_ui, "_choose", lambda label, choices, default=0: default)
-    result = runner.invoke(cli.app, ["configure", "--config", str(path)])
+    result = runner.invoke(cli.app, ["configure", "--config", str(path)], input="retained-profile\n")
     assert result.exit_code == 0, result.output
     settings = load_settings(path)
     assert settings.harness.kind == "pi"

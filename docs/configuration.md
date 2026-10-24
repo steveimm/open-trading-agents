@@ -8,7 +8,9 @@ Set up model access through your chosen harness first. Then run:
 uv run open-trading-agents configure
 ```
 
-Choose **Create or update profile**, select the harness, provider, model, and reasoning effort, then save a named preset. The first setup goes directly to profile creation. The wizard can also mark a preset as the default.
+Choose **Create or update profile**, select the harness, provider, model, and reasoning effort, then enter a preset name. Interactive configuration always saves a named preset. The final question asks whether to use it by default. The first setup goes directly to profile creation.
+
+If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
 Use Up/Down to move the pointer, type to filter choices, and Enter to confirm. The initial choice has a `(default)` suffix. Ctrl+C cancels setup without saving.
 

@@ -65,7 +65,7 @@ def wizard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_configure_saves_one_profile_with_effort_and_no_role_assignments(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Create a reusable single-agent preset without configuring the two runtime role groups."""
-    shown = select_choices(monkeypatch, [None, 1, 1, 2, 0, None])
+    shown = select_choices(monkeypatch, [None, 1, 1, 2, None])
     result = runner.invoke(cli.app, ["configure"], input="local-research\n")
     assert result.exit_code == 0, result.output
     profile = HarnessSettings(kind="pi", provider="local", model="small", effort="high")
@@ -76,7 +76,10 @@ def test_configure_saves_one_profile_with_effort_and_no_role_assignments(wizard:
         "harness": "pi", "provider": "local", "model": "small", "effort": "high",
     }
     assert tomllib.loads(wizard.read_text())["default_preset"] == "local-research"
-    assert [label for label, _ in shown[:4]] == ["Harness", "Provider", "Model", "Reasoning effort"]
+    assert [label for label, _ in shown] == [
+        "Harness", "Provider", "Model", "Reasoning effort", "Use preset 'local-research' by default?",
+    ]
+    assert "Save these choices as a preset?" not in result.output
     assert "Working agents" not in result.output and "Decision manager" not in result.output
 
 
@@ -132,13 +135,15 @@ def test_configure_preserves_manually_configured_role_tiers(wizard: Path, monkey
     wizard.parent.mkdir(parents=True)
     wizard.write_text('risk_rounds = 3\n[harness]\nkind="pi"\n[quick]\nkind="claude"\nmodel="worker"\n[deep]\nkind="codex"\nmodel="manager"\n')
     select_choices(monkeypatch, [None, 1, 1, None, 1])
-    result = runner.invoke(cli.app, ["configure"])
+    result = runner.invoke(cli.app, ["configure"], input="worker\n")
     assert result.exit_code == 0, result.output
     settings = load_settings()
     assert settings.harness.model == "small"
     assert settings.quick == HarnessSettings(kind="claude", model="worker")
     assert settings.deep == HarnessSettings(kind="codex", model="manager")
     assert settings.risk_rounds == 3
+    assert load_preset("worker").model == "small"
+    assert settings.default_preset is None
 
 
 def test_saving_another_profile_keeps_the_existing_default(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,7 +151,7 @@ def test_saving_another_profile_keeps_the_existing_default(wizard: Path, monkeyp
     previous = save_preset("daily", HarnessSettings(kind="claude", model="stable-model"))
     contents = previous.read_text()
     wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\n')
-    select_choices(monkeypatch, [None, None, 1, 1, None, 0, None])
+    select_choices(monkeypatch, [None, None, 1, 1, None, None])
     result = runner.invoke(cli.app, ["configure"], input="experiment\n")
     assert result.exit_code == 0, result.output
     assert load_settings().default_preset == "daily"
@@ -162,7 +167,7 @@ def test_replacing_selected_profile_updates_its_default_status(
     """The final choice can retain or clear the selected profile's default marker."""
     save_preset("daily", HarnessSettings(kind="pi", provider="local", model="small"))
     wizard.write_text('default_preset = "daily"\n[harness]\nkind="pi"\nprovider="local"\nmodel="small"\n')
-    select_choices(monkeypatch, [None, None, None, 2, None, 0, 0, answer])
+    select_choices(monkeypatch, [None, None, None, 2, None, 0, answer])
     result = runner.invoke(cli.app, ["configure"], input="daily\n")
     assert result.exit_code == 0, result.output
     assert load_settings().default_preset == expected
@@ -174,11 +179,45 @@ def test_cancel_at_default_profile_selection_writes_nothing(wizard: Path, monkey
     wizard.parent.mkdir(parents=True)
     original = '[harness]\nkind="pi"\nmodel="saved-model"\n'
     wizard.write_text(original)
-    select_choices(monkeypatch, [None, None, None, None, 0])
+    shown = select_choices(monkeypatch, [None, None, None, None])
     result = runner.invoke(cli.app, ["configure"], input="uncommitted\n")
     assert result.exit_code == 1, result.output
     assert wizard.read_text() == original
     assert not preset_path("uncommitted").exists()
+    assert shown[-1][0] == "Use preset 'uncommitted' by default?"
+
+
+@pytest.mark.parametrize("retry_name", ["another-profile", None])
+def test_declining_preset_replacement_retries_name_or_cancels_without_writes(
+    wizard: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_name: str | None,
+) -> None:
+    """Ask for a different name after a collision without changing the existing preset on refusal or cancellation."""
+    previous = save_preset("daily", HarnessSettings(provider="local", model="small"))
+    wizard.write_text('default_preset="daily"\n[harness]\nkind="pi"\nprovider="local"\nmodel="small"\n')
+    before = {path: path.read_bytes() for path in (wizard, previous)}
+    answers = [None, None, None, 2, None, None]
+    if retry_name is not None:
+        answers.append(None)
+    shown = select_choices(monkeypatch, answers)
+    names = "daily\n" + (f"{retry_name}\n" if retry_name is not None else "")
+
+    result = runner.invoke(cli.app, ["configure"], input=names)
+
+    assert result.exit_code == (0 if retry_name is not None else 1), result.output
+    assert result.output.count("Preset name") == 2
+    labels = [label for label, _ in shown]
+    assert "Replace preset 'daily'?" in labels
+    assert "Choose another preset name?" not in labels
+    assert "Save these choices as a preset?" not in labels
+    assert previous.read_bytes() == before[previous]
+    if retry_name is None:
+        assert wizard.read_bytes() == before[wizard]
+        assert [path.name for path in previous.parent.iterdir()] == ["daily.toml"]
+    else:
+        assert load_preset(retry_name).model == "large"
+        assert load_settings().default_preset == "daily"
 
 
 def test_pi_native_model_choice_resets_provider_and_effort(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,7 +225,7 @@ def test_pi_native_model_choice_resets_provider_and_effort(wizard: Path, monkeyp
     wizard.parent.mkdir(parents=True)
     wizard.write_text('[harness]\nkind="pi"\nprovider="local"\nmodel="small"\neffort="high"\n')
     shown = select_choices(monkeypatch, [None, None, 0, None, 1])
-    result = runner.invoke(cli.app, ["configure"])
+    result = runner.invoke(cli.app, ["configure"], input="harness-default\n")
     assert result.exit_code == 0, result.output
     assert load_settings().harness == HarnessSettings(kind="pi")
     assert shown[2][1][0] == "Harness default (provider and model)"
@@ -197,7 +236,7 @@ def test_model_change_does_not_reuse_previous_effort(wizard: Path, monkeypatch: 
     wizard.parent.mkdir(parents=True)
     wizard.write_text('[harness]\nkind="pi"\nprovider="local"\nmodel="small"\neffort="high"\n')
     select_choices(monkeypatch, [None, None, 2, None, 1])
-    result = runner.invoke(cli.app, ["configure"])
+    result = runner.invoke(cli.app, ["configure"], input="large-model\n")
     assert result.exit_code == 0, result.output
     assert load_settings().harness.model == "large"
     assert load_settings().harness.effort is None
@@ -208,7 +247,7 @@ def test_unavailable_catalog_allows_custom_model_without_effort_choices(wizard: 
     monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(notice="Catalog unavailable."))
     monkeypatch.setattr(configuration_ui, "effort_choices", lambda settings, catalog: ())
     shown = select_choices(monkeypatch, [None, 1, 1, 1])
-    result = runner.invoke(cli.app, ["configure"], input="custom-provider\ncustom-model\n")
+    result = runner.invoke(cli.app, ["configure"], input="custom-provider\ncustom-model\nmanual-profile\n")
     assert result.exit_code == 0, result.output
     assert load_settings().harness == HarnessSettings(provider="custom-provider", model="custom-model")
     assert "Catalog unavailable." in result.output
@@ -227,7 +266,7 @@ def test_new_codex_provider_uses_its_own_model_choices(wizard: Path, monkeypatch
 
     monkeypatch.setattr(configuration_ui, "discover_models", catalog)
     shown = select_choices(monkeypatch, [None, 2, 1, None, 1])
-    result = runner.invoke(cli.app, ["configure"], input="new-provider\n")
+    result = runner.invoke(cli.app, ["configure"], input="new-provider\nupdated-provider\n")
     assert result.exit_code == 0, result.output
     assert load_settings().harness == HarnessSettings(kind="codex", provider="new-provider", model="new-model")
     assert shown[2] == ("Model", ["Harness default", "new-model", "Enter a model manually"])

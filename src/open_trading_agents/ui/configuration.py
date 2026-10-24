@@ -354,16 +354,15 @@ def select_agent_settings(settings: Settings) -> Settings:
             selected.agents[key] = HarnessSettings.model_validate(profile.model_dump())
 
 
-def _preset() -> tuple[str, bool] | None:
-    """Offer an optional named preset and confirm replacement of an existing name.
+def _preset() -> tuple[str, bool]:
+    """Choose a preset name and confirm replacement of an existing profile.
 
     Returns:
-        The preset name and replacement permission, or None when declined.
+        The preset name and replacement permission.
     """
-    if not _confirm("Save these choices as a preset?"):
-        return None
     if names := list_presets():
         typer.echo(f"Existing presets: {', '.join(names)}")
+
     while True:
         name = typer.prompt("Preset name").strip()
         try:
@@ -375,8 +374,6 @@ def _preset() -> tuple[str, bool] | None:
             return name, False
         if _confirm(f"Replace preset '{name}'?"):
             return name, True
-        if not _confirm("Choose another preset name?", default=True):
-            return None
 
 
 def delete_profile_interactively(path: Path) -> None:
@@ -419,20 +416,18 @@ def configure_interactively(path: Path) -> None:
     typer.echo("Defaults are marked (default). Ctrl+C cancels setup.")
     typer.echo("\nAgent profile")
     harness = _runtime(settings.harness, catalogs)
-    preset = _preset()
-    make_default = preset is not None and _confirm(
-        f"Use preset '{preset[0]}' by default?", default=settings.default_preset in (None, preset[0]),
-    )
+    name, overwrite = _preset()
+    make_default = _confirm(f"Use preset '{name}' by default?", default=settings.default_preset in (None, name))
+
     saved = save_configuration(path, harness, settings.quick, settings.deep)
+    target = save_preset(name, harness, overwrite=overwrite)
+    if make_default:
+        saved = set_default_preset(path, name)
+    elif saved.default_preset == name:
+        saved = set_default_preset(path, None)
+
     typer.echo(f"\nSaved profile: {_describe(saved.harness)}")
     typer.echo(f"Config: {path.expanduser().resolve()}")
-    if preset is not None:
-        name, overwrite = preset
-        target = save_preset(name, harness, overwrite=overwrite)
-        if make_default:
-            saved = set_default_preset(path, name)
-        elif saved.default_preset == name:
-            saved = set_default_preset(path, None)
-        typer.echo(f"Preset: {name} ({target})")
+    typer.echo(f"Preset: {name} ({target})")
     if saved.default_preset:
         typer.echo(f"Default preset: {saved.default_preset}")
