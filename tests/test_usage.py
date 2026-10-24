@@ -1,5 +1,5 @@
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.usage import summarize_usage
+from open_trading_agents.domain import AgentEvent, Usage
+from open_trading_agents.usage import format_usage, summarize_usage
 
 
 def test_snapshots_replace_counts_and_missing_cache_stays_unknown() -> None:
@@ -17,3 +17,12 @@ def test_snapshots_replace_counts_and_missing_cache_stays_unknown() -> None:
     assert not summary["totals"]["cache_read_tokens_complete"]
     assert summary["agents"]["Bear"]["cache_read_tokens"] is None
     assert summary["agents"]["Bull"]["cache_write_tokens"] == 0
+
+
+def test_write_cache_is_hidden_until_a_provider_reports_it() -> None:
+    """Do not show unavailable write counters, while preserving real writes and zeroes."""
+    assert "write" not in format_usage([Usage(input_tokens=100)])
+    assert "W" not in format_usage([Usage(input_tokens=100)], compact=True)
+    assert "write 0" in format_usage([Usage(cache_write_tokens=0)])
+    assert "write 40+?" in format_usage([Usage(cache_write_tokens=40), Usage()])
+    assert "write 0+?" in format_usage([Usage(cache_write_tokens=0), Usage()])

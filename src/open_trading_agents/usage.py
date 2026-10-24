@@ -56,3 +56,57 @@ def summarize_usage(events: Iterable[AgentEvent]) -> dict[str, Any]:
               for agent in dict.fromkeys(agent for agent, _ in requests)}
     return {"totals": _totals(list(requests.values())), "agents": agents,
             "note": "Input includes cache reads and writes. Reasoning is included in output. Counts include only reported usage."}
+
+
+def format_usage(usages: list[Usage], compact: bool = False) -> str:
+    """Format reported usage while omitting an unreported cache-write field.
+
+    Args:
+        usages: Latest usage records, deduplicated by request.
+        compact: Whether to abbreviate counters for a narrow pane.
+
+    Returns:
+        Input and output totals with the available cache breakdown.
+    """
+    inputs = sum(value.input_tokens for value in usages)
+    outputs = sum(value.output_tokens for value in usages)
+    read = _format_cache([value.cache_read_tokens for value in usages], compact)
+    if compact:
+        label = f"In {_short(inputs)} Out {_short(outputs)} Cache R{read}"
+    else:
+        label = f"In {inputs:,} · Out {outputs:,} · Cache read {read}"
+    writes = [value.cache_write_tokens for value in usages]
+    if any(value is not None for value in writes):
+        write = _format_cache(writes, compact)
+        label += f" W{write}" if compact else f" · write {write}"
+    return label
+
+
+def _format_cache(values: list[int | None], compact: bool) -> str:
+    """Distinguish unknown cache data from reported zero and partial counts.
+
+    Args:
+        values: Provider cache counts for the selected requests.
+        compact: Whether to abbreviate known counts.
+
+    Returns:
+        A known count, a partial count, or an unavailable marker.
+    """
+    known = [value for value in values if value is not None]
+    if not known:
+        return "—"
+    total = sum(known)
+    label = _short(total) if compact else f"{total:,}"
+    return label if len(known) == len(values) else f"{label}+?"
+
+
+def _short(value: int) -> str:
+    """Abbreviate large token counts for compact status bars.
+
+    Args:
+        value: Exact token count.
+
+    Returns:
+        A compact numeric label.
+    """
+    return f"{value / 1_000_000:.1f}m" if value >= 1_000_000 else f"{value / 1000:.1f}k" if value >= 1000 else str(value)
