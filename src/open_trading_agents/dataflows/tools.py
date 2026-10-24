@@ -9,6 +9,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from open_trading_agents.dataflows.artifacts import save_tool_data
 from open_trading_agents.dataflows.config import run_config
 from open_trading_agents.dataflows.date_window import as_of, as_of_window
 from open_trading_agents.dataflows.errors import NoMarketDataError, VendorUnavailableError
@@ -73,13 +74,27 @@ class ToolContext:
 
 
 class FinancialTools:
-    def __init__(self, context: ToolContext) -> None:
+    def __init__(self, context: ToolContext, artifact_dir: Path | None = None) -> None:
         """Bind financial tools to one instrument and analysis date.
 
         Args:
             context: Instrument identity and data configuration supplied by the workflow.
+            artifact_dir: Optional evidence directory supplied by the application, never a model argument.
         """
         self.context = context
+        self.artifact_dir = artifact_dir
+
+    def _result(self, name: str, text: str) -> str:
+        """Retain evidence for scripts when the workflow supplies an agent workspace.
+
+        Args:
+            name: Internal tool name.
+            text: Complete source output.
+
+        Returns:
+            Source output with direct file references when artifacts are enabled.
+        """
+        return save_tool_data(self.artifact_dir, name, text) if self.artifact_dir is not None else text
 
     def _route(self, name: str, *args: Any) -> str:
         """Invoke the configured vendor chain inside this run's data context.
@@ -92,7 +107,8 @@ class FinancialTools:
             Vendor evidence or an explicit unavailability notice.
         """
         with run_config(self.context.config):
-            return route_to_vendor(name, *args)
+            result = route_to_vendor(name, *args)
+        return self._result(name, result)
 
     def get_stock_data(self, start_date: str, end_date: str) -> str:
         """Retrieve OHLCV prices for the instrument under analysis.
@@ -141,7 +157,8 @@ class FinancialTools:
         """
         try:
             with run_config(self.context.config):
-                return build_verified_market_snapshot(self.context.ticker, as_of(curr_date, self.context.trade_date), look_back_days)
+                result = build_verified_market_snapshot(self.context.ticker, as_of(curr_date, self.context.trade_date), look_back_days)
+            return self._result("get_verified_market_snapshot", result)
         except VendorUnavailableError as exc:
             return vendor_unavailable("get_verified_market_snapshot", exc)
         except NoMarketDataError as exc:
@@ -278,7 +295,7 @@ class FinancialTools:
                 start_date=start_date,
                 end_date=end_date,
             )
-        return f"## News\n{news}\n\n## StockTwits\n{stocktwits}\n\n## Reddit\n{reddit}"
+        return self._result("get_social_sentiment", f"## News\n{news}\n\n## StockTwits\n{stocktwits}\n\n## Reddit\n{reddit}")
 
     def search_web(self, query: str, limit: int = 5) -> str:
         """Find additional public sources and return their citeable URLs and snippets.
@@ -291,7 +308,8 @@ class FinancialTools:
             Current search evidence with explicit historical-index limitations.
         """
         with run_config(self.context.config):
-            return search_web(query, self.context.trade_date, limit)
+            result = search_web(query, self.context.trade_date, limit)
+        return self._result("search_web", result)
 
     def fetch_webpage(self, url: str, max_chars: int = 20000) -> str:
         """Read public-page text with its URL, title, source-reported dates, and limitations.
@@ -303,15 +321,16 @@ class FinancialTools:
         Returns:
             Source evidence without scripts, images, subresource requests, or unsupported historical claims.
         """
-        return fetch_webpage(url, self.context.trade_date, max_chars)
+        return self._result("fetch_webpage", fetch_webpage(url, self.context.trade_date, max_chars))
 
 
-def create_server(context: ToolContext, names: tuple[str, ...] = TOOL_NAMES) -> MCPServer:
+def create_server(context: ToolContext, names: tuple[str, ...] = TOOL_NAMES, *, artifact_dir: Path | None = None) -> MCPServer:
     """Create a stdio-only MCP server with explicitly selected financial tools.
 
     Args:
         context: Immutable instrument and configuration binding.
         names: Allowed tool names for this agent.
+        artifact_dir: Application-selected directory for exact evidence files.
 
     Returns:
         A local MCP server with no remote-service registration or tracing.
@@ -320,7 +339,7 @@ def create_server(context: ToolContext, names: tuple[str, ...] = TOOL_NAMES) -> 
     if unknown:
         raise ValueError(f"Unknown financial tools: {', '.join(sorted(unknown))}")
     server = MCPServer("open-trading-agents-data", log_level="WARNING")
-    tools = FinancialTools(context)
+    tools = FinancialTools(context, artifact_dir)
     for name in dict.fromkeys(names):
         server.add_tool(getattr(tools, name), name=name)
     return server
@@ -331,10 +350,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local financial-data MCP server")
     parser.add_argument("--context", required=True, type=Path)
     parser.add_argument("--tools", help="Comma-separated allowed tool names, defaulting to all financial tools")
+    parser.add_argument("--artifact-dir", type=Path, help="Agent workspace directory for exact tool evidence")
     arguments = parser.parse_args()
     context = ToolContext.from_file(arguments.context)
     names = tuple(part.strip() for part in arguments.tools.split(",") if part.strip()) if arguments.tools is not None else TOOL_NAMES
-    create_server(context, names).run(transport="stdio")
+    create_server(context, names, artifact_dir=arguments.artifact_dir).run(transport="stdio")
 
 
 if __name__ == "__main__":

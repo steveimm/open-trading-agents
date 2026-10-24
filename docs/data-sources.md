@@ -8,6 +8,10 @@ Analysts can also use `search_web` and `fetch_webpage`. Search uses the configur
 
 Agents use native harness tools to write and run scripts for calculations. The prompt asks them to batch related calculations where possible. Scripts use the harness's environment. Set `allow_execution = false` to disable them, or `web_research = false` to omit the additional search/page tools.
 
+Data-tool results include paths to exact evidence files in the agent's `data/` directory. CSV results with source-comment headers also get a clean CSV file for direct parsing. Agents can read these files from calculation scripts instead of transcribing tool output. The complete evidence remains in the tool response.
+
+SEC financial statements use JSON records labelled by period and metric. Units are explicit, values retain their original precision, and missing observations are `null`. Quarter and year-to-date periods are identified separately.
+
 ## Source configuration
 
 Open the data-source editor with:

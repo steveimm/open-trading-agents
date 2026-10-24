@@ -218,6 +218,17 @@ class Workflow:
         """
         await self.emit(AgentEvent(kind, agent, stage, text, data))
 
+    def _workspace(self, agent: str) -> Path:
+        """Locate the working directory shared by an agent and its data tools.
+
+        Args:
+            agent: Logical role or supporting-session name.
+
+        Returns:
+            The agent's directory inside this run.
+        """
+        return self.directory / "agents" / "".join(character if character.isalnum() else "_" for character in agent)
+
     async def _call(self, key: str, role_key: str, prompt: str, session_name: str | None = None) -> str:
         """Complete one step while retaining the role's native conversation.
 
@@ -241,7 +252,7 @@ class Workflow:
         await self._event("agent_start", role.stage, name)
 
         if name not in self.sessions:
-            workspace = self.directory / "agents" / "".join(c if c.isalnum() else "_" for c in name)
+            workspace = self._workspace(name)
             tools = role.tools
             if role_key in ("market", "social", "news", "fundamentals") and self.settings.web_research:
                 tools = (*tools, "search_web", "fetch_webpage")
@@ -259,6 +270,8 @@ class Workflow:
                     str(self.context_file),
                     "--tools",
                     ",".join(tools),
+                    "--artifact-dir",
+                    str(workspace / "data"),
                 )
             spec = AgentSpec(
                 agent=name,
@@ -334,14 +347,15 @@ class Workflow:
                 if not evidence:
                     await self._event("tool_start", "analysis", ROLES[key].name, tool="get_social_sentiment", tool_call_id="prefetch-social")
                     try:
-                        tools = FinancialTools(self.tool_context)
+                        workspace = self._workspace(ROLES[key].name)
+                        tools = FinancialTools(self.tool_context, artifact_dir=workspace / "data")
                         evidence = await asyncio.to_thread(tools.get_social_sentiment)
                     except Exception as exc:
                         evidence = f"DATA_UNAVAILABLE: sentiment sources could not be retrieved ({type(exc).__name__})."
                     self.store.set_metadata("sentiment_evidence", evidence)
                     await self._event("tool_result", "analysis", ROLES[key].name, evidence,
                                       tool="get_social_sentiment", tool_call_id="prefetch-social")
-            text = await self._call(f"analyst:{key}", key, f"{self._instrument()}\n\nProduce your research report.\n\n{evidence}")
+            text = await self._call(f"analyst:{key}", key, f"{self._instrument()}\n\nReturn your research report in the final response.\n\n{evidence}")
             self.outputs[ROLES[key].name] = text
             await self._release_session(ROLES[key].name)
 

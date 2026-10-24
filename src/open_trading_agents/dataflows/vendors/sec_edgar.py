@@ -177,8 +177,8 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str | None, title:
         title: Human-readable statement heading.
 
     Returns:
-        A dated CSV statement, with USD amounts scaled to millions and other
-        reported units identified on their rows.
+        JSON records with explicit period labels, metric names, missing values,
+        and original reported units without numeric rounding.
 
     Raises:
         NoMarketDataError: The filer, US-GAAP facts, or eligible periods are absent.
@@ -197,9 +197,8 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str | None, title:
     quarterly = freq.lower() == "quarterly"
     if quarterly:
         spans = (_SPANS["quarterly"], *((low, high) for low, high, _ in _YEAR_TO_DATE))
-        names = ["", *(f" ({months} months)" for _, _, months in _YEAR_TO_DATE)]
     else:
-        spans, names = (_SPANS["annual"],), [""]
+        spans = (_SPANS["annual"],)
     forms = () if quarterly else _ANNUAL_FORMS
     lines = {label: _as_of(us_gaap, tags, as_of_date, spans, forms) for label, tags in _STATEMENTS[kind]}
 
@@ -211,25 +210,37 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str | None, title:
     if not periods:
         raise NoMarketDataError(ticker, ticker, f"no {freq} {title.lower()} filed by {as_of_date}")
 
-    header = (
-        f"""# {title} for {ticker.upper()} ({freq}), USD in millions unless the row says otherwise
-# SEC EDGAR facts filed on or before {as_of_date}, at the values filed then
+    records = []
+    for end, index in periods:
+        if kind == "balance_sheet":
+            period_kind, months = "instant", None
+        elif not quarterly:
+            period_kind, months = "annual", 12
+        elif index == 0:
+            period_kind, months = "quarter", 3
+        else:
+            period_kind, months = "year_to_date", _YEAR_TO_DATE[index - 1][2]
+        records.append({
+            "period_end": end,
+            "period_kind": period_kind,
+            "period_months": months,
+            "values": {label: values.get((end, index)) if chosen[label].get(end) == index else None
+                       for label, (values, _) in lines.items()},
+        })
 
-"""
-    )
-    rows = [",".join([""] + [end + names[index] for end, index in periods])]
-    for label, (values, unit) in lines.items():
-        if not values:
-            rows.append(",".join([label] + ["unavailable (not tagged by this filer)"] * len(periods)))
-            continue
-        name = label if unit == "USD" else f"{label} ({unit})"
-
-        cells = []
-        for end, index in periods:
-            value = values.get((end, index)) if chosen[label].get(end) == index else None
-            cells.append("" if value is None else f"{value / 1e6:.0f}" if unit == "USD" else f"{value:.2f}")
-        rows.append(",".join([name] + cells))
-    return header + "\n".join(rows) + "\n"
+    return json.dumps({
+        "source": "SEC EDGAR",
+        "source_url": _FACTS_URL.format(cik=cik),
+        "ticker": ticker.upper(),
+        "statement": title,
+        "frequency": "quarterly" if quarterly else "annual",
+        "filing_cutoff": as_of_date,
+        "units": {label: unit if values else None for label, (values, unit) in lines.items()},
+        "value_basis": "Original reported units, unscaled. USD values are dollars. Null means unavailable, not zero.",
+        "period_note": "Quarter and year-to-date values cover different durations. Do not add overlapping periods.",
+        "unavailable_metrics": [label for label, (values, _) in lines.items() if not values],
+        "periods": records,
+    }, ensure_ascii=False, indent=2, allow_nan=False)
 
 
 def get_balance_sheet(ticker: str, freq: str = "quarterly", as_of_date: str | None = None) -> str:

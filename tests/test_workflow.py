@@ -53,6 +53,9 @@ async def test_debates_reuse_native_sessions_and_append_only_new_arguments(tmp_p
     async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
         """Record each independent native role session."""
         opened.append(spec.agent)
+        if spec.tools:
+            position = spec.tool_server_command.index("--artifact-dir")
+            assert Path(spec.tool_server_command[position + 1]) == spec.workspace / "data"
         return FakeHarness(spec, emit, calls, [])
 
     settings = Settings(state_dir=tmp_path, analysts=("market", "news"), research_rounds=2, memory_enabled=False)

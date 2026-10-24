@@ -83,6 +83,36 @@ def test_sec_uses_filing_date_and_preserves_earlier_restatement() -> None:
     assert sec_edgar._as_of(facts, ("Assets",), "2024-04-02", ((300, 400),))[0] == {("2023-12-31", 0): 120}
 
 
+def test_sec_statements_label_missing_cells_period_durations_and_unrounded_units(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep quarter/YTD values keyed to their metrics without comma alignment or scale guessing."""
+    facts = {"facts": {"us-gaap": {
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            {"start": "2024-01-01", "end": "2024-03-31", "filed": "2024-04-20", "val": 123456789, "form": "10-Q"},
+            {"start": "2024-01-01", "end": "2024-06-30", "filed": "2024-07-20", "val": 703000001, "form": "10-Q"},
+            {"start": "2024-01-01", "end": "2024-06-30", "filed": "2024-08-20", "val": 999999999, "form": "10-Q/A"},
+        ]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            {"start": "2024-04-01", "end": "2024-06-30", "filed": "2024-07-20", "val": 0, "form": "10-Q"},
+        ]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "cik_for", lambda ticker: "0000000001")
+    monkeypatch.setattr(sec_edgar, "_cached_json", lambda url, key: facts)
+
+    result = json.loads(sec_edgar.get_cashflow("NVDA", "quarterly", "2024-07-31"))
+
+    assert result["units"]["Operating Cash Flow"] == "USD"
+    assert result["filing_cutoff"] == "2024-07-31"
+    records = {(row["period_end"], row["period_months"]): row for row in result["periods"]}
+    assert records[("2024-03-31", 3)]["values"]["Operating Cash Flow"] == 123456789
+    assert records[("2024-03-31", 3)]["values"]["Capital Expenditure"] is None
+    assert records[("2024-06-30", 3)]["values"]["Capital Expenditure"] == 0
+    assert records[("2024-06-30", 3)]["values"]["Operating Cash Flow"] is None
+    assert records[("2024-06-30", 6)]["values"]["Operating Cash Flow"] == 703000001
+    assert records[("2024-06-30", 6)]["values"]["Capital Expenditure"] is None
+    assert records[("2024-06-30", 6)]["period_kind"] == "year_to_date"
+    assert "Investing Cash Flow" in result["unavailable_metrics"]
+
+
 def test_fred_pins_metadata_and_observations_to_known_vintage(monkeypatch: pytest.MonkeyPatch) -> None:
     """Historical macro reports must not use revised values unavailable on the run date."""
     request = Mock(
