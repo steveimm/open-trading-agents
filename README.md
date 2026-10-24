@@ -56,7 +56,7 @@ effort = "high"
 
 Headless, JSON-event, and noninteractive runs use saved configuration without prompting. Backtests also use configured choices without prompting for each grid entry. Explicit CLI harness/model/provider/effort and round options override wizard or configured choices. Resuming a run keeps the selections saved with that run. Provider connections and authentication remain in the harness. Native protocol support still matters: a harness that expects Responses or Anthropic Messages is not automatically compatible with an arbitrary Chat Completions endpoint.
 
-For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model --effort high`. An empty `--model ""`, `--provider ""`, or `--effort ""` selects native defaults. You can also use `tradingagents.example.toml` as a starting point for the global config or an explicit `--config` file. Without a named default profile, the main configuration's `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides for working agents and decision managers:
+For unattended configuration, selection flags remain available, for example `configure --harness pi --provider my-local-provider --model my-model --effort high`. An empty `--model ""`, `--provider ""`, or `--effort ""` selects native defaults. Without a named default profile, the main configuration's `[harness]` section sets shared defaults, with optional `[quick]` and `[deep]` overrides for working agents and decision managers:
 
 ```toml
 [harness]
