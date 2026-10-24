@@ -9,6 +9,16 @@ from open_trading_agents.config import Portfolio, Position, Settings
 runner = CliRunner()
 
 
+def test_help_omits_completion_and_replay() -> None:
+    """Expose only the supported user-facing commands and options."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "install-completion" not in result.output
+    assert "show-completion" not in result.output
+    assert "replay" not in result.output
+    assert runner.invoke(app, ["replay"]).exit_code == 2
+
+
 def test_headless_requires_explicit_ticker_before_any_model_call() -> None:
     """Unattended invocations fail with actionable input instructions."""
     result = runner.invoke(app, ["analyze", "--headless"])

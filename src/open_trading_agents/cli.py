@@ -15,10 +15,10 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from open_trading_agents.config import HarnessSettings, Settings, load_portfolio, load_settings
-from open_trading_agents.domain import AgentEvent, EventSink
+from open_trading_agents.domain import AgentEvent
 from open_trading_agents.workflow import RunResult, Workflow
 
-app = typer.Typer(no_args_is_help=True, help="Financial research through native agent harness sessions.")
+app = typer.Typer(no_args_is_help=True, add_completion=False, help="Financial research through native agent harness sessions.")
 console = Console(stderr=True)
 
 
@@ -211,32 +211,3 @@ def doctor() -> None:
         typer.echo(f"{harness.value}: {shutil.which(harness.value) or 'not installed'}")
 
 
-@app.command()
-def replay(directory: Annotated[Path, typer.Argument(exists=True, file_okay=False)]) -> None:
-    """Browse saved events through the stage interface without running any model.
-
-    Args:
-        directory: Saved run directory.
-    """
-    from open_trading_agents.storage import RunStore
-    from open_trading_agents.tui import TradingApp
-
-    store = RunStore(directory)
-    inputs = store.metadata("input", {})
-
-    async def play(emit: EventSink) -> None:
-        """Replay stored events in original order.
-
-        Args:
-            emit: Terminal event consumer.
-        """
-        for index, event in enumerate(store.iter_events(), 1):
-            await emit(event)
-            if index % 256 == 0:
-                await asyncio.sleep(0)
-
-    try:
-        TradingApp(play, ticker=inputs.get("ticker", ""), run_dir=directory,
-                   selected_analysts=tuple(inputs.get("settings", {}).get("analysts", ("market", "social", "news", "fundamentals")))).run()
-    finally:
-        store.close()
