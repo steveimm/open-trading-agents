@@ -83,7 +83,7 @@ def model_configuration(working: HarnessConfig | None, decision: HarnessConfig |
     for label, config in (("Working", working), ("Manager", decision)):
         if config is None:
             continue
-        values = (config.kind, config.provider or "native provider", config.model or "native model", f"Effort {config.effort or 'native'}")
+        values = (config.kind, config.provider or "Harness default", config.model or "Harness default", f"Effort {config.effort or 'Harness default'}")
         choices[label] = " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
     if len(choices) == 2 and choices["Working"] == choices["Manager"]:
         return f"Agents · {choices['Working']}"

@@ -16,7 +16,7 @@ To remove a preset, choose **Delete saved profile**, select its name, and confir
 
 ## Model selection
 
-- **Native default** uses the harness's own selection. In pi, choosing the native model default also resets the provider to its native default.
+- **Harness default** uses the harness's own selection. In pi, choosing the harness default for the model also resets the provider to its harness default.
 - Providers, models, and effort levels are listed when the harness exposes them. Custom model identifiers can be entered manually.
 - Claude's listed model choices are aliases. To select a specific version, enter its full model identifier manually. Claude manages its provider through its native settings.
 - Effort is passed to the harness only when selected explicitly. Temperature and top-p remain controlled by the harness and provider.
@@ -50,7 +50,7 @@ Selection flags can update the main config without opening the wizard:
 uv run open-trading-agents configure --harness pi --provider local --model my-model --effort high
 ```
 
-These flags do not create a named preset. Use the interactive wizard to save one before the first analysis. Empty `--model ""`, `--provider ""`, or `--effort ""` values reset the corresponding selector to its native default.
+These flags do not create a named preset. Use the interactive wizard to save one before the first analysis. Empty `--model ""`, `--provider ""`, or `--effort ""` values reset the corresponding selector to its harness default.
 
 ## Application preferences
 

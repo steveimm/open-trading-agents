@@ -188,7 +188,7 @@ def test_pi_native_model_choice_resets_provider_and_effort(wizard: Path, monkeyp
     result = runner.invoke(cli.app, ["configure"])
     assert result.exit_code == 0, result.output
     assert load_settings().harness == HarnessSettings(kind="pi")
-    assert shown[2][1][0] == "Native default (provider and model)"
+    assert shown[2][1][0] == "Harness default (provider and model)"
 
 
 def test_model_change_does_not_reuse_previous_effort(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,7 +229,7 @@ def test_new_codex_provider_uses_its_own_model_choices(wizard: Path, monkeypatch
     result = runner.invoke(cli.app, ["configure"], input="new-provider\n")
     assert result.exit_code == 0, result.output
     assert load_settings().harness == HarnessSettings(kind="codex", provider="new-provider", model="new-model")
-    assert shown[2] == ("Model", ["Native default", "new-model", "Enter a model manually"])
+    assert shown[2] == ("Model", ["Harness default", "new-model", "Enter a model manually"])
 
 
 @pytest.mark.parametrize(("choice", "rounds"), [(0, 1), (1, 3), (2, 5)])

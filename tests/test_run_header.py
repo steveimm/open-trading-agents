@@ -42,8 +42,8 @@ async def test_run_header_shows_selected_tiers_without_stage_duplication_or_hidd
         assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0
 
 
-async def test_shared_native_defaults_are_shown_once_without_inventing_model_identity() -> None:
-    """A shared profile needs one configuration row and honest native-default labels."""
+async def test_shared_harness_defaults_are_shown_once_without_inventing_model_identity() -> None:
+    """A shared profile needs one configuration row and honest harness-default labels."""
     profile = HarnessConfig(kind="pi")
     app = TradingApp(ticker="NVDA", working_config=profile, decision_config=profile)
     async with app.run_test(size=(120, 32)) as pilot:
@@ -51,7 +51,7 @@ async def test_shared_native_defaults_are_shown_once_without_inventing_model_ide
         details = str(app.query_one("#model-config", Static).render())
         assert "Agents" in details
         assert details.count("pi") == 1
-        assert "native" in details.lower()
+        assert "Harness default" in details
         assert "None" not in details
         assert "\n" not in details
 

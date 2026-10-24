@@ -51,7 +51,7 @@ def test_default_and_cursor_options_have_no_reverse_or_background_highlight(menu
     """Remove prompt_toolkit's inherited reverse-video selected style while keeping Enter defaults."""
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         keyboard.send_text("\r")
-        assert configuration_ui._choose("Provider", ["Native default", "local"], default=1) == 1
+        assert configuration_ui._choose("Provider", ["Harness default", "local"], default=1) == 1
     style = menus[0].application._merged_style
     for name in ("selected", "highlighted"):
         attributes = style.get_attrs_for_style_str(f"class:{name}")

@@ -80,7 +80,7 @@ def _describe(settings: HarnessSettings) -> str:
     Returns:
         A short description suitable for an inheritance choice.
     """
-    return f"{settings.kind} / {settings.provider or 'native provider'} / {settings.model or 'native model'} / {settings.effort or 'native effort'}"
+    return f"{settings.kind} / {settings.provider or 'Harness default'} / {settings.model or 'Harness default'} / {settings.effort or 'Harness default'}"
 
 
 def _provider(current: HarnessSettings, catalog: ModelCatalog) -> str | None:
@@ -91,13 +91,13 @@ def _provider(current: HarnessSettings, catalog: ModelCatalog) -> str | None:
         catalog: Providers and models reported by the harness.
 
     Returns:
-        The selected provider, or None for native defaults.
+        The selected provider, or None for harness defaults.
     """
     if current.kind == "claude":
         return None
     providers = sorted({model.provider for model in catalog.models if model.provider} | ({current.provider} if current.provider else set()))
     default = providers.index(current.provider) + 1 if current.provider in providers else 0
-    choice = _choose("Provider", ["Native default", *providers, "Enter a provider manually"], default)
+    choice = _choose("Provider", ["Harness default", *providers, "Enter a provider manually"], default)
     if choice == len(providers) + 1:
         return typer.prompt("Provider identifier", default=current.provider).strip() or None
     return providers[choice - 1] if choice else None
@@ -111,7 +111,7 @@ def _model(current: HarnessSettings, catalog: ModelCatalog) -> tuple[str | None,
         catalog: Model identifiers reported by the native harness.
 
     Returns:
-        The model and provider selectors, with None representing native defaults.
+        The model and provider selectors, with None representing harness defaults.
     """
     models = [model for model in catalog.models if current.provider is None or model.provider in (None, current.provider)]
     if current.model and not any(model.id == current.model and model.provider == current.provider for model in models):
@@ -123,8 +123,8 @@ def _model(current: HarnessSettings, catalog: ModelCatalog) -> tuple[str | None,
         labels.append(f"{label} [{model.provider}]" if model.provider and current.provider is None else label)
         if model.id == current.model and model.provider == current.provider:
             default = index
-    native = "Native default (provider and model)" if current.kind == "pi" and current.provider else "Native default"
-    choice = _choose("Model", [native, *labels, "Enter a model manually"], default)
+    harness_default = "Harness default (provider and model)" if current.kind == "pi" and current.provider else "Harness default"
+    choice = _choose("Model", [harness_default, *labels, "Enter a model manually"], default)
     if choice == len(models) + 1:
         model = typer.prompt("Model identifier", default=current.model).strip() or None
         return model, current.provider if model is not None or current.kind != "pi" else None
@@ -170,7 +170,7 @@ def _effort(current: HarnessSettings, catalog: ModelCatalog) -> str | None:
     if not levels:
         return None
     default = levels.index(current.effort) + 1 if current.effort in levels else 0
-    choice = _choose("Reasoning effort", ["Native default", *labels], default)
+    choice = _choose("Reasoning effort", ["Harness default", *labels], default)
     return levels[choice - 1] if choice else None
 
 
@@ -295,7 +295,7 @@ def _agent_profile(
         selections.append(profile)
     native = HarnessSettings(kind=current.kind)
     if native not in selections:
-        labels.append(f"Native defaults · {current.kind}")
+        labels.append(f"Harness default · {current.kind}")
         selections.append(native)
     default = selections.index(current) if current in selections else 0
     if preferred is not None:

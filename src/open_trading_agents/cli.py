@@ -296,9 +296,9 @@ def backtest(
 def configure(
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
     harness: Annotated[HarnessName | None, typer.Option()] = None,
-    model: Annotated[str | None, typer.Option(help='Native model selector. Pass "" to use native defaults.')] = None,
-    provider: Annotated[str | None, typer.Option(help='Native pi or Codex provider selector. Pass "" to use native defaults.')] = None,
-    effort: Annotated[str | None, typer.Option(help='Native reasoning or thinking effort. Pass "" to use native defaults.')] = None,
+    model: Annotated[str | None, typer.Option(help='Native model selector. Pass "" to use harness defaults.')] = None,
+    provider: Annotated[str | None, typer.Option(help='Native pi or Codex provider selector. Pass "" to use harness defaults.')] = None,
+    effort: Annotated[str | None, typer.Option(help='Native reasoning or thinking effort. Pass "" to use harness defaults.')] = None,
 ) -> None:
     """Manage saved runtime profiles, or apply explicit configuration flags.
 
@@ -322,7 +322,7 @@ def configure(
         settings = save_harness_selection(config, harness=harness.value if harness is not None else None,
                                           model=model, provider=provider, effort=effort)
         selected = settings.harness
-        typer.echo(f"Saved default: {selected.kind} / {selected.provider or 'native provider'} / {selected.model or 'native model'} / {selected.effort or 'native effort'}")
+        typer.echo(f"Saved default: {selected.kind} / {selected.provider or 'Harness default'} / {selected.model or 'Harness default'} / {selected.effort or 'Harness default'}")
         typer.echo(f"Config: {config.expanduser().resolve()}")
     except (ValueError, OSError, RuntimeError) as exc:
         console.print(f"Configuration failed: {exc}", style="red", markup=False)

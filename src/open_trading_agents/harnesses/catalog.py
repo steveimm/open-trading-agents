@@ -207,7 +207,7 @@ def _pi_models(output: str) -> ModelCatalog:
     lines = output.splitlines()
     header = next((index for index, line in enumerate(lines) if line.split() == ["provider", "model", "context", "max-out", "thinking", "images"]), None)
     if header is None:
-        return ModelCatalog(notice="Pi did not list available models. Use its native default or enter a configured model.")
+        return ModelCatalog(notice="Pi did not list available models. Use the harness default or enter a configured model.")
     columns = [match.start() for match in re.finditer(r"\S+", lines[header])]
     choices = []
     for line in lines[header + 1:]:
@@ -331,15 +331,15 @@ def discover_models(config: HarnessSettings) -> ModelCatalog:
         Native choices, or a short notice allowing manual selection after discovery fails.
     """
     if config.extra_args:
-        return ModelCatalog(notice="Model discovery does not apply extra CLI arguments. Keep the current selection, use native defaults, or enter a model.")
+        return ModelCatalog(notice="Model discovery does not apply extra CLI arguments. Keep the current selection, use harness defaults, or enter a model.")
     try:
         catalog = asyncio.run(_discover(config))
     except FileNotFoundError:
         return ModelCatalog(notice=f"{config.kind} is not installed or its configured command was not found.")
     except TimeoutError:
-        return ModelCatalog(notice=f"{config.kind} model discovery timed out. Use its native default or enter a model.")
+        return ModelCatalog(notice=f"{config.kind} model discovery timed out. Use the harness default or enter a model.")
     except (OSError, ValueError, RuntimeError):
-        return ModelCatalog(notice=f"{config.kind} could not list models. Use its native default or enter a model.")
+        return ModelCatalog(notice=f"{config.kind} could not list models. Use the harness default or enter a model.")
     if not catalog.models and not catalog.notice:
-        return ModelCatalog(notice=f"{config.kind} did not list models. Use its native default or enter a model.")
+        return ModelCatalog(notice=f"{config.kind} did not list models. Use the harness default or enter a model.")
     return catalog
