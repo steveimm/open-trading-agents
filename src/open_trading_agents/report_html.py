@@ -102,7 +102,7 @@ main code { font: 0.88em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 main pre { background: var(--wash); padding: 0.9rem 1rem; border-radius: 4px; overflow-x: auto; }
 main pre code { background: none; padding: 0; }
 main hr { width: 3rem; margin: 2rem auto; border: 0; border-top: 1px solid var(--rule); }
-.table { overflow-x: auto; margin: 0 0 1.25rem; }
+.table { overflow-x: auto; overflow-wrap: normal; margin: 0 0 1.25rem; }
 table { border-collapse: collapse; width: 100%; font: 0.86rem/1.45 var(--sans); font-variant-numeric: tabular-nums; }
 th, td { padding: 0.45rem 0.7rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
 th { font-weight: 600; border-bottom-color: var(--muted); }
