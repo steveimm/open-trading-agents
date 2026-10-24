@@ -362,6 +362,9 @@ class TradingApp(App[None]):
         now = time.monotonic()
         elapsed = duration((self._finished if self._finished is not None else now) - self._started)
         status = "Failed" if self._failure else "Complete" if self._finished is not None else "Running"
+        running = [label for key, label in STAGES if self.stages[key].status == "running"]
+        if status == "Running" and running:
+            status += ": " + ", ".join(running)
         compact = self.screen.has_class("compact")
         separator = " · " if compact else "\n"
         self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}{separator}{status} · Total {elapsed}")

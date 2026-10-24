@@ -72,6 +72,8 @@ async def test_stage_tabs_distinguish_running_complete_and_failed() -> None:
         assert "[run]" in str(app.query_one("#tab-research", Tab).label)
         assert app.query_one("#tab-analysis", Tab).has_class("complete")
         assert app.query_one("#tab-research", Tab).has_class("running")
+        app.refresh_clocks()
+        assert "Running: Research debate" in str(app.query_one("#run-status", Static).render())
         await app.receive(AgentEvent("error", "Workflow", "reports", "Provider failed"))
         app.flush_events()
         assert "[failed]" in str(app.query_one("#tab-research", Tab).label)
