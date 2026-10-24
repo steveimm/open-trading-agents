@@ -22,8 +22,8 @@ class ChatTestApp(App[None]):
         yield self.view
 
 
-async def test_debate_bubbles_keep_shared_input_once_and_collapsed_exact_inputs() -> None:
-    """Present each public contribution once while retaining native input and hidden details."""
+async def test_debate_bubbles_keep_shared_input_once_without_per_turn_inputs() -> None:
+    """Present each public contribution once without repeated prompt displays."""
     view = ChatView(id="chat", debate=True)
     app = ChatTestApp(view)
     async with app.run_test(size=(100, 34)) as pilot:
@@ -46,6 +46,8 @@ async def test_debate_bubbles_keep_shared_input_once_and_collapsed_exact_inputs(
         assert displayed.count("Public argument 1") == displayed.count("Public argument 2") == 1
         assert "Private reasoning" not in displayed
         assert "prior arguments" not in displayed
+        assert "prior arguments" not in view.plain()
+        assert all(section.kind != "prompt" for bubble in view.bubbles if bubble.kind == "agent" for section in bubble.sections)
         assert "Private reasoning 1" in view.plain()
         assert len(view.systems) == 2
         assert len(view.bubbles) == 3
@@ -54,6 +56,36 @@ async def test_debate_bubbles_keep_shared_input_once_and_collapsed_exact_inputs(
         assert "Bull Researcher instructions" in view.visible_plain()
         view.toggle_system()
         assert "Bull Researcher instructions" not in view.visible_plain()
+
+
+async def test_bubble_border_cells_use_the_content_background_in_both_focus_states() -> None:
+    """Avoid inherited terminal backgrounds that form colored bars beside bubble text."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 30)) as pilot:
+        view.consume(AgentEvent("conversation_input", "Input", "research", "Input evidence\nsecond line"))
+        view.consume(AgentEvent("turn_start", "Bull Researcher", "research", data={"round": 1, "turn": 1}))
+        view.consume(AgentEvent("reasoning", "Bull Researcher", "research", "Verify the values", {"message_id": "one"}))
+        view.consume(AgentEvent("text", "Bull Researcher", "research", "Public argument", {"message_id": "one"}))
+        view.sync()
+        view.navigate("home")
+        for focused in (False, True):
+            if focused:
+                view.focus()
+            else:
+                view.app.set_focus(None)
+            await pilot.pause()
+            background = view.rich_style.bgcolor
+            assert background is not None
+            for index, part in enumerate(view._parts):
+                if part.kind not in {"body", "detail"} or part.bubble is None:
+                    continue
+                row = view._offsets[index]
+                segments = list(view.render_line(row))
+                assert segments[0].text == "│ "
+                assert segments[-1].text == " │"
+                assert segments[0].style.bgcolor == background
+                assert segments[-1].style.bgcolor == background
+                assert all(segment.style and segment.style.bgcolor == background for segment in segments)
 
 
 async def test_reasoning_and_tool_details_toggle_with_keyboard_and_mouse() -> None:

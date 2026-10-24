@@ -100,7 +100,7 @@ class ChatView(FollowScrollView):
 
         Args:
             id: Stable Textual widget identifier.
-            debate: Whether repeated participant inputs should begin collapsed.
+            debate: Whether shared input replaces repeated participant prompt displays.
         """
         super().__init__(id=id)
         self.debate = debate
@@ -191,12 +191,15 @@ class ChatView(FollowScrollView):
                 bubble.round_number, bubble.turn_number = number, event.data.get("turn", 1)
                 bubble.title = f"Round {number}/{total} · Turn {event.data.get('turn', 1)}"
         elif kind == "prompt":
-            if self.debate and self._shared_input is None:
-                self._shared(event.text)
+            if self.debate:
+                if self._shared_input is None:
+                    self._shared(event.text)
+                    self._dirty = True
+                return
             bubble = self._bubble(event, new=True)
-            section = ChatSection(f"prompt:{event.event_id}", "prompt", "Turn input" if self.debate else "Input", self.debate, True)
+            section = ChatSection(f"prompt:{event.event_id}", "prompt", "Input", False, True)
             section.replace(event.text)
-            if self.debate or bubble.sections:
+            if bubble.sections:
                 bubble.sections.append(section)
             else:
                 input_bubble = ChatBubble(f"input:{event.event_id}", "Input", "input", status="complete", sections=[section])
@@ -438,6 +441,7 @@ class ChatView(FollowScrollView):
         part = self._parts[index]
         bubble, section = part.bubble, part.section
         color = "#e8b86d" if bubble and bubble.kind == "input" else "#668ab5"
+        border = self.rich_style + Style(color=color)
         if part.kind == "top" and bubble is not None:
             suffix = f" · {bubble.title}" if bubble.title else ""
             active = f" · {bubble.status}" if bubble.status in {"streaming", "error", "stopped"} else ""
@@ -454,7 +458,6 @@ class ChatView(FollowScrollView):
             style = "bold #f1e5b9 on #303547" if section is self._selected else CHANNEL_COLORS.get(section.kind, "#b7c2d4")
             if bubble:
                 label = self._line(f"{marker} {section.title}", style, max(1, width - 4))
-                border = Style(color=color)
                 return Strip.join([Strip([Segment("│ ", border)]), label, Strip([Segment(" │", border)])]).adjust_cell_length(width, self.rich_style)
             return self._line(f"  {marker} {section.title}", style, width)
         if part.kind == "body" and section is not None:
@@ -466,8 +469,8 @@ class ChatView(FollowScrollView):
             while len(self._cache) > 256:
                 (old_index, old_key), _ = self._cache.popitem(last=False)
                 old_index.cache.pop(old_key, None)
-            side = Strip([Segment("│ " if bubble else "  ", Style(color=color))])
-            end = Strip([Segment(" │" if bubble else "  ", Style(color=color))])
+            side = Strip([Segment("│ " if bubble else "  ", border)])
+            end = Strip([Segment(" │" if bubble else "  ", border)])
             return Strip.join([side, body, end]).adjust_cell_length(width, self.rich_style)
         return Strip.blank(width, self.rich_style)
 
