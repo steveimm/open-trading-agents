@@ -646,14 +646,16 @@ class ChatView(FollowScrollView):
             event: Pointer click within the conversation viewport.
         """
         self.focus()
-        if not (0 <= event.x < self.scrollable_content_region.width and 0 <= event.y < self.scrollable_content_region.height):
+        region = self.scrollable_content_region
+        if event.screen_offset not in region:
             return
-        if int(event.y) == 0 and (header := self._sticky_header()) is not None:
+        position = event.screen_offset - region.offset
+        if position.y == 0 and (header := self._sticky_header()) is not None:
             if header.disclosure is not None:
                 self._toggle(header.disclosure)
             event.stop()
             return
-        row = int(self.scroll_y) + int(event.y)
+        row = int(self.scroll_y) + position.y
         index = bisect.bisect_right(self._offsets, row) - 1
         if 0 <= index < len(self._parts):
             part = self._parts[index]
