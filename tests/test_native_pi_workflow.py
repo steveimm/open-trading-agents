@@ -3,7 +3,6 @@ import json
 import re
 import shutil
 import socket
-import sys
 import threading
 from collections import Counter
 from collections.abc import Iterator
@@ -26,6 +25,18 @@ from open_trading_agents.workflow import Workflow
 
 pytestmark = pytest.mark.native
 
+SCRIPT = """import json
+
+results = {
+    "change_pct": (125 - 100) / 100 * 100,
+    "position_units": 100000 * 0.01 / (150 - 145),
+    "mean_price": sum([100, 105, 110]) / 3,
+}
+print(json.dumps(results))
+"""
+SCRIPT_COMMAND = f"cat > calculations.py <<'PY'\n{SCRIPT}PY\npython3 calculations.py"
+SCRIPT_RESULTS = {"change_pct": 25.0, "position_units": 200.0, "mean_price": 105.0}
+
 
 class NativeResponses:
     def __init__(self, effort: str | None = None) -> None:
@@ -41,7 +52,7 @@ class NativeResponses:
         self.thoughts: dict[tuple[str, str], str] = {}
         self.calls: dict[str, str] = {}
         self.continuations: set[str] = set()
-        self.calculated: Counter[str] = Counter()
+        self.scripted: Counter[str] = Counter()
 
     def reply(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         """Verify native history and produce a synthetic SSE tool turn or report.
@@ -58,8 +69,10 @@ class NativeResponses:
         assert match is not None, "Native request lost the role system prompt"
         role = match.group(1)
         tools = {tool["function"]["name"] for tool in payload["tools"]}
-        assert "calculate" in tools
-        assert not tools.intersection({"read", "write", "edit", "bash"})
+        assert "calculate" not in tools
+        assert {"read", "write", "edit", "bash"} <= tools
+        if not next(definition for definition in ROLES.values() if definition.name == role).tools:
+            assert tools == {"read", "write", "edit", "bash"}
         assert not {"temperature", "top_p"}.intersection(payload)
         if self.effort is None:
             assert "reasoning_effort" not in payload
@@ -76,7 +89,7 @@ class NativeResponses:
                     assert self.calls[calls[0]["id"]] == role, "Tool call leaked across agent sessions"
             elif message["role"] == "tool":
                 assert self.calls[message["tool_call_id"]] == role, "Native tool result lost its call identifier"
-                assert json.loads(message["content"])["result"] == 25.0
+                assert json.loads(message["content"]) == SCRIPT_RESULTS
 
         turn = sum(message["role"] == "user" for message in messages)
         if turn > 1:
@@ -89,26 +102,26 @@ class NativeResponses:
             call_id = f"call_{len(self.requests)}"
             self.calls[call_id] = role
             self.thoughts[(role, call_id)] = thought
-            arguments = json.dumps({"expression": "(125-100)/100*100"})
+            arguments = json.dumps({"command": SCRIPT_COMMAND})
             chunks.extend([
                 {"tool_calls": [{"index": 0, "id": call_id, "type": "function",
-                                 "function": {"name": "calculate", "arguments": arguments[:12]}}]},
+                                 "function": {"name": "bash", "arguments": arguments[:12]}}]},
                 {"tool_calls": [{"index": 0, "function": {"arguments": arguments[12:]}}]},
             ])
             stop = "tool_calls"
         else:
             assert messages[-1]["role"] == "tool"
-            self.calculated[role] += 1
+            self.scripted[role] += 1
             decisions = {
                 "Research Manager": {"recommendation": "Overweight", "rationale": "Verified synthetic change is 25%.",
                                      "strategic_actions": "Use a small synthetic allocation."},
                 "Trader": {"action": "Buy", "reasoning": "The supplied synthetic calculation returned 25.",
                            "entry_price": 100, "stop_loss": 95, "position_sizing": "2% synthetic allocation"},
                 "Portfolio Manager": {"rating": "Overweight", "executive_summary": "Synthetic workflow validation only.",
-                                      "investment_thesis": "The native calculate result is 25.0.", "price_target": 125,
+                                      "investment_thesis": "The Python script verified a 25% change and 200 position units.", "price_target": 125,
                                       "time_horizon": "5 sessions"},
             }
-            answer = json.dumps(decisions[role]) if role in decisions else f"{role}, turn {turn}: verified (125-100)/100*100 = 25.0 using calculate. Synthetic evidence only."
+            answer = json.dumps(decisions[role]) if role in decisions else f"{role}, turn {turn}: the native Python script verified a 25% change, 200 position units, and a mean price of 105. Synthetic evidence only."
             self.thoughts[(role, answer)] = thought
             chunks.extend([{"content": answer[:20]}, {"content": answer[20:]}])
             stop = "stop"
@@ -228,7 +241,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
     monkeypatch.setattr("open_trading_agents.memory.fetch_returns", outcomes)
     settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,), effort=effort),
                         research_rounds=2, risk_rounds=1,
-                        allow_execution=False, web_research=False, memory_enabled=True)
+                        allow_execution=True, web_research=False, memory_enabled=True)
     memory = MemoryLog(settings.state_dir / "memory.sqlite")
     prior_id = memory.record("NVDA", "2026-01-02", "Overweight", "Synthetic prior decision", "fixture-prior")
     events: list[AgentEvent] = []
@@ -250,9 +263,9 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
         assert state.failures == []
 
     expected_roles = {role.name for key, role in ROLES.items() if key != "screening"}
-    assert set(state.calculated) == expected_roles
-    assert state.calculated["Bull Researcher"] == state.calculated["Bear Researcher"] == 2
-    assert sum(state.calculated.values()) == 15
+    assert set(state.scripted) == expected_roles
+    assert state.scripted["Bull Researcher"] == state.scripted["Bear Researcher"] == 2
+    assert sum(state.scripted.values()) == 15
     assert len(state.requests) == 30
     assert all(request["payload"].get("reasoning_effort") == effort for request in state.requests)
     assert state.continuations == {"Bull Researcher", "Bear Researcher"}
@@ -271,7 +284,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
     ]
     assert sum(bool(event.data.get("prompt_accepted")) for event in events) == 15
     assert len([event for event in events if event.kind == "usage"]) == 30
-    assert len([event for event in events if event.kind == "tool_result" and event.data.get("tool") == "calculate"]) == 15
+    assert len([event for event in events if event.kind == "tool_result" and event.data.get("tool") == "bash" and event.data.get("final")]) == 15
     assert any(event.kind == "reasoning" and "Native private calculation" in event.text for event in events)
     assert not any(event.kind == "error" for event in events)
 
@@ -286,6 +299,8 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
                    for row in runtime_agents)
         assert len(runtime_agents) == len(rows)
         for row in rows:
+            workspace = result.directory / "agents" / "".join(character if character.isalnum() else "_" for character in row["agent"])
+            assert (workspace / "calculations.py").read_text() == SCRIPT
             session_file = Path(row["native_id"])
             contents = await asyncio.to_thread(session_file.read_text)
             native_entries = [json.loads(line) for line in contents.splitlines()]
@@ -325,16 +340,17 @@ class RepeatingToolResponses(NativeResponses):
             payload: Actual request from the installed pi agent loop.
 
         Returns:
-            A valid calculator call followed by an invalid disabled-tool call.
+            A native shell call followed by an invalid disabled-tool call.
         """
         self.requests.append({"payload": payload})
         number = len(self.requests)
+        assert "calculate" not in {tool["function"]["name"] for tool in payload.get("tools", [])}
         if number == 1:
-            assert "calculate" in {tool["function"]["name"] for tool in payload["tools"]}
+            assert "bash" in {tool["function"]["name"] for tool in payload["tools"]}
         else:
             assert not payload.get("tools"), "Wrap-up request still advertises tools"
-        name = "calculate" if number == 1 else "unavailable_after_budget"
-        arguments = json.dumps({"expression": "1+1"}) if number == 1 else "{}"
+        name = "bash" if number == 1 else "unavailable_after_budget"
+        arguments = json.dumps({"command": "printf 'budget tool completed\\n'"}) if number == 1 else "{}"
         return [
             {"id": f"repeat-{number}", "object": "chat.completion.chunk", "created": 1, "model": "fixture-model",
              "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0,
@@ -351,8 +367,6 @@ async def test_native_pi_aborts_tool_calls_after_one_wrap_up(tmp_path: Path, mon
     executable = shutil.which("pi")
     if executable is None:
         pytest.skip("The optional native integration test requires an installed pi CLI")
-    context = tmp_path / "context.json"
-    context.write_text(json.dumps({"ticker": "NVDA", "trade_date": "2026-01-12", "config": {}}))
     events: list[AgentEvent] = []
 
     async def observe(event: AgentEvent) -> None:
@@ -365,21 +379,20 @@ async def test_native_pi_aborts_tool_calls_after_one_wrap_up(tmp_path: Path, mon
         monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_directory))
         monkeypatch.setenv("PI_OFFLINE", "1")
         monkeypatch.setenv("PI_TELEMETRY", "0")
-        spec = AgentSpec("Budget Probe", "analysis", "Use calculate once, then write a final report.", tmp_path / "workspace",
-                         tmp_path / "sessions", tools=("calculate",), max_tool_rounds=1, allow_execution=False,
-                         tool_server_command=(sys.executable, "-m", "open_trading_agents.tools", "--context", str(context),
-                                              "--tools", "calculate"))
+        spec = AgentSpec("Budget Probe", "analysis", "Use bash once, then write a final report.", tmp_path / "workspace",
+                         tmp_path / "sessions", max_tool_rounds=1, allow_execution=True)
         session = await open_session(HarnessConfig(kind="pi", command=(executable,), model="fixture-model", provider="fixture"),
                                      spec, observe)
         try:
             with pytest.raises(HarnessError, match="exceeded 1 tool rounds after its final-report opportunity"):
-                await asyncio.wait_for(session.prompt("Calculate 1+1 and report the result."), 30)
+                await asyncio.wait_for(session.prompt("Run one shell command and report the result."), 30)
         finally:
             await session.close()
         assert state.failures == []
         assert len(state.requests) == 2
 
     completed = [event for event in events if event.kind == "tool_result" and event.data.get("final")]
-    assert sum(event.data.get("tool") == "calculate" and not event.data.get("is_error") for event in completed) == 1
+    assert sum(event.data.get("tool") == "bash" and not event.data.get("is_error") for event in completed) == 1
+    assert any("budget tool completed" in event.text for event in completed if event.data.get("tool") == "bash")
     assert any(event.data.get("tool") == "unavailable_after_budget" and event.data.get("is_error") for event in completed)
     assert sum(event.kind == "error" and event.data.get("source") == "tool_budget" for event in events) == 1
