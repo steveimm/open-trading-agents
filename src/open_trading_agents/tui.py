@@ -226,6 +226,8 @@ class TradingApp(App[None]):
 
     def flush_events(self) -> None:
         """Apply a bounded event batch and update only visible viewports."""
+        if not self.is_running:
+            return
         for _ in range(min(len(self._pending), 1000)):
             event = self._pending.popleft()
             if event.event_id not in self._event_ids:
@@ -349,7 +351,7 @@ class TradingApp(App[None]):
         Args:
             now: Optional monotonic time supplied by the display timer.
         """
-        if not self.is_mounted:
+        if not self.is_running:
             return
         frame = self._running_spinner.render(time.monotonic() if now is None else now).plain
         suffixes = {"running": f" {frame}", "complete": " ✓", "failed": " [failed]"}
@@ -372,7 +374,7 @@ class TradingApp(App[None]):
 
     def refresh_clocks(self) -> None:
         """Refresh clocks and counters without re-rendering historical chat content."""
-        if not self._status_widgets or not self._status_widgets["run-status"].is_attached:
+        if not self.is_running or not self._status_widgets or not self._status_widgets["run-status"].is_attached:
             return
         now = time.monotonic()
         self._refresh_tabs(now)
@@ -427,6 +429,8 @@ class TradingApp(App[None]):
         Args:
             size: Optional newly reported terminal dimensions.
         """
+        if not self.is_running:
+            return
         size = size or self.size
         compact = size.height < 32 or size.width < 110
         self.screen.set_class(compact, "compact")
@@ -447,7 +451,7 @@ class TradingApp(App[None]):
         Returns:
             Whether the action applies to the current stage and focused content.
         """
-        if not self.is_mounted:
+        if not self.is_running:
             return False
         view = self._active_view()
         analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
@@ -481,7 +485,7 @@ class TradingApp(App[None]):
 
     def _refresh_shortcuts(self) -> None:
         """Show only useful controls, with section navigation separate from toggling."""
-        if "shortcuts" not in self._status_widgets or not self.is_mounted:
+        if not self.is_running or "shortcuts" not in self._status_widgets:
             return
         view = self._active_view()
         compact = self.screen.has_class("compact")

@@ -331,6 +331,22 @@ async def test_quit_cancels_active_workflow_and_waits_for_cleanup() -> None:
     assert cleaned.is_set()
 
 
+async def test_ui_callbacks_ignore_events_after_screen_teardown() -> None:
+    """Ignore late timer and refresh callbacks after the screen has been removed."""
+    app = TradingApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+    event = AgentEvent("prompt", "Reflection 1", "analysis", "Final cleanup event.")
+    await app.receive(event)
+    app.flush_events()
+    app.refresh_clocks()
+    app._refresh_shortcuts()
+    app._refresh_tabs()
+    app._adapt_layout()
+    assert list(app._pending) == [event]
+    assert not app.check_action("fullscreen", ())
+
+
 async def test_compact_grid_and_unicode_row_renderer() -> None:
     """Retain useful compact pane sizes and exact Unicode rendering after extraction."""
     app = TradingApp()
