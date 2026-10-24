@@ -335,6 +335,13 @@ class Workflow:
                         await self._event("turn_start", stage, role.name, round=round_number, turn=turn_number,
                                           total_rounds=rounds, turns_per_round=len(keys))
                     text = await self._call(step_key, key, prompt)
+                    completed = self.store.step(step_key)
+                    await self.emit(AgentEvent(
+                        "conversation_output", role.name, stage, text,
+                        data={"round": round_number, "turn": turn_number, "total_rounds": rounds,
+                              "turns_per_round": len(keys)},
+                        timestamp=completed["updated"], event_id=f"{self.run_id}:{step_key}:output",
+                    ))
                 finally:
                     self.conversation_turns.pop(role.name, None)
                 discussion.append(f"### Round {round_number}: {role.name}\n\n{text}")

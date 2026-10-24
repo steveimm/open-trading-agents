@@ -255,6 +255,9 @@ async def test_debate_chat_input_is_shared_without_changing_native_prompts(tmp_p
     assert [event.data["conversation_turn_id"] for event in turns] == [
         "research:1:bull", "research:1:bear", "research:2:bull", "research:2:bear"
     ]
+    finished = [event for event in events if event.kind == "conversation_output" and event.stage == "research"]
+    assert [event.data["conversation_turn_id"] for event in finished] == [event.data["conversation_turn_id"] for event in turns]
+    assert all(event.text == f"{event.agent} report based on synthetic evidence" for event in finished)
     for event in events:
         if event.stage in {"research", "risk"} and event.kind in {"prompt", "text", "agent_start", "agent_end"}:
             assert event.data["conversation_turn_id"].startswith(f"{event.stage}:")
@@ -296,3 +299,34 @@ async def test_debate_resume_reuses_chat_identity_without_restarting_completed_t
     assert bear[0].event_id != bear[1].event_id
     assert bear[0].data["conversation_turn_id"] == bear[1].data["conversation_turn_id"] == "research:1:bear"
     assert sum(agent == "Bull Researcher" for agent, _ in calls) == 1
+    complete_bull = [event for event in recorded if event.kind == "conversation_output" and event.agent == "Bull Researcher"]
+    assert len(complete_bull) == 1
+
+
+async def test_debate_reconstructs_completed_public_output_when_stream_events_were_not_saved(tmp_path: Path) -> None:
+    """A durable completed step supplies its final bubble after an interrupted event flush."""
+    calls: list[tuple[str, str]] = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Run only the remaining roles, without regenerating saved debate work."""
+        return FakeHarness(spec, emit, calls, [])
+
+    settings = Settings(state_dir=tmp_path, analysts=("market",), memory_enabled=False)
+    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    workflow.store.begin_step("research:1:bull", "Bull Researcher", "Previously delivered original task")
+    workflow.store.finish_step("research:1:bull", "The saved final bull argument")
+    finished_at = workflow.store.step("research:1:bull")["updated"]
+    workflow.store.close()
+
+    resumed = Workflow.resume(workflow.directory, session_factory=factory)
+    await resumed.run()
+    assert not any(agent == "Bull Researcher" for agent, _ in calls)
+    saved = RunStore(workflow.directory)
+    try:
+        outputs = [event for event in saved.events() if event.kind == "conversation_output" and event.agent == "Bull Researcher"]
+    finally:
+        saved.close()
+    assert len(outputs) == 1
+    assert outputs[0].text == "The saved final bull argument"
+    assert outputs[0].timestamp == finished_at
+    assert outputs[0].data["conversation_turn_id"] == "research:1:bull"
