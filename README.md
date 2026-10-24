@@ -41,7 +41,9 @@ The application does not set temperature, top-p, or thinking effort. A harness m
 
 ## Interface
 
-The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
+The seven stages are Analysis, Research debate, Research decision, Trader, Risk debate, Portfolio decision, and Reports. Tabs mark running, completed, and failed stages. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
+
+Debates show the shared input once, followed by a chat bubble for each participant's turn. The current response streams into its bubble. Exact turn inputs, system instructions, reasoning, and tool calls remain available in collapsible sections. This presentation does not change what is sent to the harness.
 
 | Key | Action |
 | --- | --- |
@@ -50,16 +52,20 @@ The seven stages are Analysis, Research debate, Research decision, Trader, Risk 
 | Enter / f | Expand or restore a pane |
 | Escape | Return to the stage layout |
 | Page Up / Page Down | Scroll a page |
-| Home / End | Beginning / follow live output |
-| d | Show raw event payloads |
+| Home / End | Beginning / jump to the latest content and follow the stream |
+| [ / ] | Select the previous / next collapsible section |
+| Space | Expand or collapse the selected section |
+| s | Show or hide system instructions |
 | m | Show supporting memory and screening work |
 | q | Exit, cancelling active work while retaining saved progress |
 
-Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Pi additionally exposes locally captured native request bodies. Other harness event streams do not promise visibility into every internal HTTP field.
+Inputs, emitted reasoning, output, code, tool arguments, and tool results use different colors. Click a disclosure header or use the keyboard to expand it. Reasoning appears only when the harness exposes it. Supplied prompts and tool traffic are recorded in full. Exact native metadata remains in the saved event log rather than a separate payload pane.
+
+Scrolling upward pauses following so new output does not move what you are reading. Scrolling down to the bottom, or pressing End, resumes following automatically. End does not stop the run.
 
 Tool results longer than 10,000 characters show the first 6,000 and last 2,000 characters with an exact omitted-character count. Large payload previews behave similarly. The original events remain in SQLite and the live `transcript.jsonl` file. Ordinary prompts and model output are not shortened by this display rule.
 
-Elapsed clocks update independently of model responses. Usage shows total input, output, cache reads, and cache writes. Cache counts are subsets of input, not additional input. An em dash means unavailable and `+?` means only part of the usage has cache detail. Reported reasoning tokens are already included in output.
+Elapsed clocks update independently of model responses. Usage shows total input, output, and cache reads. Cache writes appear only when a provider reports them, including an explicit zero. Cache counts are subsets of input, not additional input. An em dash means unavailable and `+?` means only part of the usage has cache detail. Reported reasoning tokens are already included in output.
 
 ## Calculations and sources
 
@@ -75,7 +81,7 @@ Most default sources need no API key. Optional FRED and Alpha Vantage sources us
 
 ## Saved runs and unattended use
 
-The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a `reports/usage.json` summary with per-agent token/cache counts. Reports and transcripts remain available after an interrupted run.
+The default state directory is `~/.local/share/open-trading-agents`, configurable with `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a `reports/usage.json` summary with per-agent token/cache counts. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
 
 ```sh
 uv run open-trading-agents analyze NVDA --headless
