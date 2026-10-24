@@ -94,8 +94,8 @@ def test_tier_harness_switch_to_shared_kind_uses_native_defaults(tmp_path: Path)
     assert settings.harness.model == "shared-model"
 
 
-def test_interactive_configuration_keeps_current_values_for_blank_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Entering no replacement keeps all configured native selectors intact."""
+def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Confirming each highlighted choice keeps all configured native selectors intact."""
     from open_trading_agents import configuration_ui
     from open_trading_agents.harnesses.catalog import ModelCatalog
 
@@ -103,7 +103,8 @@ def test_interactive_configuration_keeps_current_values_for_blank_answers(tmp_pa
     path.write_text('[harness]\nkind="pi"\nmodel="old-model"\nprovider="old-provider"\n')
     monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True)))
     monkeypatch.setattr(configuration_ui, "discover_models", lambda settings: ModelCatalog(()))
-    result = runner.invoke(cli.app, ["configure", "--config", str(path)], input="\n\n\n\n\n\n")
+    monkeypatch.setattr(configuration_ui, "_choose", lambda label, choices, default=0: default)
+    result = runner.invoke(cli.app, ["configure", "--config", str(path)])
     assert result.exit_code == 0, result.output
     settings = load_settings(path)
     assert settings.harness.kind == "pi"
@@ -112,7 +113,6 @@ def test_interactive_configuration_keeps_current_values_for_blank_answers(tmp_pa
     assert settings.quick is None and settings.deep is None
     assert "Working agents (quick)" in result.output
     assert "Decision managers (deep)" in result.output
-    assert "Enter keeps the displayed selection" in result.output
 
 
 def test_noninteractive_configuration_requires_selection_flags(tmp_path: Path) -> None:
