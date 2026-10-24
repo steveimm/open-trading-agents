@@ -459,6 +459,7 @@ class TranscriptView(FollowScrollView):
         elif resized:
             self.scroll_to(y=self.index.row_at(*anchor), animate=False, immediate=True)
         self.refresh()
+        self.call_after_refresh(self.sync)
 
     def render_line(self, y: int) -> Strip:
         """Render one visible wrapped row.

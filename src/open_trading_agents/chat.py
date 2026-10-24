@@ -383,6 +383,7 @@ class ChatView(FollowScrollView):
             offset = part.section.index.row_at(anchor[1], anchor[2]) if part.kind == "body" and part.section else 0
             self.scroll_to(y=lookup[anchor[0]] + offset, animate=False, immediate=True)
         self.refresh()
+        self.call_after_refresh(self.sync)
 
     def _line(self, text: str, style: Style | str, width: int) -> Strip:
         """Render a bounded header line without interpreting rich markup.
@@ -426,7 +427,7 @@ class ChatView(FollowScrollView):
             title.append("─" * max(0, width - title.cell_len - 1) + "╮")
             return Strip(title.render(self.app.console)).apply_style(self.app.console.get_style(title.style)).adjust_cell_length(width, self.rich_style).apply_style(self.rich_style)
         if part.kind == "bottom":
-            return self._line("╰" + "─" * max(0, width - 1), color, width)
+            return self._line("╰" + "─" * max(0, width - 2) + "╯", color, width)
         if part.kind == "detail" and section is not None:
             marker = "▸" if section.collapsed else "▾"
             style = "bold #f1e5b9 on #303547" if section is self._selected else CHANNEL_COLORS.get(section.kind, "#b7c2d4")
@@ -482,6 +483,10 @@ class ChatView(FollowScrollView):
 
     def toggle_selected(self) -> None:
         """Toggle the selected detail, choosing a visible detail when none is selected."""
+        if self._selected is not None:
+            row = self._detail_rows.get(self._selected, -1)
+            if not self.scroll_y <= row < self.scroll_y + self.size.height:
+                self._selected = None
         if self._selected is None:
             self.select_detail(1)
         if self._selected is not None:

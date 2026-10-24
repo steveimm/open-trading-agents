@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.scrollbar import ScrollTo
 
@@ -117,6 +118,11 @@ async def test_bottom_navigation_resumes_follow_without_resize_or_append_reset()
         assert view.following
         view._on_scroll_to(ScrollTo(y=0, animate=False))
         assert not view.following
+        view.scroll_to(y=max(0, view.max_scroll_y - 1), animate=False, immediate=True)
+        view._on_mouse_scroll_down(events.MouseScrollDown(view, 3, 3, 0, 1, 0, False, False, False))
+        assert view.following
+        view._on_mouse_scroll_up(events.MouseScrollUp(view, 3, 3, 0, -1, 0, False, False, False))
+        assert not view.following
 
 
 async def test_legacy_inputs_and_durable_outputs_reconcile_without_duplicate_bubbles() -> None:
@@ -165,3 +171,47 @@ async def test_large_collapsed_results_preserve_source_and_bounded_rendering() -
         view.sync()
         assert time.monotonic() - started < 1
         assert view.scroll_y == top and not view.following
+
+
+async def test_late_systems_and_shared_input_do_not_displace_scrollback() -> None:
+    """Keep the same logical output visible when earlier collapsed context appears."""
+    view = ChatView(id="chat", debate=True)
+    async with ChatTestApp(view).run_test(size=(100, 24)) as pilot:
+        body = "\n".join(f"Evidence line {number}" for number in range(200))
+        view.consume(AgentEvent("text", "Bull Researcher", "research", body, {"message_id": "one"}))
+        view.sync()
+        await pilot.pause()
+        view.navigate("home")
+        view.navigate("pagedown")
+        before = "".join(segment.text for segment in view.render_line(0))
+        view.consume(AgentEvent("system", "Bear Researcher", "research", "New participant's system prompt"))
+        view.consume(AgentEvent("conversation_input", "Input", "research", "Shared evidence\n" * 20))
+        view.sync()
+        await pilot.pause()
+        after = "".join(segment.text for segment in view.render_line(0))
+        assert before == after
+        assert not view.following
+
+
+async def test_native_and_durable_final_output_repair_only_the_current_contribution() -> None:
+    """Complete interrupted text and reconcile tool snapshots without duplicating public replies."""
+    view = ChatView(id="chat", debate=True)
+    turn = {"conversation_turn_id": "research:1:bull", "round": 1, "turn": 1, "total_rounds": 1}
+    async with ChatTestApp(view).run_test(size=(100, 30)):
+        for event in (
+            AgentEvent("turn_start", "Bull Researcher", "research", data=turn),
+            AgentEvent("tool_start", "Bull Researcher", "research", "{}", {**turn, "tool_call_id": "tool", "tool": "calculate"}),
+            AgentEvent("tool_start", "Bull Researcher", "research", '{"expression":', {**turn, "tool_call_id": "tool", "delta": True}),
+            AgentEvent("tool_start", "Bull Researcher", "research", '"1+1"}', {**turn, "tool_call_id": "tool", "delta": True}),
+            AgentEvent("tool_result", "Bull Researcher", "research", "preliminary", {**turn, "tool_call_id": "tool", "snapshot": True}),
+            AgentEvent("tool_result", "Bull Researcher", "research", "corrected", {**turn, "tool_call_id": "tool", "final": True}),
+            AgentEvent("text", "Bull Researcher", "research", "Partial", {**turn, "message_id": "one"}),
+            AgentEvent("conversation_output", "Bull Researcher", "research", "Complete public reply", turn),
+        ):
+            view.consume(event)
+        view.sync()
+        assert len(view.bubbles) == 1
+        assert view.plain().count("Complete public reply") == 1
+        assert "Partial" not in view.plain()
+        assert "preliminary" not in view.plain()
+        assert '{"expression":"1+1"}' in view.plain()
