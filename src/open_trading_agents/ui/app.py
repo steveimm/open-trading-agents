@@ -16,12 +16,12 @@ from textual.content import Content
 from textual.geometry import Size
 from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
-from open_trading_agents.chat import ChatView
-from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
-from open_trading_agents.prompts import ROLES, system_prompt
-from open_trading_agents.transcript import Transcript, TranscriptView, literal_text
-from open_trading_agents.usage import format_usage as usage_label
-from open_trading_agents.usage import request_usage
+from open_trading_agents.analysis.models import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
+from open_trading_agents.analysis.prompts import ROLES, system_prompt
+from open_trading_agents.reporting.usage import format_usage as usage_label
+from open_trading_agents.reporting.usage import request_usage
+from open_trading_agents.ui.chat import ChatView
+from open_trading_agents.ui.transcript import Transcript, TranscriptView, literal_text
 
 DEBATE_ROLES = {
     "research": ("bull", "bear"),
@@ -300,15 +300,25 @@ class TradingApp(App[None]):
         """Apply a bounded event batch and update only visible viewports."""
         if not self.is_running:
             return
+
+        lifecycle_changed = False
         for _ in range(min(len(self._pending), 1000)):
             event = self._pending.popleft()
             if event.event_id not in self._event_ids:
                 self._event_ids.add(event.event_id)
                 self._apply(event)
+                lifecycle_changed = lifecycle_changed or event.kind in {
+                    "stage_start", "stage_end", "agent_start", "agent_end", "turn_start", "error", "run_end",
+                }
+
         for view in self._render_views:
             if view.is_on_screen:
                 view.sync()
-        self._refresh_shortcuts()
+
+        if lifecycle_changed:
+            self.refresh_clocks()
+        else:
+            self._refresh_shortcuts()
 
     def _apply(self, event: AgentEvent) -> None:
         """Update lifecycle counters and route content to its chronological chat.

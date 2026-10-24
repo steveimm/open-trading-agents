@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from open_trading_agents.domain import AgentEvent, AgentSpec, HarnessConfig
+from open_trading_agents.analysis.models import AgentEvent, AgentSpec, HarnessConfig
 from open_trading_agents.harnesses.pi import PiSession, usage_counts
 
 

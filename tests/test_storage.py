@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.events import EventRecorder
-from open_trading_agents.storage import RunStore
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.persistence.events import EventRecorder
+from open_trading_agents.persistence.storage import RunStore
 
 
 def test_interrupted_run_reopens_with_session_and_completed_work(tmp_path: Path) -> None:

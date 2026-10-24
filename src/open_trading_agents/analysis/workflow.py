@@ -14,18 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from open_trading_agents import __version__
+from open_trading_agents.analysis.decisions import SCHEMAS, decision_error, decision_format, parse_decision, render_decision
+from open_trading_agents.analysis.models import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
+from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.config import Portfolio, Settings, validate_date
 from open_trading_agents.dataflows.config import build_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
-from open_trading_agents.decisions import SCHEMAS, decision_error, decision_format, parse_decision, render_decision
-from open_trading_agents.domain import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
-from open_trading_agents.events import EventRecorder
+from open_trading_agents.dataflows.tools import FinancialTools, ToolContext
 from open_trading_agents.harnesses import open_session
-from open_trading_agents.prompts import ROLES, system_prompt
-from open_trading_agents.reporting import write_reports, write_transcript
-from open_trading_agents.storage import RunStore
-from open_trading_agents.tools import FinancialTools, ToolContext
+from open_trading_agents.persistence.events import EventRecorder
+from open_trading_agents.persistence.storage import RunStore
+from open_trading_agents.reporting.reports import write_reports, write_transcript
 
 SessionFactory = Callable[[HarnessConfig, AgentSpec, EventSink], Awaitable[HarnessSession]]
 
@@ -203,7 +203,7 @@ class Workflow:
                 tool_command = (
                     sys.executable,
                     "-m",
-                    "open_trading_agents.tools",
+                    "open_trading_agents.dataflows.tools",
                     "--context",
                     str(self.context_file),
                     "--tools",
@@ -436,7 +436,7 @@ class Workflow:
         """
         if not self.settings.memory_enabled:
             return []
-        from open_trading_agents.memory import MemoryLog
+        from open_trading_agents.persistence.memory import MemoryLog
 
         memory = MemoryLog(self.settings.state_dir / "memory.sqlite")
 
@@ -559,7 +559,7 @@ class Workflow:
             self.outputs["Risk Debate"] = risk
             lessons = ""
             if self.settings.memory_enabled:
-                from open_trading_agents.memory import MemoryLog
+                from open_trading_agents.persistence.memory import MemoryLog
 
                 memory = MemoryLog(self.settings.state_dir / "memory.sqlite")
                 lessons = memory.past_context(self.ticker, as_of=self.trade_date)

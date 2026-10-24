@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
+from open_trading_agents.analysis.models import AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.analysis.workflow import Workflow
 from open_trading_agents.config import Settings
-from open_trading_agents.domain import AgentResult, AgentSpec, EventSink, HarnessConfig
-from open_trading_agents.workflow import Workflow
 
 
 class ScreeningSession:

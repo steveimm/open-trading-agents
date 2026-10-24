@@ -15,7 +15,7 @@ from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollDown, ScrollTo, ScrollUp
 from textual.strip import Strip
 
-from open_trading_agents.domain import AgentEvent
+from open_trading_agents.analysis.models import AgentEvent
 
 CHANNEL_COLORS = {
     "system": "#939caa",

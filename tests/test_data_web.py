@@ -13,7 +13,7 @@ import pytest
 
 from open_trading_agents.dataflows import web
 from open_trading_agents.dataflows.config import run_config
-from open_trading_agents.tools import FinancialTools, ToolContext, create_server
+from open_trading_agents.dataflows.tools import FinancialTools, ToolContext, create_server
 
 
 def _public_dns(host: str, port: int, **kwargs: Any) -> list[tuple[Any, ...]]:
@@ -194,6 +194,6 @@ async def test_mcp_web_tools_keep_analysis_date_out_of_model_schema(monkeypatch:
     for tool in await server.list_tools():
         assert "trade_date" not in tool.input_schema.get("properties", {})
     source = Mock(return_value="source")
-    monkeypatch.setattr("open_trading_agents.tools.fetch_webpage", source)
+    monkeypatch.setattr("open_trading_agents.dataflows.tools.fetch_webpage", source)
     FinancialTools(ToolContext("NVDA", "2024-03-15")).fetch_webpage("https://example.org/release")
     source.assert_called_once_with("https://example.org/release", "2024-03-15", 20000)

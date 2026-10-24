@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from open_trading_agents.analysis.decisions import SCHEMAS
+from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.analysis.workflow import Workflow
 from open_trading_agents.config import Settings
 from open_trading_agents.dataflows.files import locked
-from open_trading_agents.decisions import SCHEMAS
-from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
-from open_trading_agents.events import EventRecorder
-from open_trading_agents.storage import RunStore
-from open_trading_agents.workflow import Workflow
+from open_trading_agents.persistence.events import EventRecorder
+from open_trading_agents.persistence.storage import RunStore
 
 
 class FakeHarness:

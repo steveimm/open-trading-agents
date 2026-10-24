@@ -2,8 +2,8 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.reporting import write_reports
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.reporting.reports import write_reports
 
 
 def test_automatic_report_writer_saves_both_formats_under_reports(tmp_path: Path) -> None:

@@ -1,8 +1,8 @@
 import pytest
 
-from open_trading_agents.domain import STAGES, AgentEvent
-from open_trading_agents.prompts import ROLES, system_prompt
-from open_trading_agents.tui import TradingApp
+from open_trading_agents.analysis.models import STAGES, AgentEvent
+from open_trading_agents.analysis.prompts import ROLES, system_prompt
+from open_trading_agents.ui.app import TradingApp
 
 
 @pytest.mark.parametrize("stage,role_key", [("research", "bear"), ("risk", "neutral")])

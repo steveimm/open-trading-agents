@@ -4,9 +4,11 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from open_trading_agents import backtest, cli, configuration_ui
+from open_trading_agents import cli
+from open_trading_agents.analysis import backtest
 from open_trading_agents.cli import HarnessName, app, configured
 from open_trading_agents.config import HarnessSettings, Portfolio, Position, Settings, default_config_path, save_preset, set_default_preset
+from open_trading_agents.ui import configuration as configuration_ui
 
 runner = CliRunner()
 

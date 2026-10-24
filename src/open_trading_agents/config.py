@@ -14,8 +14,8 @@ import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from tomlkit.toml_document import TOMLDocument
 
+from open_trading_agents.analysis.models import HarnessConfig
 from open_trading_agents.dataflows.symbols import normalize_symbol
-from open_trading_agents.domain import HarnessConfig
 
 _PRESET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 

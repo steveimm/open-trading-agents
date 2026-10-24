@@ -1,6 +1,6 @@
 import pytest
 
-from open_trading_agents.decisions import parse_decision
+from open_trading_agents.analysis.decisions import parse_decision
 
 
 def test_numeric_fields_do_not_turn_percentages_into_prices() -> None:

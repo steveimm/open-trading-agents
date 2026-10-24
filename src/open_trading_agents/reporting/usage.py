@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from typing import Any
 
-from open_trading_agents.domain import AgentEvent, Usage
+from open_trading_agents.analysis.models import AgentEvent, Usage
 
 
 def request_usage(event: AgentEvent) -> tuple[tuple[str, str], Usage]:

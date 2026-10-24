@@ -7,9 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.report_html import render_report
-from open_trading_agents.usage import summarize_usage
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.reporting.html import render_report
+from open_trading_agents.reporting.usage import summarize_usage
 
 type ReportEntry = tuple[str, str, str]
 type ReportSection = tuple[str, str, list[ReportEntry]]

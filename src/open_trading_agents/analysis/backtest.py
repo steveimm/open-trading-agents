@@ -11,13 +11,13 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from open_trading_agents.analysis.models import AgentEvent, EventSink
+from open_trading_agents.analysis.workflow import SessionFactory, Workflow
 from open_trading_agents.config import Portfolio, Settings, validate_date
 from open_trading_agents.dataflows.files import locked
 from open_trading_agents.dataflows.symbols import normalize_symbol, safe_ticker_component
-from open_trading_agents.domain import AgentEvent, EventSink
 from open_trading_agents.harnesses import open_session
-from open_trading_agents.memory import MemoryLog
-from open_trading_agents.workflow import SessionFactory, Workflow
+from open_trading_agents.persistence.memory import MemoryLog
 
 DIRECTIONS = {"Buy": 1, "Overweight": 1, "Hold": 0, "Underweight": -1, "Sell": -1}
 LIMITATIONS = (

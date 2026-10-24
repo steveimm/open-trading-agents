@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Any
 
-from open_trading_agents.domain import AgentResult
+from open_trading_agents.analysis.models import AgentResult
 from open_trading_agents.harnesses.process import HarnessError, JsonProcess
 
 

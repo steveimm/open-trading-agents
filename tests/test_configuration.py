@@ -94,8 +94,8 @@ def test_tier_harness_switch_to_shared_kind_uses_native_defaults(tmp_path: Path)
 
 def test_interactive_configuration_keeps_highlighted_current_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Confirming each highlighted choice keeps all configured native selectors intact."""
-    from open_trading_agents import configuration_ui
     from open_trading_agents.harnesses.catalog import ModelCatalog
+    from open_trading_agents.ui import configuration as configuration_ui
 
     path = tmp_path / "tradingagents.toml"
     path.write_text('[harness]\nkind="pi"\nmodel="old-model"\nprovider="old-provider"\n')

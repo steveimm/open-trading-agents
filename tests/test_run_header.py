@@ -5,11 +5,12 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Static
 
-from open_trading_agents import cli, tui
+from open_trading_agents import cli
+from open_trading_agents.analysis.models import AgentEvent, HarnessConfig
+from open_trading_agents.analysis.workflow import RunResult
 from open_trading_agents.config import HarnessSettings, Settings
-from open_trading_agents.domain import AgentEvent, HarnessConfig
-from open_trading_agents.tui import TradingApp
-from open_trading_agents.workflow import RunResult
+from open_trading_agents.ui import app as tui
+from open_trading_agents.ui.app import TradingApp
 
 
 @pytest.mark.parametrize("size", [(170, 43), (80, 24)])

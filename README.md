@@ -146,6 +146,21 @@ uv run open-trading-agents backtest NVDA,AAPL --start 2024-03-01 --end 2024-03-1
 
 Repeat the same command to resume a sweep. A changed configuration, grid, or portfolio is rejected for an existing sweep identifier. Sweep runs, memory and cache are isolated from live analysis. Results score independent ratings against realized alpha. They do not simulate fills, transaction costs, or evolving holdings. Historical news/social coverage is incomplete and model sampling varies, so these evaluations are not exact historical replay.
 
+## Source layout
+
+The package root contains the CLI entry points and shared application configuration. Related modules are grouped by responsibility:
+
+| Directory | Responsibility |
+| --- | --- |
+| `analysis/` | Workflow orchestration, role prompts, decision schemas, backtesting, and shared models |
+| `harnesses/` | Native CLI adapters and the pi tool extension |
+| `dataflows/` | Financial sources, source configuration, and the local MCP tool server |
+| `persistence/` | Run storage, event recording, and decision memory |
+| `reporting/` | Markdown/HTML reports and usage summaries |
+| `ui/` | The terminal interface, transcript rendering, and configuration menus |
+
+The financial-tool subprocess entry point is `python -m open_trading_agents.dataflows.tools`. The user-facing CLI remains `open-trading-agents`.
+
 ## Validation
 
 ```sh
@@ -180,6 +195,6 @@ There is no application telemetry, update polling, announcement service, or remo
 
 This project adapts components from [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents), by Tauric Research and TradingAgents contributors, at revision `e8f5503e9b86d5c2710b0c76b1f686703968c9df` (0.7.0). The upstream project is licensed under the Apache License, Version 2.0. The full license text is included in [LICENSE](LICENSE).
 
-Adapted components include the financial-data modules in `src/open_trading_agents/dataflows`, financial-tool behavior in `tools.py`, benchmark and return-window semantics in `memory.py`, financial role instructions in `prompts.py`, decision-field behavior, and the report grouping and HTML presentation in `reporting.py` and `report_html.py`.
+Adapted components include the financial-data modules in `src/open_trading_agents/dataflows`, financial-tool behavior in `dataflows/tools.py`, benchmark and return-window semantics in `persistence/memory.py`, financial role instructions in `analysis/prompts.py`, decision-field behavior, and the report grouping and HTML presentation in `reporting/reports.py` and `reporting/html.py`.
 
 Modifications include independent configuration, package imports, typing, documentation, local MCP tool exposure, and removal of graph-framework coupling. No upstream telemetry, update checks, or direct model clients are included. The reference source and the user's development transcript informed this design. No reference checkout is required at runtime.

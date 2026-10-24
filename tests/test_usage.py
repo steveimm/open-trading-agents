@@ -1,5 +1,5 @@
-from open_trading_agents.domain import AgentEvent, Usage
-from open_trading_agents.usage import format_usage, summarize_usage
+from open_trading_agents.analysis.models import AgentEvent, Usage
+from open_trading_agents.reporting.usage import format_usage, summarize_usage
 
 
 def test_snapshots_replace_counts_and_missing_cache_stays_unknown() -> None:

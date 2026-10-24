@@ -7,9 +7,9 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.scrollbar import ScrollTo
 
-from open_trading_agents.chat import ChatView
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.transcript import Transcript, TranscriptIndex, TranscriptView
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.ui.chat import ChatView
+from open_trading_agents.ui.transcript import Transcript, TranscriptIndex, TranscriptView
 
 
 class ChatTestApp(App[None]):

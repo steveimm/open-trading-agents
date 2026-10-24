@@ -11,9 +11,9 @@ import pytest
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from open_trading_agents import tools as module
+from open_trading_agents.dataflows import tools as module
 from open_trading_agents.dataflows.config import get_config
-from open_trading_agents.tools import FinancialTools, ToolContext, create_server
+from open_trading_agents.dataflows.tools import FinancialTools, ToolContext, create_server
 
 
 @pytest.mark.parametrize(
@@ -119,7 +119,7 @@ async def test_real_stdio_mcp_process_lists_and_calls_historical_tool(tmp_path: 
     )
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "open_trading_agents.tools", "--context", str(context_file), "--tools", "get_fundamentals"],
+        args=["-m", "open_trading_agents.dataflows.tools", "--context", str(context_file), "--tools", "get_fundamentals"],
     )
     async with stdio_client(parameters) as streams:
         async with ClientSession(*streams, read_timeout_seconds=10) as session:

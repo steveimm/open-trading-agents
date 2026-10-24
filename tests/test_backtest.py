@@ -8,12 +8,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from open_trading_agents import memory
-from open_trading_agents.backtest import iter_grid, run_backtest, summarize
+from open_trading_agents.analysis.backtest import iter_grid, run_backtest, summarize
+from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.config import Portfolio, Settings
 from open_trading_agents.dataflows.files import locked
-from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig, HarnessSession
-from open_trading_agents.memory import MemoryLog
+from open_trading_agents.persistence import memory
+from open_trading_agents.persistence.memory import MemoryLog
 
 
 class FixtureSession:

@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from open_trading_agents.domain import AgentEvent
+from open_trading_agents.analysis.models import AgentEvent
 
 
 class RunStore:

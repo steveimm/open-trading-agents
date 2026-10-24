@@ -13,8 +13,8 @@ from textual import events
 from textual.geometry import Region, Size
 from textual.strip import Strip
 
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.transcript import (
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.ui.transcript import (
     CHANNEL_COLORS,
     FollowScrollView,
     Transcript,

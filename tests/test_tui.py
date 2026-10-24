@@ -12,12 +12,12 @@ from textual.containers import Vertical
 from textual.strip import Strip
 from textual.widgets import Collapsible, ContentSwitcher, Static, Tab
 
-from open_trading_agents.chat import ChatView
-from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
-from open_trading_agents.events import EventRecorder
-from open_trading_agents.storage import RunStore
-from open_trading_agents.transcript import Transcript, TranscriptView
-from open_trading_agents.tui import TradingApp, usage_label
+from open_trading_agents.analysis.models import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
+from open_trading_agents.persistence.events import EventRecorder
+from open_trading_agents.persistence.storage import RunStore
+from open_trading_agents.ui.app import TradingApp, usage_label
+from open_trading_agents.ui.chat import ChatView
+from open_trading_agents.ui.transcript import Transcript, TranscriptView
 
 
 async def test_parallel_streams_keep_complete_source_and_usage_without_raw_panel() -> None:
@@ -495,6 +495,9 @@ async def test_supporting_tasks_and_errors_preserve_recorded_clocks() -> None:
         assert not app.query_one("#memory-details", Collapsible).collapsed
         await app.receive(AgentEvent("error", "Workflow", "reports", "Provider failed", timestamp=base + 5))
         app.flush_events()
+        header = str(app.query_one("#run-status", Static).render())
+        assert "Failed" in header and "00:05" in header
+
         await pilot.pause()
         assert app.agents["News Analyst"].status == "complete"
         assert app.agents["Market Analyst"].status == "stopped"

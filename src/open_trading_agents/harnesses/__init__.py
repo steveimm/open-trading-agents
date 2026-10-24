@@ -1,4 +1,4 @@
-from open_trading_agents.domain import AgentSpec, EventSink, HarnessConfig, HarnessSession
+from open_trading_agents.analysis.models import AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.harnesses.process import start_checked
 
 

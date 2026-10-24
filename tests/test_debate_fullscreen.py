@@ -1,8 +1,8 @@
 import pytest
 from textual.widgets import Static
 
-from open_trading_agents.domain import STAGES, AgentEvent
-from open_trading_agents.tui import TradingApp
+from open_trading_agents.analysis.models import STAGES, AgentEvent
+from open_trading_agents.ui.app import TradingApp
 
 
 @pytest.mark.parametrize("stage,size", [("research", (160, 44)), ("risk", (80, 24))])

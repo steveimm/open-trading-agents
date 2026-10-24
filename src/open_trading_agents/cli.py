@@ -14,6 +14,8 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.analysis.workflow import RunResult, Workflow
 from open_trading_agents.config import (
     HarnessSettings,
     Settings,
@@ -24,8 +26,6 @@ from open_trading_agents.config import (
     save_harness_selection,
     validate_date,
 )
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.workflow import RunResult, Workflow
 
 app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
 console = Console(stderr=True)
@@ -118,7 +118,7 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
 
         result = asyncio.run(workflow.run(observe))
     else:
-        from open_trading_agents.tui import TradingApp
+        from open_trading_agents.ui.app import TradingApp
 
         selected = tuple(key for key in workflow.settings.analysts if not (workflow.asset_type == "crypto" and key == "fundamentals"))
         ui = TradingApp(workflow.run, selected_analysts=selected, ticker=workflow.ticker, run_dir=workflow.directory,
@@ -188,13 +188,13 @@ def run(
         ticker = typer.prompt("Ticker")
     try:
         if interactive and analysis_date is None:
-            from open_trading_agents.configuration_ui import select_analysis_date
+            from open_trading_agents.ui.configuration import select_analysis_date
 
             analysis_date = select_analysis_date()
         analysis_date = validate_date(analysis_date.strip() if analysis_date is not None else date.today().isoformat())
         settings = configured(config, harness, model, provider, effort)
         if interactive:
-            from open_trading_agents.configuration_ui import select_agent_settings, select_research_depth
+            from open_trading_agents.ui.configuration import select_agent_settings, select_research_depth
 
             settings = select_research_depth(settings)
             settings = select_agent_settings(settings)
@@ -259,7 +259,7 @@ def backtest(
         run_id: Existing sweep identifier to resume.
         portfolio: Optional standing holdings used for each cell.
     """
-    from open_trading_agents.backtest import iter_grid, run_backtest
+    from open_trading_agents.analysis.backtest import iter_grid, run_backtest
 
     try:
         settings = configured(config, harness, model, provider, effort)
@@ -297,7 +297,7 @@ def configure(
         raise typer.BadParameter("provide --harness, --model, --provider or --effort when input is not interactive")
     try:
         if interactive:
-            from open_trading_agents.configuration_ui import configure_interactively
+            from open_trading_agents.ui.configuration import configure_interactively
 
             configure_interactively(config)
             return

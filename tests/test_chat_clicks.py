@@ -1,8 +1,8 @@
 import pytest
 
-from open_trading_agents.chat import ChatView
-from open_trading_agents.domain import STAGES, AgentEvent
-from open_trading_agents.tui import TradingApp
+from open_trading_agents.analysis.models import STAGES, AgentEvent
+from open_trading_agents.ui.app import TradingApp
+from open_trading_agents.ui.chat import ChatView
 
 
 def content_position(view: ChatView, x: int, y: int) -> tuple[int, int]:

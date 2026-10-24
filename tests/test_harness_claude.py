@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from open_trading_agents.domain import AgentEvent, AgentSpec, HarnessConfig
+from open_trading_agents.analysis.models import AgentEvent, AgentSpec, HarnessConfig
 from open_trading_agents.harnesses import open_session
 
 

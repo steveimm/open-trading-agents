@@ -2,8 +2,8 @@ import queue
 import threading
 from pathlib import Path
 
-from open_trading_agents.domain import AgentEvent
-from open_trading_agents.storage import RunStore
+from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.persistence.storage import RunStore
 
 
 class EventRecorder:

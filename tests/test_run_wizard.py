@@ -6,8 +6,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from open_trading_agents import cli, configuration_ui
+from open_trading_agents import cli
 from open_trading_agents.config import HarnessSettings, Portfolio, Settings, save_preset
+from open_trading_agents.ui import configuration as configuration_ui
 
 runner = CliRunner()
 

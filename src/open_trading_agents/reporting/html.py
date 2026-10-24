@@ -8,7 +8,7 @@ from markdown_it.renderer import RendererHTML
 from markdown_it.token import Token
 
 if TYPE_CHECKING:
-    from open_trading_agents.reporting import ReportSection
+    from open_trading_agents.reporting.reports import ReportSection
 
 _TONE = {"Buy": "up", "Overweight": "up", "Hold": "level", "Underweight": "down", "Sell": "down"}
 

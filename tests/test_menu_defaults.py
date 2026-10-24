@@ -7,7 +7,7 @@ from prompt_toolkit.output import DummyOutput
 from questionary.prompts.common import InquirerControl
 from questionary.question import Question
 
-from open_trading_agents import configuration_ui
+from open_trading_agents.ui import configuration as configuration_ui
 
 
 @pytest.fixture

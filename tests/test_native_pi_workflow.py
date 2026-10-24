@@ -13,15 +13,15 @@ from typing import Any
 
 import pytest
 
+from open_trading_agents.analysis.models import AgentEvent, AgentSpec, HarnessConfig
+from open_trading_agents.analysis.prompts import ROLES
+from open_trading_agents.analysis.workflow import Workflow
 from open_trading_agents.config import HarnessSettings, Settings
-from open_trading_agents.domain import AgentEvent, AgentSpec, HarnessConfig
+from open_trading_agents.dataflows.tools import FinancialTools
 from open_trading_agents.harnesses import open_session
 from open_trading_agents.harnesses.process import HarnessError
-from open_trading_agents.memory import MemoryLog, Returns
-from open_trading_agents.prompts import ROLES
-from open_trading_agents.storage import RunStore
-from open_trading_agents.tools import FinancialTools
-from open_trading_agents.workflow import Workflow
+from open_trading_agents.persistence.memory import MemoryLog, Returns
+from open_trading_agents.persistence.storage import RunStore
 
 pytestmark = pytest.mark.native
 
@@ -238,7 +238,7 @@ async def test_native_pi_full_workflow_preserves_history_tools_and_usage(tmp_pat
         raise AssertionError(f"Application attempted direct network access: {address}")
 
     monkeypatch.setattr(FinancialTools, "get_social_sentiment", social_evidence)
-    monkeypatch.setattr("open_trading_agents.memory.fetch_returns", outcomes)
+    monkeypatch.setattr("open_trading_agents.persistence.memory.fetch_returns", outcomes)
     settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="pi", command=(executable,), effort=effort),
                         research_rounds=2, risk_rounds=1,
                         allow_execution=True, web_research=False, memory_enabled=True)

@@ -11,8 +11,8 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from open_trading_agents import memory
-from open_trading_agents.memory import MemoryLog, fetch_returns, resolve_benchmark
+from open_trading_agents.persistence import memory
+from open_trading_agents.persistence.memory import MemoryLog, fetch_returns, resolve_benchmark
 
 
 def _record(log: MemoryLog, run_id: str = "one", ticker: str = "NVDA", **kwargs: Any) -> int:

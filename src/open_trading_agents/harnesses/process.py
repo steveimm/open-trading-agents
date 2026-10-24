@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from open_trading_agents.domain import AgentEvent, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.analysis.models import AgentEvent, AgentSpec, EventSink, HarnessConfig
 
 
 class HarnessError(RuntimeError):

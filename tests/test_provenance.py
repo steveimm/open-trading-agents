@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 
 from open_trading_agents import __version__
+from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.analysis.workflow import Workflow
 from open_trading_agents.config import HarnessSettings, Settings
-from open_trading_agents.domain import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
-from open_trading_agents.storage import RunStore
-from open_trading_agents.workflow import Workflow
+from open_trading_agents.persistence.storage import RunStore
 
 
 async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tmp_path: Path) -> None:

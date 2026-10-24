@@ -9,9 +9,10 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from typer.testing import CliRunner
 
-from open_trading_agents import cli, configuration_ui
+from open_trading_agents import cli
 from open_trading_agents.config import HarnessSettings, Settings, load_preset, load_settings, preset_path, save_preset
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice
+from open_trading_agents.ui import configuration as configuration_ui
 
 runner = CliRunner()
 
