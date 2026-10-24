@@ -100,7 +100,7 @@ Elapsed clocks update independently of model responses. Usage shows total input,
 
 ## Calculations and sources
 
-Agents can use native execution tools to write and run calculation scripts in their own workspaces. Interpreters are resolved by the native shell environment, with no application interpreter path prescribed in prompts. The shared `calculate` tool verifies arithmetic and statistics even when a harness cannot execute a script. Its response contains only the result or error; the expression and variables remain in the tool arguments. It interprets a bounded arithmetic syntax without imports or arbitrary code execution. Set `allow_execution = false` to disable native scripts while retaining the calculator.
+Agents use their harness's native execution tools to write and run calculation scripts in their own workspaces. The prompt asks them to batch related calculations into one script execution where possible and show the code, inputs, units, and results. Interpreters are resolved by the native shell environment, with no application interpreter path prescribed in prompts. Set `allow_execution = false` to disable native scripts. If execution is unavailable, agents must state which numerical claims they could not verify.
 
 Financial tools retain Yahoo, SEC EDGAR, Alpha Vantage, FRED, Polymarket, Reddit, and StockTwits integrations. Tools bind the ticker and information cutoff outside the model's arguments. Technical reports have a shared verified price/indicator snapshot. Missing or unavailable data is reported explicitly.
 

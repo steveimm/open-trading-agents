@@ -103,6 +103,10 @@ async def test_mcp_schema_exposes_only_selected_tools_and_no_injected_context() 
     assert {tool.name for tool in schemas} == {"get_news", "get_prediction_markets"}
     for tool in schemas:
         assert not {"ticker", "symbol", "trade_date", "config"} & set(tool.input_schema.get("properties", {}))
+    available = await create_server(ToolContext("NVDA", "2024-03-15")).list_tools()
+    assert "calculate" not in {tool.name for tool in available}
+    with pytest.raises(ValueError, match="Unknown financial tools: calculate"):
+        create_server(ToolContext("NVDA", "2024-03-15"), ("calculate",))
 
 
 @pytest.mark.asyncio
