@@ -15,15 +15,16 @@ uv sync
 uv run open-trading-agents doctor
 ```
 
-Configure your chosen harness through its normal CLI first. Then start a run:
+Configure your chosen harness through its normal CLI first. Create an application preset with `configure`, save it when prompted, then start a run:
 
 ```sh
-uv run open-trading-agents analyze NVDA
-uv run open-trading-agents analyze BTC-USD --harness claude
-uv run open-trading-agents analyze NVDA --harness codex --date 2026-01-02
+uv run open-trading-agents configure
+uv run open-trading-agents
+uv run open-trading-agents --ticker BTC-USD --harness claude
+uv run open-trading-agents --ticker NVDA --harness codex --date 2026-01-02
 ```
 
-In an interactive terminal, `analyze` asks for the ticker, research depth, working agent, and decision manager, in that order. A ticker supplied on the command line skips the first question. The analysis date defaults to today and can be set with `--date`. Shallow, Medium, and Deep research use 1, 3, and 5 rounds for both research and risk debates. Each agent role can use a saved profile or a custom harness selection for that run. The decision manager can also use the same settings as the working agents. Cancelling setup does not start an analysis or change saved profiles.
+In an interactive terminal, the bare command asks for the ticker, research depth, working agent, and decision manager, in that order. Supplying `--ticker` skips the first question. The analysis date defaults to today and can be set with `--date`. Shallow, Medium, and Deep research use 1, 3, and 5 rounds for both research and risk debates. Each agent role can use a saved profile or a custom harness selection for that run. The decision manager can also use the same settings as the working agents. Cancelling setup does not start an analysis or change saved profiles. A new run requires at least one saved preset. If none exists, the command prints the instruction to run `configure` and exits before asking for a ticker.
 
 Use `configure` to create a reusable agent profile:
 
@@ -38,8 +39,8 @@ Configuration is saved to `~/.open-trading-agents/config.toml` and loaded regard
 At the end, setup offers to save the profile as a named preset under `~/.open-trading-agents/presets/`. It asks before replacing an existing preset, then asks whether to use it as the default profile. The default is the initial choice for a run. Saved profiles appear independently in the working-agent and decision-manager menus. Starting a run does not require a preset argument:
 
 ```sh
-uv run open-trading-agents analyze
-uv run open-trading-agents analyze NVDA
+uv run open-trading-agents
+uv run open-trading-agents --ticker NVDA
 ```
 
 For example, a saved profile contains:
@@ -113,8 +114,8 @@ Most default sources need no API key. Optional FRED and Alpha Vantage sources us
 The default state directory is `~/.open-trading-agents`, with runs under `~/.open-trading-agents/runs`. Override it using `state_dir` or `--state-dir`. Each run contains a SQLite completion ledger, native session references, live JSONL events, individual plus combined Markdown/HTML reports, and a separate `reports/usage.json` diagnostic file. Full reports are exported automatically to `RUN_DIR/reports/complete_report.md` and `complete_report.html`. They follow five team sections: analyst reports, research decision, trading plan, risk decision, and portfolio decision. Their headers identify the observed harnesses, providers, and models, with configuration fallbacks explicitly labeled when native identity is unavailable. Token statistics remain in the TUI and diagnostic usage file, not in the human reports. The Reports stage loads the complete saved Markdown after completion. Pressing q closes the interface without removing these files. Reports and transcripts remain available after an interrupted run.
 
 ```sh
-uv run open-trading-agents analyze NVDA --headless
-uv run open-trading-agents analyze NVDA --events > run-events.jsonl
+uv run open-trading-agents --ticker NVDA --headless
+uv run open-trading-agents --ticker NVDA --events > run-events.jsonl
 uv run open-trading-agents resume /path/to/state/runs/RUN_ID
 ```
 
