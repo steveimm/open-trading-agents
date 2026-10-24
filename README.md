@@ -63,7 +63,7 @@ Inputs, emitted reasoning, output, code, tool arguments, and tool results use di
 
 Scrolling upward pauses following so new output does not move what you are reading. Scrolling down to the bottom, or pressing End, resumes following automatically. End does not stop the run.
 
-Tool results longer than 10,000 characters show the first 6,000 and last 2,000 characters with an exact omitted-character count. Large payload previews behave similarly. The original events remain in SQLite and the live `transcript.jsonl` file. Ordinary prompts and model output are not shortened by this display rule.
+Expanded tool results longer than 10,000 characters show the first 6,000 and last 2,000 characters with an exact omitted-character count. The original events remain in SQLite and the live `transcript.jsonl` file. Ordinary prompts and model output are not shortened by this display rule.
 
 Elapsed clocks update independently of model responses. Usage shows total input, output, and cache reads. Cache writes appear only when a provider reports them, including an explicit zero. Cache counts are subsets of input, not additional input. An em dash means unavailable and `+?` means only part of the usage has cache detail. Reported reasoning tokens are already included in output.
 

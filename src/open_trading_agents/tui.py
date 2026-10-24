@@ -143,6 +143,7 @@ class TradingApp(App[None]):
         self._pending: deque[AgentEvent] = deque()
         self._event_ids: set[str] = set()
         self._started = time.monotonic()
+        self._wall_offset = self._started - time.time()
         self._finished: float | None = None
         self._failure: str | None = None
         self._run_task: asyncio.Task[None] | None = None
@@ -240,7 +241,7 @@ class TradingApp(App[None]):
         """
         if event.kind == "system" and event.data.get("source") == "native_request":
             return
-        now = time.monotonic() - max(0, time.time() - event.timestamp)
+        now = min(time.monotonic(), event.timestamp + self._wall_offset)
         self._started = min(self._started, now)
         kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(event.kind, event.kind)
         stage = event.stage if event.stage in self.stages else self.active_stage
@@ -557,7 +558,8 @@ class TradingApp(App[None]):
         """Wait for active workflow cleanup without disturbing completed report files."""
         tasks = [task for task in (self._run_task, self._report_task) if task is not None and not task.done()]
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
