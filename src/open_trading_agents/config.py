@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 import tomllib
@@ -11,9 +12,43 @@ from typing import Any, Literal
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from tomlkit.toml_document import TOMLDocument
 
 from open_trading_agents.dataflows.symbols import normalize_symbol
 from open_trading_agents.domain import HarnessConfig
+
+
+def application_dir() -> Path:
+    """Return the shared directory for application settings, presets, and run data."""
+    return Path.home() / ".open-trading-agents"
+
+
+def default_config_path() -> Path:
+    """Return the configuration file used when no explicit path is supplied."""
+    return application_dir() / "config.toml"
+
+
+def preset_path(name: str) -> Path:
+    """Resolve a named preset within the application's preset directory.
+
+    Args:
+        name: A name containing letters, numbers, dots, underscores, or hyphens.
+
+    Returns:
+        The corresponding TOML path.
+
+    Raises:
+        ValueError: The name is empty, too long, or contains path characters.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name):
+        raise ValueError("Preset names must start with a letter or number and contain up to 64 letters, numbers, dots, underscores, or hyphens.")
+    return application_dir() / "presets" / f"{name}.toml"
+
+
+def list_presets() -> tuple[str, ...]:
+    """Return available preset names in alphabetical order."""
+    return tuple(sorted(path.stem for path in (application_dir() / "presets").glob("*.toml")
+                        if path.is_file() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", path.stem)))
 
 
 class HarnessSettings(BaseModel):
@@ -95,7 +130,7 @@ class Portfolio(BaseModel):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    state_dir: Path = Field(default_factory=lambda: Path.home() / ".local" / "share" / "open-trading-agents")
+    state_dir: Path = Field(default_factory=application_dir)
     harness: HarnessSettings = Field(default_factory=HarnessSettings)
     quick: HarnessSettings | None = None
     deep: HarnessSettings | None = None
@@ -157,23 +192,142 @@ class Settings(BaseModel):
         return (self.deep if deep else self.quick) or self.harness
 
 
-def load_settings(path: Path | None = None) -> Settings:
-    """Read explicit TOML configuration without searching unrelated directories.
+def load_settings(path: Path | None = None, preset: str | None = None) -> Settings:
+    """Read application settings and optionally replace all harness tier selections.
 
     Args:
-        path: An optional application configuration file.
+        path: An explicit configuration file, otherwise the global default file.
+        preset: Optional saved default, working-agent, and decision-manager selections.
 
     Returns:
         Validated settings, with relative state paths based on the config file.
     """
-    if path is None:
-        return Settings()
-    with path.open("rb") as handle:
-        settings = Settings.model_validate(tomllib.load(handle))
+    source = (path or default_config_path()).expanduser()
+    values: dict[str, Any] = {}
+    if path is not None or source.exists():
+        with source.open("rb") as handle:
+            values = tomllib.load(handle)
+    if preset is not None:
+        selected = preset_path(preset)
+        if not selected.is_file():
+            available = ", ".join(list_presets()) or "none"
+            raise ValueError(f"Unknown preset {preset!r}. Available presets: {available}")
+        with selected.open("rb") as handle:
+            selections = tomllib.load(handle)
+        if "harness" not in selections or set(selections) - {"harness", "quick", "deep"}:
+            raise ValueError(f"Preset {preset!r} must contain harness selections only, including [harness].")
+        values.update({name: selections.get(name) for name in ("harness", "quick", "deep")})
+    settings = Settings.model_validate(values)
     settings.state_dir = settings.state_dir.expanduser()
     if not settings.state_dir.is_absolute():
-        settings.state_dir = path.resolve().parent / settings.state_dir
+        settings.state_dir = source.resolve().parent / settings.state_dir
     return settings
+
+
+def _configuration_document(path: Path) -> TOMLDocument:
+    """Read and validate editable TOML without changing its comments.
+
+    Args:
+        path: Configuration file to read, if it exists.
+
+    Returns:
+        A validated TOML document.
+    """
+    document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    Settings.model_validate(document.unwrap())
+    return document
+
+
+def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) -> None:
+    """Persist a complete TOML document atomically, preserving existing permissions.
+
+    Args:
+        path: Destination configuration or preset file.
+        document: Validated TOML content to save.
+        overwrite: Whether replacing an existing destination is allowed.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(tomlkit.dumps(document))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
+        if overwrite:
+            os.replace(temporary, path)
+        else:
+            os.link(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _set_harness_tables(document: TOMLDocument, harness: HarnessSettings, quick: HarnessSettings | None, deep: HarnessSettings | None) -> None:
+    """Replace tier choices while retaining comments on existing configuration fields.
+
+    Args:
+        document: TOML document to update in memory.
+        harness: Shared native harness selections.
+        quick: Working-agent selections, or None to inherit shared choices.
+        deep: Decision-manager selections, or None to inherit shared choices.
+    """
+    for name, selection in (("harness", harness), ("quick", quick), ("deep", deep)):
+        if selection is None:
+            document.pop(name, None)
+            continue
+        if selection.kind == "claude" and selection.provider:
+            raise ValueError("Claude Code selects its provider through its native configuration.")
+        if name not in document:
+            document[name] = tomlkit.table()
+        values = selection.model_dump(mode="json")
+        values.update(model=selection.model or "", provider=selection.provider or "")
+        document[name].update(values)
+
+
+def save_configuration(path: Path, harness: HarnessSettings, quick: HarnessSettings | None, deep: HarnessSettings | None) -> Settings:
+    """Save all guided setup selections together without changing unrelated preferences.
+
+    Args:
+        path: Destination application configuration file.
+        harness: Shared native harness selections.
+        quick: Working-agent selections, or None to inherit shared choices.
+        deep: Decision-manager selections, or None to inherit shared choices.
+
+    Returns:
+        The complete validated settings saved to disk.
+    """
+    path = path.expanduser().resolve()
+    document = _configuration_document(path)
+    _set_harness_tables(document, harness, quick, deep)
+    Settings.model_validate(document.unwrap())
+    _write_document(path, document)
+    return load_settings(path)
+
+
+def save_preset(name: str, settings: Settings, overwrite: bool = False) -> Path:
+    """Save all three harness tier choices for reuse without copying application data settings.
+
+    Args:
+        name: Name used by the run command's preset option.
+        settings: Validated settings whose harness choices should be retained.
+        overwrite: Whether the caller has selected replacement of an existing preset.
+
+    Returns:
+        The saved preset file path.
+
+    Raises:
+        FileExistsError: The preset exists and replacement was not selected.
+        ValueError: The preset name or selections are invalid.
+    """
+    path = preset_path(name)
+    document = tomlkit.document()
+    _set_harness_tables(document, settings.harness, settings.quick, settings.deep)
+    Settings.model_validate(document.unwrap())
+    _write_document(path, document, overwrite=overwrite)
+    return path
 
 
 def save_harness_selection(
@@ -202,7 +356,7 @@ def save_harness_selection(
     if tier not in ("default", "quick", "deep"):
         raise ValueError(f"unknown configuration tier: {tier}")
     path = path.expanduser().resolve()
-    document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    document = _configuration_document(path)
     settings = Settings.model_validate(document.unwrap())
     name = "harness" if tier == "default" else tier
     current = getattr(settings, name) or settings.harness
@@ -231,20 +385,7 @@ def save_harness_selection(
             selected[key] = value.strip()
     Settings.model_validate(document.unwrap())
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(tomlkit.dumps(document))
-            handle.flush()
-            os.fsync(handle.fileno())
-        if path.exists():
-            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    _write_document(path, document)
     return load_settings(path)
 
 

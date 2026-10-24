@@ -18,7 +18,7 @@ def default_data_config() -> dict[str, Any]:
         A fresh configuration with vendor chains and local cache settings.
     """
     return {
-        "data_cache_dir": str(Path.home() / ".local" / "share" / "open-trading-agents" / "cache"),
+        "data_cache_dir": str(Path.home() / ".open-trading-agents" / "cache"),
         "news_article_limit": 20,
         "web_search_backend": "yahoo",
         "global_news_article_limit": 10,
