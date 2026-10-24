@@ -22,19 +22,41 @@ from open_trading_agents.config import (
 
 
 def test_global_settings_are_independent_of_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Use the global config and resolve its relative storage path consistently."""
+    """Use the same shared storage from every working directory."""
     monkeypatch.setenv("HOME", str(tmp_path))
     assert Settings().state_dir == tmp_path / ".open-trading-agents"
     assert load_settings().state_dir == application_dir()
     path = default_config_path()
     path.parent.mkdir()
-    path.write_text('state_dir = "./results"\n[harness]\nkind = "pi"\nmodel = "global-model"\n')
+    path.write_text('[harness]\nkind = "pi"\nmodel = "global-model"\n')
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.chdir(project)
     settings = load_settings()
     assert settings.harness.model == "global-model"
-    assert settings.state_dir == path.parent / "results"
+    assert settings.state_dir == application_dir()
+
+
+def test_removed_storage_setting_is_rejected_before_loading_or_saving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explain obsolete storage overrides without altering existing files.
+
+    Args:
+        tmp_path: Isolated configuration directory.
+        monkeypatch: Scoped home-directory replacement.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = tmp_path / "config.toml"
+    original = 'state_dir = "./research"\n[harness]\nkind = "pi"\n'
+    path.write_text(original)
+
+    with pytest.raises(ValueError, match="Remove state_dir.*--output-dir"):
+        load_settings(path)
+    with pytest.raises(ValueError, match="Remove state_dir.*--output-dir"):
+        save_configuration(path, HarnessSettings(kind="codex"), None, None)
+
+    assert path.read_text() == original
+    assert not application_dir().exists()
+    assert not (tmp_path / "research").exists()
 
 
 def test_guided_save_preserves_preferences_and_explicit_tier_defaults(tmp_path: Path) -> None:
@@ -61,7 +83,7 @@ def test_presets_store_only_one_agents_four_selectors(tmp_path: Path, monkeypatc
     monkeypatch.setenv("HOME", str(tmp_path))
     config = default_config_path()
     config.parent.mkdir()
-    config.write_text('state_dir = "./research"\nrisk_rounds = 3\n[harness]\nkind = "codex"\nmodel = "base-model"\n'
+    config.write_text('risk_rounds = 3\n[harness]\nkind = "codex"\nmodel = "base-model"\n'
                       '[quick]\nmodel = "base-quick"\n[deep]\nmodel = "base-deep"\n[data]\nweb_search_backend = "yahoo"\n')
     selected = HarnessSettings(kind="pi", provider="local", model="working", effort="high",
                                command=("custom-pi",), extra_args=("--offline",))
@@ -73,7 +95,7 @@ def test_presets_store_only_one_agents_four_selectors(tmp_path: Path, monkeypatc
     assert loaded.command == () and loaded.extra_args == ()
     current = load_settings()
     assert current.research_rounds == 1 and current.risk_rounds == 3
-    assert current.state_dir == config.parent / "research"
+    assert current.state_dir == application_dir()
     assert current.data == {"web_search_backend": "yahoo"}
     assert load_settings().harness.model == "base-model"
     assert list_presets() == ("local-research",)

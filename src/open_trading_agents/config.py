@@ -148,6 +148,7 @@ class Portfolio(BaseModel):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Runtime storage also records isolated backtest paths for resume.
     state_dir: Path = Field(default_factory=application_dir)
     default_preset: str | None = None
     harness: HarnessSettings = Field(default_factory=HarnessSettings)
@@ -251,6 +252,24 @@ def load_preset(name: str) -> HarnessSettings:
     return HarnessSettings.model_validate(selections)
 
 
+def _settings_from_config(values: dict[str, Any]) -> Settings:
+    """Validate user preferences while reserving storage paths for runtime bookkeeping.
+
+    Args:
+        values: Preferences read from an application configuration file.
+
+    Returns:
+        Validated preferences using the shared application directory.
+
+    Raises:
+        ValueError: Preferences contain an unsupported setting or storage override.
+    """
+    if "state_dir" in values:
+        raise ValueError("Shared storage is fixed at ~/.open-trading-agents. Remove state_dir from the configuration. Use --output-dir for run files.")
+
+    return Settings.model_validate(values)
+
+
 def load_settings(path: Path | None = None, use_default_preset: bool = False) -> Settings:
     """Read application settings and optionally use the default single-agent profile.
 
@@ -259,7 +278,7 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
         use_default_preset: Use the configured default profile as the initial agent selection.
 
     Returns:
-        Validated settings, with relative state paths based on the config file.
+        Validated settings using the shared application directory.
     """
     source = (path or default_config_path()).expanduser()
     values: dict[str, Any] = {}
@@ -267,7 +286,7 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
         with source.open("rb") as handle:
             values = tomllib.load(handle)
 
-    settings = Settings.model_validate(values)
+    settings = _settings_from_config(values)
     if use_default_preset and settings.default_preset is not None:
         try:
             profile = load_preset(settings.default_preset)
@@ -275,10 +294,6 @@ def load_settings(path: Path | None = None, use_default_preset: bool = False) ->
             raise ValueError(f"Default preset {settings.default_preset!r} could not be loaded. {exc}. Run 'open-trading-agents configure' to select a default profile.") from exc
         values.update(harness=profile, quick=None, deep=None)
         settings = Settings.model_validate(values)
-
-    settings.state_dir = settings.state_dir.expanduser()
-    if not settings.state_dir.is_absolute():
-        settings.state_dir = source.resolve().parent / settings.state_dir
 
     return settings
 
@@ -293,7 +308,7 @@ def _configuration_document(path: Path) -> TOMLDocument:
         A validated TOML document.
     """
     document = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
-    Settings.model_validate(document.unwrap())
+    _settings_from_config(document.unwrap())
     return document
 
 

@@ -36,6 +36,18 @@ def test_run_commands_reject_removed_preset_argument(prefix: list[str]) -> None:
     assert "No such option: --preset" in rejected.output
 
 
+def test_run_rejects_shared_storage_override() -> None:
+    """Keep shared application storage fixed while exposing the per-run output option."""
+    help_result = runner.invoke(app, ["--help"])
+    assert help_result.exit_code == 0
+    assert "--state-dir" not in help_result.output
+    assert "--output-dir" in help_result.output
+
+    rejected = runner.invoke(app, ["--state-dir", "./storage"])
+    assert rejected.exit_code == 2
+    assert "No such option: --state-dir" in rejected.output
+
+
 def test_configure_no_longer_selects_a_run_tier() -> None:
     """Configure edits one reusable profile while role selection belongs to analysis startup."""
     help_result = runner.invoke(app, ["configure", "--help"])
@@ -105,14 +117,17 @@ def test_headless_requires_explicit_ticker_before_any_model_call(tmp_path: Path,
     assert "provide --ticker" in result.output
 
 
-def test_config_resolves_storage_relative_to_its_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Load fresh app settings without inheriting reference-project preferences."""
+def test_explicit_config_keeps_global_application_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Load selected model preferences without moving shared storage beside the configuration file."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.chdir(tmp_path)
     config = tmp_path / "config" / "settings.toml"
     config.parent.mkdir()
-    config.write_text('state_dir = "./results"\n[harness]\nkind = "pi"\nmodel = "configured-model"\n')
+    config.write_text('[harness]\nkind = "pi"\nmodel = "configured-model"\n')
+
     settings = configured(config, None, None, None)
-    assert settings.state_dir.resolve() == config.parent / "results"
+
+    assert settings.state_dir == tmp_path / ".open-trading-agents"
     assert settings.harness.model == "configured-model"
     assert settings.harness.provider is None
 

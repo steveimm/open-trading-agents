@@ -221,7 +221,7 @@ def test_output_selection_preserves_default_or_uses_custom_directory(
     answer: str,
     expected: str | None,
 ) -> None:
-    """Resolve selected paths, retry existing files, and retain the effective storage default on Enter."""
+    """Resolve selected paths, retry existing files, and retain the application runs directory on Enter."""
     monkeypatch.chdir(run_config.parent)
     monkeypatch.setenv("HOME", str(run_config.parent.parent))
     monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
@@ -230,11 +230,11 @@ def test_output_selection_preserves_default_or_uses_custom_directory(
     calls: list[str] = []
     received = capture_runs(monkeypatch, calls)
 
-    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15", "--state-dir", "storage"], input=answer)
+    result = runner.invoke(cli.app, ["--ticker", "NVDA", "--date", "2024-03-15"], input=answer)
 
     assert result.exit_code == 0, result.output
-    assert str(run_config.parent / "storage" / "runs") in result.output
-    assert received[0][2].state_dir == Path("storage")
+    assert str(run_config.parent / "runs") in result.output
+    assert received[0][2].state_dir == run_config.parent
     assert received[0][3] == (Path(expected).expanduser().resolve() if expected is not None else None)
     assert result.output.count("not an existing file") == int(answer.startswith("config.toml"))
     assert calls == ["workflow"]

@@ -25,9 +25,9 @@ Runs are stored under `~/.open-trading-agents/runs/` by default. The run wizard 
 uv run open-trading-agents --ticker NVDA --output-dir ./research
 ```
 
-This creates `./research/RUN_ID/` with the reports, complete `transcript.jsonl`, saved progress, and native session files. Each run gets its own folder. Relative paths and `~` are supported. Output choices apply only to the current run and do not change saved configuration. Shared cache and feedback memory remain under the configured `state_dir`.
+This creates `./research/RUN_ID/` with the reports, complete `transcript.jsonl`, saved progress, and native session files. Each run gets its own folder. Relative paths and `~` are supported. Output choices apply only to the current run and do not change saved configuration. Shared cache and feedback memory remain under `~/.open-trading-agents/`.
 
-When output is unspecified, the current `state_dir/runs/` location is retained, including in unattended runs. The final console summary shows reported input, output, and available cache counts, followed by the path to `reports/usage.json` for full details.
+When output is unspecified, runs use `~/.open-trading-agents/runs/`, including in unattended runs. The final console summary shows reported input, output, and available cache counts, followed by the path to `reports/usage.json` for full details.
 
 ```sh
 uv run open-trading-agents resume ~/.open-trading-agents/runs/RUN_ID

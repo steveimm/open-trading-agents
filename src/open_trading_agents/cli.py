@@ -160,7 +160,6 @@ def run(
     research_rounds: Annotated[int | None, typer.Option(min=1, max=20)] = None,
     risk_rounds: Annotated[int | None, typer.Option(min=1, max=20)] = None,
     portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
-    state_dir: Annotated[Path | None, typer.Option()] = None,
     output_dir: Annotated[Path | None, typer.Option("--output-dir", file_okay=False, help="Parent directory for this run's output folder.")] = None,
     headless: Annotated[bool, typer.Option(help="Run without the terminal UI.")] = False,
     events: Annotated[bool, typer.Option(help="Emit normalized JSONL events to stdout.")] = False,
@@ -180,7 +179,6 @@ def run(
         research_rounds: Number of bull/bear rotations.
         risk_rounds: Number of three-speaker risk rotations.
         portfolio: Optional holdings JSON file.
-        state_dir: Application storage override.
         output_dir: Parent directory for this run's reports, transcript, and session files.
         headless: Disable terminal rendering.
         events: Stream JSON events instead of concise progress.
@@ -212,7 +210,7 @@ def run(
             settings = select_agent_settings(settings)
             settings = runtime_overrides(settings, harness, model, provider, effort)
         changes = {"analysts": tuple(key.strip() for key in analysts.split(",")) if analysts else None,
-                   "research_rounds": research_rounds, "risk_rounds": risk_rounds, "state_dir": state_dir}
+                   "research_rounds": research_rounds, "risk_rounds": risk_rounds}
         settings = Settings.model_validate({**settings.model_dump(), **{k: v for k, v in changes.items() if v is not None}})
 
         if interactive and output_dir is None:
