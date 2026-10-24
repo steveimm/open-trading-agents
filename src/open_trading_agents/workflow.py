@@ -237,7 +237,7 @@ class Workflow:
         Returns:
             A common input block for new role sessions.
         """
-        return f"Instrument: {self.ticker}\nAsset type: {self.asset_type}\nAnalysis date: {self.trade_date}\nPython for calculation scripts: {sys.executable}\nOnly assert a company identity supported by the evidence."
+        return f"Instrument: {self.ticker}\nAsset type: {self.asset_type}\nAnalysis date: {self.trade_date}\nOnly assert a company identity supported by the evidence."
 
     async def _analyst(self, key: str, semaphore: asyncio.Semaphore) -> None:
         """Run one initial analyst with an isolated session and assigned tools.
