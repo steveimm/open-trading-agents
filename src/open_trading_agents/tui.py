@@ -17,7 +17,7 @@ from textual.geometry import Size
 from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
 
 from open_trading_agents.chat import ChatView
-from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, Usage
+from open_trading_agents.domain import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
 from open_trading_agents.prompts import ROLES
 from open_trading_agents.transcript import Transcript, TranscriptView, literal_text
 from open_trading_agents.usage import format_usage as usage_label
@@ -68,11 +68,33 @@ def duration(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{second:02}" if hours else f"{minutes:02}:{second:02}"
 
 
+def model_configuration(working: HarnessConfig | None, decision: HarnessConfig | None) -> str:
+    """Describe the selected native runtimes without displaying commands or environment values.
+
+    Args:
+        working: Runtime used by analysts, debaters, and the trader.
+        decision: Runtime used by decision managers.
+
+    Returns:
+        One line for shared choices, or separate working and manager lines.
+    """
+    choices = {}
+    for label, config in (("Working", working), ("Manager", decision)):
+        if config is None:
+            continue
+        values = (config.kind, config.provider or "native provider", config.model or "native model", f"Effort {config.effort or 'native'}")
+        choices[label] = " · ".join(" ".join(literal_text(value).splitlines()) for value in values)
+    if len(choices) == 2 and choices["Working"] == choices["Manager"]:
+        return f"Agents · {choices['Working']}"
+    return "\n".join(f"{label} · {value}" for label, value in choices.items())
+
+
 class TradingApp(App[None]):
     TITLE = "Open Trading Agents"
     CSS = """
     Screen { background: #0d131c; color: #d9e2ef; overflow: hidden hidden; }
-    #run-status { height: 2; padding: 0 1; background: #1a2635; }
+    #run-status { height: 1; padding: 0 1; background: #1a2635; }
+    #model-config { height: auto; padding: 0 1; background: #1a2635; color: #a9bcd3; }
     #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
     #stage-tabs { height: 3; }
     #stage-tabs Tab.running { color: #e8b86d; text-style: bold; }
@@ -127,7 +149,8 @@ class TradingApp(App[None]):
     ]
 
     def __init__(self, run: Callable[[EventSink], Awaitable[object]] | None = None, *,
-                 selected_analysts: tuple[str, ...] = tuple(ANALYSTS), ticker: str = "", run_dir: Path | None = None) -> None:
+                 selected_analysts: tuple[str, ...] = tuple(ANALYSTS), ticker: str = "", run_dir: Path | None = None,
+                 working_config: HarnessConfig | None = None, decision_config: HarnessConfig | None = None) -> None:
         """Create stage views without starting native model work.
 
         Args:
@@ -135,9 +158,12 @@ class TradingApp(App[None]):
             selected_analysts: Analyst keys shown in the initial grid.
             ticker: Instrument shown in the run header.
             run_dir: Saved run location used to load the completed report.
+            working_config: Selected working-agent harness, provider, model, and effort.
+            decision_config: Selected decision-manager harness, provider, model, and effort.
         """
         super().__init__()
         self.run_callback, self.selected_analysts, self.ticker, self.run_dir = run, selected_analysts, ticker, run_dir
+        self._model_config_text = model_configuration(working_config, decision_config)
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -189,6 +215,9 @@ class TradingApp(App[None]):
             Tabs, analyst panes, chronological chats, and counters.
         """
         yield Static(id="run-status", markup=False)
+        configuration = Static(self._model_config_text, id="model-config", classes="" if self._model_config_text else "hidden", markup=False)
+        configuration.tooltip = Content(self._model_config_text)
+        yield configuration
         yield Static(id="run-error", classes="hidden", markup=False)
         yield Tabs(*(Tab(label, id=f"tab-{stage}") for stage, label in STAGES), id="stage-tabs")
         yield Static(id="stage-status", markup=False)
@@ -423,13 +452,16 @@ class TradingApp(App[None]):
             if isinstance(view, ChatView) and view.is_on_screen:
                 view.refresh_activity(now)
         elapsed = duration((self._finished if self._finished is not None else now) - self._started)
-        status = "Failed" if self._failure else "Complete" if self._finished is not None else "Running"
-        running = [label for key, label in STAGES if self.stages[key].status == "running"]
-        if status == "Running" and running:
-            status += ": " + ", ".join(running)
+        header = ["Open Trading Agents"]
+        if self.ticker:
+            header.append(self.ticker)
+        if self._failure:
+            header.append("Failed")
+        elif self._finished is not None:
+            header.append("Complete")
+        header.append(f"Total {elapsed}")
         compact = self.screen.has_class("compact")
-        separator = " · " if compact else "\n"
-        self._status_widgets["run-status"].update(f"Open Trading Agents  {self.ticker}{separator}{status} · Total {elapsed}")
+        self._status_widgets["run-status"].update(" · ".join(header))
         stage = self.stages[self.active_stage]
         stage_text = f"{STAGES[self.stage_index][1]} · {statuses.get(stage.status, stage.status)} · {duration(stage.elapsed(now))}"
         participants = self._stage_agents[self.active_stage]

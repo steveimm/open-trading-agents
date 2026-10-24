@@ -72,6 +72,8 @@ Reasoning effort is passed to the harness only when explicitly selected. Availab
 
 ## Interface
 
+The run header shows the ticker, total elapsed time, and selected harness/provider/model/effort for working agents and decision managers. Identical configurations are shown once. Native defaults are identified explicitly, and running-stage status is shown by the tab indicator.
+
 The seven stages are Analysis, Research Debate, Research Decision, Trader, Risk Debate, Portfolio Decision, and Reports. Running tabs and participant turns show an animated circular spinner, completed tabs and agents show a check mark, and failures are marked explicitly. Selected analysts run concurrently. Each debater keeps its own native conversation across rounds and receives only newly available public arguments.
 
 Debates use a narrow left column of participant system-prompt panes and a wider right column for the conversation. The conversation shows shared input once, followed by each participant's turn. Turn titles stay visible while scrolling and can collapse the whole contribution, including reasoning and tool calls. A collapsed active turn continues receiving output. Repeated per-agent input messages are omitted from the debate view. Exact prompts remain in the saved event log, and this presentation does not change what is sent to the harness.
