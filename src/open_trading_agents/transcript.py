@@ -484,6 +484,7 @@ class TranscriptView(FollowScrollView):
             event: Textual resize event.
         """
         self.sync()
+        self._follow_after_resize()
         self.call_after_refresh(self._follow_after_resize)
 
 
