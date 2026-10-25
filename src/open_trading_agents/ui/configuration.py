@@ -342,7 +342,7 @@ def _source_checklist(category: str, enabled: set[str]) -> list[str]:
         return True
 
     style = merge_styles([_MENU_STYLE, questionary.Style([
-        ("selected", "fg:#91d5ac bg:default nobold"),
+        ("selected", "fg:#91d5ac bg:default nobold noreverse"),
         ("validation-toolbar", "fg:#f2858a"),
     ])])
     try:

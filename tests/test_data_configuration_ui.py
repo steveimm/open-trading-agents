@@ -471,10 +471,19 @@ def test_source_checklist_blocks_invalid_back_and_accepts_corrected_keyboard_sel
                     application: Checklist application after rendering.
                 """
                 nonlocal phase
+                highlight = application.renderer.style.get_attrs_for_style_str("class:text class:highlighted")
+                assert highlight.bgcolor == "303547" and highlight.bold
                 if application.is_done:
                     return
+                screen = application.renderer._last_screen
+                bullets = [cell for row in screen.data_buffer.values() for cell in row.values() if cell.char == "●"]
+                for cell in bullets:
+                    indicator = application.renderer.style.get_attrs_for_style_str(cell.style)
+                    assert not indicator.reverse
+                    assert indicator.bgcolor == "default" and indicator.color == "91d5ac"
                 control = next(control for control in application.layout.find_all_controls() if isinstance(control, InquirerControl))
                 if phase == 0:
+                    assert bullets
                     phase = 1
                     keyboard.send_text(invalid)
                 elif phase == 1 and control.error_message:
