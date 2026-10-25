@@ -311,7 +311,7 @@ provider = "old-provider"
 kind = "pi"
 model = "old-deep"
 [agents.bull]
-kind = "claude"
+kind = "claude-code"
 model = "old-bull"
 command = ["custom-claude"]
 [agents.portfolio_manager]
@@ -343,7 +343,7 @@ def test_flags_preserve_role_inheritance_after_group_selection(harness: HarnessN
         effort: Optional CLI effort override applied to every role.
     """
     settings = Settings(
-        harness=HarnessSettings(kind="claude", model="old-worker"),
+        harness=HarnessSettings(kind="claude-code", model="old-worker"),
         agents={"bull": HarnessSettings(effort="high")},
     )
     initial = cli.runtime_overrides(settings, harness, None, None, effort)
@@ -361,7 +361,7 @@ def test_switching_harness_discards_old_backend_specific_configuration(tmp_path:
     config = tmp_path / "settings.toml"
     config.write_text('[harness]\nkind="pi"\nmodel="local-model"\nprovider="local-provider"\neffort="high"\ncommand=["special-pi"]\nextra_args=["--thinking","high"]\n')
     settings = configured(config, HarnessName.claude, None, None)
-    assert settings.harness.kind == "claude"
+    assert settings.harness.kind == "claude-code"
     assert settings.harness.model is None
     assert settings.harness.provider is None
     assert settings.harness.effort is None
@@ -372,9 +372,9 @@ def test_switching_harness_discards_old_backend_specific_configuration(tmp_path:
 def test_partial_tier_inherits_harness_and_survives_saved_run_roundtrip(tmp_path: Path) -> None:
     """Selecting only a deep model does not silently switch its CLI back to pi."""
     config = tmp_path / "settings.toml"
-    config.write_text('[harness]\nkind="claude"\nmodel="working-model"\n[deep]\nmodel="manager-model"\n')
+    config.write_text('[harness]\nkind="claude-code"\nmodel="working-model"\n[deep]\nmodel="manager-model"\n')
     settings = configured(config, None, None, None)
-    assert settings.model_settings(True).kind == "claude"
+    assert settings.model_settings(True).kind == "claude-code"
     assert settings.model_settings(True).model == "manager-model"
     restored = Settings.model_validate(settings.model_dump(mode="json"))
     assert restored.model_settings(True) == settings.model_settings(True)
@@ -386,12 +386,12 @@ def test_default_profile_overrides_global_models_before_explicit_cli_flags(tmp_p
     path = tmp_path / ".open-trading-agents" / "config.toml"
     path.parent.mkdir()
     path.write_text('research_rounds=3\n[harness]\nkind="pi"\nmodel="global-model"\n[deep]\nmodel="stale-manager"\n')
-    save_preset("claude-work", HarnessSettings(kind="claude", model="preset-model", effort="high"))
+    save_preset("claude-work", HarnessSettings(kind="claude-code", model="preset-model", effort="high"))
     set_default_preset(path, "claude-work")
     original = path.read_text()
     selected = configured(None, None, None, None)
     assert selected.research_rounds == 3
-    assert selected.harness == HarnessSettings(kind="claude", model="preset-model", effort="high")
+    assert selected.harness == HarnessSettings(kind="claude-code", model="preset-model", effort="high")
     assert selected.quick is None and selected.deep is None
     overridden = configured(None, HarnessName.pi, "one-run-model", "local", "low")
     assert overridden.harness == HarnessSettings(kind="pi", model="one-run-model", provider="local", effort="low")

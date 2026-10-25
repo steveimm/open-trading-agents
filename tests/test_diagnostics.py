@@ -56,7 +56,7 @@ get_news = "alpha_vantage"
 
     assert checks["Config"] == f"Readable and valid: {config_path}"
     assert checks["pi"] == "/fixture/bin/pi" and checks["codex"] == "Not installed"
-    assert checks["claude"] == "/fixture/bin/claude"
+    assert checks["claude-code"] == "/fixture/bin/claude"
     assert checks["Profiles"] == "1 valid saved profile(s)"
     assert checks["Default profile"] == "Configured: daily"
     assert checks["FRED"] == checks["Alpha Vantage"] == checks["SEC EDGAR"] == "Configured"
@@ -144,7 +144,7 @@ def test_effective_role_conflict_is_reported_after_applying_default_profile(conf
     Args:
         config_path: Isolated configuration whose provider override conflicts with its default harness.
     """
-    save_preset("daily", HarnessSettings(kind="claude", model="selected-model"))
+    save_preset("daily", HarnessSettings(kind="claude-code", model="selected-model"))
     config_path.write_text('''default_preset = "daily"
 [agents.bull]
 provider = "private-provider-selection"

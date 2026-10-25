@@ -43,11 +43,18 @@ def _saved_settings(values: dict[str, Any]) -> dict[str, Any]:
         values: Settings persisted by an earlier workflow version.
 
     Returns:
-        Saved settings without the removed sentiment-screening configuration.
+        Saved settings with retired fields removed and canonical harness names.
     """
     restored = {key: value for key, value in values.items() if key != "social_screening"}
     for field in ("agents", "agent_presets"):
         restored[field] = {key: value for key, value in values.get(field, {}).items() if key != "screening"}
+
+    for mapping, names in ((restored, ("harness", "quick", "deep")), (restored["agents"], tuple(restored["agents"]))):
+        for name in names:
+            selection = mapping.get(name)
+            if isinstance(selection, dict) and selection.get("kind") == "claude":
+                mapping[name] = {**selection, "kind": "claude-code"}
+
     if "data" in restored:
         restored["data"] = {key: value for key, value in restored["data"].items()
                             if key not in (*DATA_CREDENTIAL_KEYS, "credentials_file")}

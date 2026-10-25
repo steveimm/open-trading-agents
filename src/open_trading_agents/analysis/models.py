@@ -33,13 +33,18 @@ EventSink = Callable[[AgentEvent], Awaitable[None]]
 
 @dataclass(frozen=True)
 class HarnessConfig:
-    kind: Literal["pi", "codex", "claude"] = "pi"
+    kind: Literal["pi", "codex", "claude-code"] = "pi"
     command: tuple[str, ...] = ()
     model: str | None = None
     provider: str | None = None
     extra_args: tuple[str, ...] = ()
     environment: dict[str, str] = field(default_factory=dict)
     effort: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize the harness name when reading older run metadata."""
+        if self.kind == "claude":
+            object.__setattr__(self, "kind", "claude-code")
 
 
 @dataclass(frozen=True)

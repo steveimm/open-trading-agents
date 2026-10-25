@@ -57,10 +57,10 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
 
     settings = Settings(
         state_dir=tmp_path, analysts=("market",), memory_enabled=False,
-        harness=HarnessSettings(kind="claude"),
+        harness=HarnessSettings(kind="claude-code"),
         quick=HarnessSettings(kind="pi", model="quick-selector", provider="quick-provider"),
         deep=HarnessSettings(kind="codex", model="deep-selector", provider="deep-provider"),
-        agents={"trader": HarnessSettings(kind="claude", model="trader-selector", command=("private-command",))},
+        agents={"trader": HarnessSettings(kind="claude-code", model="trader-selector", command=("private-command",))},
         data={"tool_vendors": {"get_news": "alpha_vantage"}},
     )
     workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
@@ -73,9 +73,9 @@ async def test_reports_preserve_observed_models_across_resume_and_mixed_tiers(tm
     assert calls["Market Analyst"] == 1
     assert identities.count({"agent": "Market Analyst", "harness": "pi", "provider": "native-provider", "model": "native-pi"}) == 1
     assert {"agent": "Research Manager", "harness": "codex", "provider": "native-provider", "model": "native-codex"} in identities
-    assert {"agent": "Trader", "harness": "claude", "provider": None, "model": None} in identities
+    assert {"agent": "Trader", "harness": "claude-code", "provider": None, "model": None} in identities
     configured = {row["role"]: row for row in report_settings["configured_agents"]}
-    assert configured["trader"]["harness"] == "claude" and configured["trader"]["model"] == "trader-selector"
+    assert configured["trader"]["harness"] == "claude-code" and configured["trader"]["model"] == "trader-selector"
     assert configured["bull"]["model"] == "quick-selector"
     assert configured["research_manager"]["model"] == "deep-selector"
     assert "private-command" not in json.dumps(report_settings)

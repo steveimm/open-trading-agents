@@ -27,7 +27,7 @@ async def test_analyst_panels_show_profile_labels_and_individual_hover_details(s
     profiles = {
         "Market Analyst": HarnessConfig(kind="pi", provider="private-provider", model="market-model", effort="low",
                                         command=("private-command",), environment={"TOKEN": "private-environment-value"}),
-        "News Analyst": HarnessConfig(kind="claude", model="claude-news-model", effort="high", extra_args=("private-argument",)),
+        "News Analyst": HarnessConfig(kind="claude-code", model="claude-news-model", effort="high", extra_args=("private-argument",)),
     }
     app = TradingApp(ticker="NVDA", selected_analysts=("market", "news"), agent_configs=profiles,
                      agent_presets={"Market Analyst": preset})
@@ -70,7 +70,7 @@ async def test_analyst_panels_show_profile_labels_and_individual_hover_details(s
         await pilot.hover(news, offset=(2, 0))
         await pilot.pause(0.03)
         details = str(tooltip.render())
-        assert tooltip.display and "News Analyst" in details and "Harness: claude" in details
+        assert tooltip.display and "News Analyst" in details and "Harness: claude-code" in details
         assert "Model: claude-news-model" in details and "Effort: high" in details
         assert "Market Analyst" not in details and "Preset:" not in details and "private-argument" not in details
 
@@ -186,7 +186,7 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(
     settings = Settings(
         harness=HarnessSettings(kind="pi", model="unused-shared-model"),
         quick=HarnessSettings(kind="pi", provider="local", model="selected-worker", effort="low"),
-        deep=HarnessSettings(kind="claude", model="selected-manager", effort="high"),
+        deep=HarnessSettings(kind="claude-code", model="selected-manager", effort="high"),
         agent_presets={"market": "worker-profile", "portfolio_manager": "manager-profile"},
         output_language="Korean",
     )

@@ -74,9 +74,12 @@ for line in sys.stdin:
     assert catalog.effort_choices(HarnessSettings(kind="codex", model="unlisted"), result) == ()
 
 
-def test_claude_choices_follow_installed_help_instead_of_fixed_model_versions(tmp_path: Path) -> None:
+@pytest.mark.parametrize("custom_command", [False, True])
+def test_claude_choices_follow_installed_help_instead_of_fixed_model_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, custom_command: bool,
+) -> None:
     """Native help defines the aliases even when new model families are introduced."""
-    script = tmp_path / "claude.py"
+    script = tmp_path / "claude"
     script.write_text('''import sys
 assert sys.argv[-1] == "--help"
 print("""Options:
@@ -87,11 +90,15 @@ print("""Options:
   -n, --name <name>  Set a name, for example 'unrelated'.
 """)
 ''')
-    result = catalog.discover_models(HarnessSettings(kind="claude", command=(sys.executable, str(script))))
+    script.write_text(f"#!{sys.executable}\n" + script.read_text())
+    script.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    command = (sys.executable, str(script)) if custom_command else ()
+    result = catalog.discover_models(HarnessSettings(kind="claude-code", command=command))
     assert [model.id for model in result.models] == ["family-a", "family-b"]
     assert all(model.provider is None for model in result.models)
     assert result.notice and "aliases" in result.notice
-    assert catalog.effort_choices(HarnessSettings(kind="claude"), result) == ("low", "medium", "high", "xhigh", "max")
+    assert catalog.effort_choices(HarnessSettings(kind="claude-code"), result) == ("low", "medium", "high", "xhigh", "max")
 
 
 @pytest.mark.parametrize("levels", [("off",), ("off", "low", "medium", "high")])
@@ -126,7 +133,7 @@ for line in sys.stdin:
     print(json.dumps({"type": "response", "id": request["id"], "success": False, "error": "unsupported command"}), flush=True)
 ''')
     assert catalog.effort_choices(HarnessSettings(command=(sys.executable, str(script))), catalog.ModelCatalog()) == ()
-    assert catalog.effort_choices(HarnessSettings(kind="claude"), catalog.ModelCatalog()) == ()
+    assert catalog.effort_choices(HarnessSettings(kind="claude-code"), catalog.ModelCatalog()) == ()
 
 
 def test_failed_discovery_does_not_expose_native_diagnostics(tmp_path: Path) -> None:

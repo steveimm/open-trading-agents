@@ -21,7 +21,7 @@ async def open_session(config: HarnessConfig, spec: AgentSpec, emit: EventSink) 
         from open_trading_agents.harnesses.codex import CodexSession
 
         session = CodexSession(config, spec, emit)
-    elif config.kind == "claude":
+    elif config.kind == "claude-code":
         from open_trading_agents.harnesses.claude import ClaudeSession
 
         session = ClaudeSession(config, spec, emit)

@@ -140,13 +140,13 @@ def test_delete_profile_empty_menu_does_not_create_files(wizard: Path) -> None:
 def test_configure_preserves_manually_configured_role_tiers(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Updating a profile does not erase explicit unattended-run tiers or unrelated settings."""
     wizard.parent.mkdir(parents=True)
-    wizard.write_text('risk_rounds = 3\n[harness]\nkind="pi"\n[quick]\nkind="claude"\nmodel="worker"\n[deep]\nkind="codex"\nmodel="manager"\n')
+    wizard.write_text('risk_rounds = 3\n[harness]\nkind="pi"\n[quick]\nkind="claude-code"\nmodel="worker"\n[deep]\nkind="codex"\nmodel="manager"\n')
     select_choices(monkeypatch, [None, 1, 1, None, 1])
     result = runner.invoke(cli.app, ["configure", "agents"], input="worker\n")
     assert result.exit_code == 0, result.output
     settings = load_settings()
     assert settings.harness.model == "small"
-    assert settings.quick == HarnessSettings(kind="claude", model="worker")
+    assert settings.quick == HarnessSettings(kind="claude-code", model="worker")
     assert settings.deep == HarnessSettings(kind="codex", model="manager")
     assert settings.risk_rounds == 3
     assert load_preset("worker").model == "small"
@@ -155,7 +155,7 @@ def test_configure_preserves_manually_configured_role_tiers(wizard: Path, monkey
 
 def test_saving_another_profile_keeps_the_existing_default(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Declining the new default selection leaves the previous profile selected."""
-    previous = save_preset("daily", HarnessSettings(kind="claude", model="stable-model"))
+    previous = save_preset("daily", HarnessSettings(kind="claude-code", model="stable-model"))
     contents = previous.read_text()
     wizard.write_text('default_preset = "daily"\n[harness]\nkind = "pi"\n')
     select_choices(monkeypatch, [None, None, 1, 1, None, None])
@@ -301,13 +301,13 @@ def test_research_depth_preserves_custom_counts_when_confirmed(monkeypatch: pyte
 def test_run_selects_independent_profiles_without_changing_saved_files(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-edit either Simple row and display the selected names without changing saved profiles."""
     working = HarnessSettings(provider="local", model="small", effort="low")
-    alternate = HarnessSettings(kind="claude", model="alternate", effort="high")
+    alternate = HarnessSettings(kind="claude-code", model="alternate", effort="high")
     decision = HarnessSettings(kind="codex", model="large", effort="high")
     paths = [save_preset("alpha", working), save_preset("beta", alternate), save_preset("zeta", decision)]
     wizard.write_text('default_preset="alpha"\n[harness]\nkind="pi"\nprovider="local"\nmodel="small"\neffort="low"\n')
     paths.append(wizard)
     before = {path: path.read_bytes() for path in paths}
-    override = HarnessSettings(kind="claude", model="news-model")
+    override = HarnessSettings(kind="claude-code", model="news-model")
     original = Settings(harness=working, default_preset="alpha", agents={"news": override})
     shown = select_choices(monkeypatch, ["Simple", "Working agents", "beta", "Decision manager", "zeta", None, "alpha", "Continue"])
 
@@ -346,7 +346,7 @@ def test_manager_can_inherit_or_select_an_equal_independent_profile(
 ) -> None:
     """Keep an explicitly named manager independent even when it initially equals the working profile."""
     original_profile = HarnessSettings(model="original")
-    next_profile = HarnessSettings(kind="claude", model="next")
+    next_profile = HarnessSettings(kind="claude-code", model="next")
     save_preset("alpha", original_profile)
     save_preset("alpha-copy", original_profile)
     save_preset("beta", next_profile)
@@ -369,7 +369,7 @@ def test_manager_can_inherit_or_select_an_equal_independent_profile(
 def test_confirming_unnamed_equal_manager_keeps_it_independent(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Accept an existing independent manager without linking it to later worker edits."""
     initial = HarnessSettings(model="original")
-    next_profile = HarnessSettings(kind="claude", model="next")
+    next_profile = HarnessSettings(kind="claude-code", model="next")
     save_preset("next-worker", next_profile)
     original = Settings(harness=initial, deep=initial)
     before = original.model_dump()
@@ -387,7 +387,7 @@ def test_simple_defaults_need_no_profile_questions_and_clear_role_overrides(wiza
     """Accept Simple's current group assignments immediately and omit configured individual overrides for this run."""
     original = Settings(
         harness=HarnessSettings(provider="private-provider", model="worker", effort="low"),
-        deep=HarnessSettings(kind="claude", model="manager", effort="high"),
+        deep=HarnessSettings(kind="claude-code", model="manager", effort="high"),
         agents={"bull": HarnessSettings(effort="high")},
     )
     before = original.model_dump()
@@ -400,7 +400,7 @@ def test_simple_defaults_need_no_profile_questions_and_clear_role_overrides(wiza
     assert selected.agents == {}
     assert shown == [
         ("Agent configuration", ["Simple", "Advanced"]),
-        ("Simple agent configuration", ["Working agents · pi / worker / low", "Decision manager · claude / manager / high", "Continue"]),
+        ("Simple agent configuration", ["Working agents · pi / worker / low", "Decision manager · claude-code / manager / high", "Continue"]),
     ]
     assert original.model_dump() == before
     assert not wizard.exists()
@@ -440,7 +440,7 @@ def test_advanced_run_selection_edits_multiple_roles_without_saving(wizard: Path
     """Use saved profiles and an unsaved runtime across working, manager, and supporting roles."""
     working = HarnessSettings(provider="local", model="small", effort="low")
     decision = HarnessSettings(kind="codex", model="large", effort="high")
-    news = HarnessSettings(kind="claude", model="news-model")
+    news = HarnessSettings(kind="claude-code", model="news-model")
     paths = [save_preset("alpha", working), save_preset("zeta", decision)]
     before = {path: path.read_bytes() for path in paths}
     original = Settings(harness=working, deep=decision, agents={"news": news})
@@ -520,7 +520,7 @@ def test_advanced_role_can_select_the_saved_default(wizard: Path, monkeypatch: p
     """Select the named saved default as an independent role profile without a synthetic reset entry."""
     working = HarnessSettings(provider="local", model="small")
     decision = HarnessSettings(kind="codex", model="large")
-    override = HarnessSettings(kind="claude", model="role-model")
+    override = HarnessSettings(kind="claude-code", model="role-model")
     saved_default = HarnessSettings(model="saved-default")
     save_preset("daily", saved_default)
     original = Settings(harness=working, deep=decision, agents={role_key: override, "bull": override}, default_preset="daily")
@@ -542,7 +542,7 @@ def test_advanced_role_can_select_the_saved_default(wizard: Path, monkeypatch: p
 def test_advanced_role_cancellation_discards_all_unsaved_edits(wizard: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Cancel after an override is changed without mutating the original settings or any saved file."""
     profile = save_preset("daily", HarnessSettings(provider="local", model="small"))
-    wizard.write_text('[harness]\nkind="pi"\nmodel="small"\n[agents.market]\nkind="claude"\nmodel="override"\n')
+    wizard.write_text('[harness]\nkind="pi"\nmodel="small"\n[agents.market]\nkind="claude-code"\nmodel="override"\n')
     before = {path: path.read_bytes() for path in (wizard, profile)}
     original = load_settings()
     original_values = original.model_dump()
@@ -562,7 +562,7 @@ def test_arrow_keys_select_from_the_highlighted_current_value(keys: str, expecte
     """Exercise actual terminal key handling for both directions and the current default."""
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         keyboard.send_text(keys)
-        assert configuration_ui._choose("Harness", ["pi", "codex", "claude"], default=1) == expected
+        assert configuration_ui._choose("Harness", ["pi", "codex", "claude-code"], default=1) == expected
 
 
 def test_typing_does_not_filter_or_move_model_selection() -> None:

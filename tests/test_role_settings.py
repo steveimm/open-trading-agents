@@ -21,7 +21,7 @@ def test_role_overrides_inherit_their_group_and_reset_on_harness_changes() -> No
         deep=HarnessSettings(kind="codex", model="manager", provider="manager-provider", effort="medium"),
         agents={
             "bull": HarnessSettings(effort="high"),
-            "bear": HarnessSettings(kind="claude", model="bear-model"),
+            "bear": HarnessSettings(kind="claude-code", model="bear-model"),
             "social": HarnessSettings(model=None),
             "portfolio_manager": HarnessSettings(kind="pi", model="portfolio-model"),
         },
@@ -33,7 +33,7 @@ def test_role_overrides_inherit_their_group_and_reset_on_harness_changes() -> No
     assert settings.model_settings(role="trader") == settings.model_settings()
     assert settings.model_settings(role="research_manager") == settings.model_settings(True)
 
-    for role, harness in (("bear", "claude"), ("portfolio_manager", "pi")):
+    for role, harness in (("bear", "claude-code"), ("portfolio_manager", "pi")):
         selected = settings.model_settings(role=role)
         assert selected.kind == harness
         assert selected.provider is selected.effort is None
@@ -78,7 +78,7 @@ def test_default_preset_precedes_effective_role_validation(tmp_path: Path, monke
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     save_preset("local", HarnessSettings(kind="pi", model="selected-worker"))
     path = tmp_path / ".open-trading-agents" / "config.toml"
-    path.write_text('default_preset = "local"\n[harness]\nkind = "claude"\n[agents.bull]\nprovider = "local-provider"\n')
+    path.write_text('default_preset = "local"\n[harness]\nkind = "claude-code"\n[agents.bull]\nprovider = "local-provider"\n')
 
     settings = load_settings(path, use_default_preset=True)
     selected = settings.model_settings(role="bull")
@@ -129,7 +129,7 @@ def test_preset_labeling_does_not_validate_roles_before_runtime_overrides(tmp_pa
         monkeypatch: Scoped home-directory replacement.
     """
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    save_preset("native", HarnessSettings(kind="claude"))
+    save_preset("native", HarnessSettings(kind="claude-code"))
     path = tmp_path / ".open-trading-agents" / "config.toml"
     path.write_text('default_preset = "native"\n[agents.bull]\nprovider = "local"\n')
 
@@ -182,7 +182,7 @@ def test_exact_preset_labels_survive_resume_after_profiles_change(
         if remove_profile:
             preset_path(name).unlink()
         else:
-            save_preset(name, HarnessSettings(kind="claude", model="replacement-model"), overwrite=True)
+            save_preset(name, HarnessSettings(kind="claude-code", model="replacement-model"), overwrite=True)
 
     resumed = Workflow.resume(workflow.directory)
     try:
@@ -217,7 +217,7 @@ def test_existing_run_preserves_original_labels_but_rejects_runtime_changes(tmp_
         Workflow("NVDA", "2026-01-02", changed, run_id="fixed")
 
 
-@pytest.mark.parametrize("kind", ["claude", "codex"])
+@pytest.mark.parametrize("kind", ["claude-code", "codex"])
 def test_sparse_role_configuration_preserves_inherited_kind_on_resume(tmp_path: Path, kind: str) -> None:
     """Serialize only explicit role fields while restoring their original group selection.
 
@@ -250,7 +250,7 @@ def test_invalid_effective_role_settings_do_not_create_run_storage(tmp_path: Pat
     Args:
         tmp_path: Isolated application storage parent.
     """
-    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="claude"),
+    settings = Settings(state_dir=tmp_path / "state", harness=HarnessSettings(kind="claude-code"),
                         agents={"bull": HarnessSettings(provider="unsupported")})
     with pytest.raises(ValidationError, match="Claude Code selects its provider"):
         Workflow("NVDA", "2026-01-02", settings)
@@ -306,7 +306,7 @@ async def test_every_role_keeps_its_runtime_selection_and_native_session_on_resu
         opened.append((config, spec))
         return Session(spec)
 
-    kinds = ("pi", "codex", "claude")
+    kinds = ("pi", "codex", "claude-code")
     selections = {key: HarnessSettings(kind=kinds[index % 3], model=f"{key}-model", effort="high")
                   for index, key in enumerate(ROLES)}
     settings = Settings(state_dir=tmp_path, memory_enabled=False, agents=selections)
@@ -433,7 +433,7 @@ def test_backtest_fingerprint_preserves_old_defaults_and_pins_role_overrides(tmp
     settings.agent_presets = {"market": "display-label"}
     assert _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"] == old_digest
 
-    settings.agents["bear"] = HarnessSettings(kind="claude", model="bear-model")
+    settings.agents["bear"] = HarnessSettings(kind="claude-code", model="bear-model")
     selected = _manifest(["NVDA"], ["2026-01-02"], settings, None)["configuration_fingerprint"]
     old_inputs["settings"]["agents"] = settings.model_dump(mode="json")["agents"]
     previous_role_digest = hashlib.sha256(json.dumps(old_inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -453,13 +453,13 @@ def test_unknown_runtime_models_use_only_their_role_configuration(tmp_path: Path
         "quick_harness": "pi", "quick_model": "generic-worker", "deep_model": "generic-manager",
         "runtime_agents": [
             {"agent": "Bull Researcher", "harness": "pi", "model": "observed-bull"},
-            {"agent": "Bear Researcher", "harness": "claude", "model": None},
+            {"agent": "Bear Researcher", "harness": "claude-code", "model": None},
             {"agent": "Reflection 42", "harness": "codex", "model": None},
             {"agent": "Unknown Agent", "harness": "pi", "model": None},
         ],
         "configured_agents": [
             {"role": "bull", "agent": "Bull Researcher", "harness": "pi", "model": "configured-bull"},
-            {"role": "bear", "agent": "Bear Researcher", "harness": "claude", "model": "configured-bear"},
+            {"role": "bear", "agent": "Bear Researcher", "harness": "claude-code", "model": "configured-bear"},
             {"role": "reflection", "agent": "Reflection", "harness": "codex", "model": "configured-reflection"},
         ],
     }
@@ -469,3 +469,30 @@ def test_unknown_runtime_models_use_only_their_role_configuration(tmp_path: Path
         assert "configured-bear (Bear Researcher)" in text
         assert "configured-reflection (Reflection 42)" in text
         assert "generic-worker" not in text and "generic-manager" not in text
+
+
+def test_legacy_claude_run_resumes_with_canonical_harness_names(tmp_path: Path) -> None:
+    """Normalize saved group and role identities without invalidating resumable native sessions.
+
+    Args:
+        tmp_path: Isolated recorded run.
+    """
+    profile = HarnessSettings(kind="claude-code", model="sonnet")
+    settings = Settings(state_dir=tmp_path, harness=profile, quick=profile, deep=profile, agents={"bear": profile})
+    workflow = Workflow("NVDA", "2026-01-02", settings)
+    recorded = workflow.store.metadata("input")
+    for name in ("harness", "quick", "deep"):
+        recorded["settings"][name]["kind"] = "claude"
+    recorded["settings"]["agents"]["bear"]["kind"] = "claude"
+    workflow.store.set_metadata("input", recorded)
+    workflow.store.save_session("Bear Researcher", "legacy-native-session")
+    workflow.store.close()
+
+    resumed = Workflow.resume(workflow.directory)
+    try:
+        assert resumed.settings.model_settings().kind == "claude-code"
+        assert resumed.settings.model_settings(True).kind == "claude-code"
+        assert resumed.settings.model_settings(role="bear").kind == "claude-code"
+        assert resumed.store.session("Bear Researcher") == "legacy-native-session"
+    finally:
+        resumed.store.close()

@@ -489,7 +489,7 @@ def _provider(current: HarnessSettings, catalog: ModelCatalog) -> str | None:
     Returns:
         The selected provider, or None for harness defaults.
     """
-    if current.kind == "claude":
+    if current.kind == "claude-code":
         return None
     providers = sorted({model.provider for model in catalog.models if model.provider} | ({current.provider} if current.provider else set()))
     default = providers.index(current.provider) + 1 if current.provider in providers else 0
@@ -580,7 +580,7 @@ def _runtime(current: HarnessSettings, catalogs: dict[str, ModelCatalog]) -> Har
     Returns:
         The selected runtime without changing configuration files.
     """
-    kinds = ["pi", "codex", "claude"]
+    kinds = ["pi", "codex", "claude-code"]
     kind = kinds[_choose("Harness", kinds, kinds.index(current.kind))]
     selected = current if current.kind == kind else HarnessSettings(kind=kind)
     catalog = _catalog(selected, catalogs)

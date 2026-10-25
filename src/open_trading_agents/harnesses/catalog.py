@@ -245,7 +245,8 @@ async def _discover(config: HarnessSettings) -> ModelCatalog:
     Returns:
         Discovered models or a descriptive empty native catalog.
     """
-    args = list(config.command or (config.kind,))
+    executable = "claude" if config.kind == "claude-code" else config.kind
+    args = list(config.command or (executable,))
     environment = {**os.environ, "NO_COLOR": "1", "FORCE_COLOR": "0"}
     if config.kind == "pi":
         args.extend(["--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-approve", "--list-models"])
@@ -313,7 +314,7 @@ def effort_choices(config: HarnessSettings, catalog: ModelCatalog) -> tuple[str,
             return asyncio.run(_pi_efforts(config))
         except (OSError, ValueError, RuntimeError, TimeoutError):
             return ()
-    if config.kind == "claude":
+    if config.kind == "claude-code":
         return catalog.efforts
     for model in catalog.models:
         if (model.id == config.model if config.model else model.is_default) and (config.provider is None or model.provider == config.provider):

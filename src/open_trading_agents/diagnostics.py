@@ -106,7 +106,8 @@ def doctor_checks(config_path: Path) -> list[tuple[str, str]]:
         config_message = f"Invalid: {source}. Fix the TOML configuration before running an analysis."
 
     checks = [("Config", config_message)]
-    checks.extend((name, shutil.which(name) or "Not installed") for name in ("pi", "codex", "claude"))
+    checks.extend((name, shutil.which(executable) or "Not installed")
+                  for name, executable in (("pi", "pi"), ("codex", "codex"), ("claude-code", "claude")))
     try:
         names = list_presets()
         invalid = []

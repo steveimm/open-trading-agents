@@ -113,8 +113,8 @@ def test_presets_preserve_native_resets_and_require_explicit_replacement(tmp_pat
     assert tuple(path.parent.iterdir()) == (path,)
     loaded = load_preset("native-managers")
     assert loaded.model is None and loaded.provider is None and loaded.effort is None
-    save_preset("native-managers", HarnessSettings(kind="claude"), overwrite=True)
-    assert load_preset("native-managers").kind == "claude"
+    save_preset("native-managers", HarnessSettings(kind="claude-code"), overwrite=True)
+    assert load_preset("native-managers").kind == "claude-code"
 
 
 def test_invalid_or_missing_presets_do_not_fall_back_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +142,7 @@ def test_default_preset_changes_runtime_choices_without_rewriting_base_settings(
     path.write_text('# application preferences\nresearch_rounds = 3\n[harness]\nkind = "pi"\nmodel = "base" # saved choice\n'
                     '[deep]\nmodel = "base-manager"\n[data]\nweb_search_backend = "yahoo"\n')
     path.chmod(0o640)
-    selected = HarnessSettings(kind="claude", model="default-model", effort="high")
+    selected = HarnessSettings(kind="claude-code", model="default-model", effort="high")
     save_preset("daily", selected)
     raw = set_default_preset(path, "daily")
     assert raw.default_preset == "daily"
@@ -201,7 +201,7 @@ def test_delete_profile_clears_global_and_selected_defaults_without_touching_oth
     """Deleting a globally shared profile cannot leave either known config pointing to it."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     selected = save_preset("daily", HarnessSettings(model="delete-model"))
-    retained = save_preset("retained", HarnessSettings(kind="claude", model="keep-model"))
+    retained = save_preset("retained", HarnessSettings(kind="claude-code", model="keep-model"))
     retained_text = retained.read_text()
     global_config = default_config_path()
     global_config.write_text('# keep preferences\ndefault_preset = "daily"\nrisk_rounds = 3\n[harness]\nmodel = "base"\n')
@@ -272,3 +272,28 @@ def test_failed_profile_deletion_restores_default_selections(tmp_path: Path, mon
     with pytest.raises(OSError, match="unavailable"):
         delete_preset("daily", custom)
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_legacy_claude_preset_loads_without_rewriting_and_saves_canonical_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep existing user presets usable while saving the new harness name on the next explicit update.
+
+    Args:
+        tmp_path: Isolated application home.
+        monkeypatch: Scoped home-directory replacement.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    profile = preset_path("existing")
+    profile.parent.mkdir(parents=True)
+    profile.write_text('harness = "claude"\nmodel = "sonnet"\neffort = "high"\n')
+    path = default_config_path()
+    path.write_text('default_preset = "existing"\n[harness]\nkind = "claude"\n')
+    originals = {file: file.read_bytes() for file in (profile, path)}
+
+    loaded = load_settings(path, use_default_preset=True)
+    assert loaded.harness.kind == "claude-code"
+    assert loaded.harness.model == "sonnet" and loaded.harness.effort == "high"
+    assert loaded.harness.runtime().kind == "claude-code"
+    assert {file: file.read_bytes() for file in originals} == originals
+
+    save_preset("existing", loaded.harness, overwrite=True)
+    assert tomllib.loads(profile.read_text())["harness"] == "claude-code"

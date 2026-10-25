@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from questionary.prompts.common import InquirerControl
@@ -34,36 +35,42 @@ def menus(monkeypatch: pytest.MonkeyPatch) -> list[Question]:
     return captured
 
 
-@pytest.mark.parametrize("choices", [["pi", "codex", "claude"], ["astra (default)", "pi", "claude"]])
+@pytest.mark.parametrize("choices", [["pi", "codex", "claude-code"], ["astra (selected)", "pi", "claude-code"]])
 def test_choice_labels_stay_verbatim_when_cursor_moves(menus: list[Question], choices: list[str]) -> None:
     """Keep caller-provided preset labels independent of the initial choice and movable pointer.
 
     Args:
         menus: Captured terminal menus.
-        choices: Ordinary options or a saved profile explicitly labelled as the default.
+        choices: Ordinary options or a saved profile explicitly labelled as selected.
     """
     expected_labels = choices.copy()
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         keyboard.send_text("\x1b[B\r")
         assert configuration_ui._choose("Harness", choices, default=1) == 2
     control = next(control for control in menus[0].application.layout.find_all_controls() if isinstance(control, InquirerControl))
-    assert [choice.title for choice in control.choices] == expected_labels
+    assert [fragment_list_to_text(choice.title) for choice in control.choices] == expected_labels
     assert [choice.value for choice in control.choices] == [0, 1, 2]
     assert control.get_pointed_at().value == 2
     assert choices == expected_labels
     assert any(style == "class:pointer" and "›" in text for style, text in control._get_choice_tokens())
 
 
-def test_default_and_cursor_options_have_no_reverse_or_background_highlight(menus: list[Question]) -> None:
-    """Remove prompt_toolkit's inherited reverse-video selected style while keeping Enter defaults."""
+def test_cursor_highlight_uses_the_theme_without_reverse_video(menus: list[Question]) -> None:
+    """Render the current row with the requested background and leave other rows unhighlighted.
+
+    Args:
+        menus: Captured terminal menus with renderer-level style defaults.
+    """
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         keyboard.send_text("\r")
         assert configuration_ui._choose("Provider", ["Harness default", "local"], default=1) == 1
-    style = menus[0].application._merged_style
-    for name in ("selected", "highlighted"):
-        attributes = style.get_attrs_for_style_str(f"class:{name}")
-        assert not attributes.reverse
-        assert not attributes.bgcolor
+    application = menus[0].application
+    control = next(control for control in application.layout.find_all_controls() if isinstance(control, InquirerControl))
+    for index, choice in enumerate(control.choices):
+        for token_style, _ in choice.title:
+            attributes = application.renderer.style.get_attrs_for_style_str(token_style)
+            assert not attributes.reverse
+            assert attributes.bgcolor == ("303547" if index == 1 else "")
 
 
 @pytest.mark.parametrize("keys, expected", [("cloud", 0), ("j", 0), ("k", 0), ("\x0e", 0), ("\x10", 0), ("cloud\x1b[B", 1)])
@@ -79,7 +86,7 @@ def test_only_arrow_keys_change_selection(menus: list[Question], keys: str, expe
         keyboard.send_text(f"{keys}\r")
         assert configuration_ui._choose("Model", ["local-small", "cloud-large", "local-large"], default=0) == expected
     control = next(control for control in menus[0].application.layout.find_all_controls() if isinstance(control, InquirerControl))
-    assert control.choices[0].title == "local-small"
+    assert fragment_list_to_text(control.choices[0].title) == "local-small"
     assert control.search_filter is None
     assert control.filtered_choices == control.choices
     assert control.get_pointed_at().value == expected

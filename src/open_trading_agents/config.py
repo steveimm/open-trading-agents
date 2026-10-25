@@ -59,12 +59,25 @@ def list_presets() -> tuple[str, ...]:
 
 class HarnessSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["pi", "codex", "claude"] = "pi"
+    kind: Literal["pi", "codex", "claude-code"] = "pi"
     command: tuple[str, ...] = ()
     model: str | None = None
     provider: str | None = None
     effort: str | None = None
     extra_args: tuple[str, ...] = ()
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def normalize_kind(cls, value: Any) -> Any:
+        """Accept the former Claude identifier while storing the canonical harness name.
+
+        Args:
+            value: Harness identifier from configuration or a saved preset.
+
+        Returns:
+            The canonical identifier, or the original value for normal validation.
+        """
+        return "claude-code" if value == "claude" else value
 
     @field_validator("model", "provider", "effort")
     @classmethod
@@ -89,7 +102,7 @@ class HarnessSettings(BaseModel):
         Raises:
             ValueError: A provider override is supplied for Claude Code.
         """
-        if self.kind == "claude" and self.provider:
+        if self.kind == "claude-code" and self.provider:
             raise ValueError("Claude Code selects its provider through its native configuration.")
 
         return self
@@ -366,7 +379,7 @@ def load_preset(name: str) -> HarnessSettings:
     with selected.open("rb") as handle:
         selections = tomllib.load(handle)
     if not isinstance(selections.get("harness"), str) or set(selections) - {"harness", "provider", "model", "effort"}:
-        raise ValueError(f"Preset {name!r} must contain only harness, provider, model, and effort, with harness set to pi, codex, or claude. Recreate it with 'open-trading-agents configure'.")
+        raise ValueError(f"Preset {name!r} must contain only harness, provider, model, and effort, with harness set to pi, codex, or claude-code. Recreate it with 'open-trading-agents configure'.")
 
     selections["kind"] = selections.pop("harness")
     return HarnessSettings.model_validate(selections)
@@ -680,7 +693,7 @@ def set_default_preset(path: Path, name: str | None) -> Settings:
 def save_harness_selection(
     path: Path,
     tier: Literal["default", "quick", "deep"] = "default",
-    harness: Literal["pi", "codex", "claude"] | None = None,
+    harness: Literal["pi", "codex", "claude-code"] | None = None,
     model: str | None = None,
     provider: str | None = None,
     effort: str | None = None,

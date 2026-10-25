@@ -151,7 +151,7 @@ def test_failed_atomic_replace_retains_original_configuration(tmp_path: Path, mo
 def test_claude_provider_configuration_is_left_to_native_harness(tmp_path: Path) -> None:
     """Reject an ineffective provider flag instead of saving it as an applied selection."""
     path = tmp_path / "tradingagents.toml"
-    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path), "--harness", "claude", "--provider", "local"])
+    result = runner.invoke(cli.app, ["configure", "agents", "--config", str(path), "--harness", "claude-code", "--provider", "local"])
     assert result.exit_code == 1
     assert "Claude Code selects its provider" in result.output
     assert not path.exists()
@@ -168,12 +168,12 @@ def test_claude_provider_override_is_rejected_by_all_configuration_entry_points(
         monkeypatch: Redirect the profile directory away from user settings.
     """
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    invalid = {"kind": "claude", "provider": "ignored-provider"}
+    invalid = {"kind": "claude-code", "provider": "ignored-provider"}
     path = tmp_path / "config.toml"
-    path.write_text('[harness]\nkind = "claude"\nprovider = "ignored-provider"\n')
+    path.write_text('[harness]\nkind = "claude-code"\nprovider = "ignored-provider"\n')
     profile = preset_path("invalid")
     profile.parent.mkdir(parents=True)
-    profile.write_text('harness = "claude"\nprovider = "ignored-provider"\n')
+    profile.write_text('harness = "claude-code"\nprovider = "ignored-provider"\n')
 
     with pytest.raises(ValueError, match="Claude Code selects its provider"):
         HarnessSettings.model_validate(invalid)
@@ -184,4 +184,4 @@ def test_claude_provider_override_is_rejected_by_all_configuration_entry_points(
     with pytest.raises(ValueError, match="Claude Code selects its provider"):
         cli.runtime_overrides(Settings(), cli.HarnessName.claude, "selected-model", "ignored-provider")
 
-    assert HarnessSettings(kind="claude", provider="  ").provider is None
+    assert HarnessSettings(kind="claude-code", provider="  ").provider is None

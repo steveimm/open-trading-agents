@@ -85,7 +85,7 @@ def test_interactive_run_asks_startup_choices_before_starting(run_config: Path, 
         assert settings.research_rounds == 3 and settings.risk_rounds == 3
         return settings.model_copy(update={
             "quick": HarnessSettings(kind="pi", provider="local", model="worker", effort="low"),
-            "deep": HarnessSettings(kind="claude", model="manager", effort="high"),
+            "deep": HarnessSettings(kind="claude-code", model="manager", effort="high"),
         })
 
     monkeypatch.setattr(cli.typer, "prompt", prompt)
@@ -228,10 +228,10 @@ def test_supplied_ticker_still_selects_depth_and_agents_and_explicit_flags_win(
         """Return distinct choices to verify explicit native flags remain authoritative."""
         calls.append("agents")
         return settings.model_copy(update={
-            "quick": HarnessSettings(kind="claude", model="picked-worker", effort="high", command=("custom-claude",)),
+            "quick": HarnessSettings(kind="claude-code", model="picked-worker", effort="high", command=("custom-claude",)),
             "deep": HarnessSettings(kind="codex", model="picked-manager", effort="high", extra_args=("--profile", "old")),
             "agents": {
-                "bear": HarnessSettings(kind="claude", model="picked-bear", effort="high", command=("custom-claude",)),
+                "bear": HarnessSettings(kind="claude-code", model="picked-bear", effort="high", command=("custom-claude",)),
                 "research_manager": HarnessSettings(kind="codex", model="picked-research", extra_args=("--profile", "old")),
             },
         })

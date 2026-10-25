@@ -37,7 +37,7 @@ console = Console(stderr=True)
 class HarnessName(StrEnum):
     pi = "pi"
     codex = "codex"
-    claude = "claude"
+    claude = "claude-code"
 
 
 def configured(

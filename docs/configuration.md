@@ -22,7 +22,7 @@ To remove a preset, choose **Delete saved profile**, select its name, and confir
 
 - When creating a profile, **Harness default** uses the harness's own selection. In pi, choosing the harness default for the model also resets the provider to its harness default.
 - Providers, models, and effort levels are listed when the harness exposes them. Custom model identifiers can be entered manually.
-- Claude's listed model choices are aliases. To select a specific version, enter its full model identifier manually. Claude manages its provider through its native settings.
+- `claude-code` launches the native `claude` executable. Existing presets using `claude` still load. Claude Code's listed model choices are aliases. To select a specific version, enter its full model identifier manually. Claude manages its provider through its native settings.
 - Effort is passed to the harness only when selected explicitly. Temperature and top-p remain controlled by the harness and provider.
 
 Native protocol support matters when connecting to a local model server. A harness expecting Responses or Anthropic Messages is not automatically compatible with a Chat Completions endpoint.
@@ -70,7 +70,7 @@ To retain individual assignments across runs, including unattended runs, add rol
 
 ```toml
 [agents.bull]
-kind = "claude"
+kind = "claude-code"
 model = "sonnet"
 effort = "high"
 
@@ -114,7 +114,7 @@ provider = "local"
 model = "working-model"
 
 [deep]
-kind = "claude"
+kind = "claude-code"
 model = "opus"
 effort = "high"
 ```
