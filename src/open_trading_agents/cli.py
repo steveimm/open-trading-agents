@@ -4,6 +4,7 @@ import asyncio
 import json
 import shlex
 import sys
+import webbrowser
 from dataclasses import asdict
 from datetime import date
 from enum import StrEnum
@@ -12,6 +13,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 
 from open_trading_agents.analysis.models import AgentEvent
 from open_trading_agents.analysis.prompts import ROLES
@@ -118,6 +120,37 @@ def runtime_overrides(
     return settings
 
 
+def _offer_report_views(report_dir: Path) -> None:
+    """Offer optional browser and terminal views after a completed interactive run.
+
+    Args:
+        report_dir: Directory containing the already-exported HTML and Markdown reports.
+    """
+    from open_trading_agents.ui.configuration import _confirm
+    from open_trading_agents.ui.transcript import literal_text
+
+    try:
+        if _confirm("Open report in browser?", default=True):
+            page = (report_dir / "complete_report.html").resolve()
+            try:
+                opened = page.is_file() and webbrowser.open_new_tab(page.as_uri())
+            except (webbrowser.Error, OSError):
+                opened = False
+            if not opened:
+                typer.echo(f"Could not open a browser. HTML report: {page}")
+
+        if _confirm("Print full report in terminal?", default=True):
+            markdown = report_dir / "complete_report.md"
+            try:
+                content = markdown.read_text(encoding="utf-8")
+            except OSError:
+                typer.echo(f"Could not read the report: {markdown}")
+            else:
+                Console().print(Markdown(literal_text(content)))
+    except (typer.Abort, KeyboardInterrupt):
+        return
+
+
 def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
     """Run a common pipeline through either the live terminal UI or a JSON observer.
 
@@ -129,7 +162,8 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
     Returns:
         The completed run result.
     """
-    if headless or events or not (sys.stdin.isatty() and sys.stdout.isatty()):
+    interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
+    if not interactive:
         async def observe(event: AgentEvent) -> None:
             """Write explicit JSON events or concise lifecycle progress.
 
@@ -168,11 +202,13 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         result = ui.result
 
     if not events:
-        typer.echo(f"{workflow.ticker}: {result.rating}\nReports: {result.directory / 'reports'}\nRun: {result.run_id}")
-        usage_path = result.directory / "reports" / "usage.json"
+        report_dir = result.directory / "reports"
+        typer.echo(f"{workflow.ticker}: {result.rating}\nRun saved to {report_dir}")
+        usage_path = report_dir / "usage.json"
         usage = json.loads(usage_path.read_text(encoding="utf-8"))["totals"]
         typer.echo(format_run_usage(usage))
-        typer.echo(f"Usage details: {usage_path}")
+        if interactive:
+            _offer_report_views(report_dir)
 
     return result
 

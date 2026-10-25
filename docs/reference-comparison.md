@@ -323,7 +323,7 @@ The reference's five groups are retained:
 
 Individual Markdown outputs and `complete_report.md` / `complete_report.html` are exported under each run's `reports/` directory. The HTML presentation is adapted from the reference, with this project's branding and fixes for narrow-screen numeric tables. Model-authored HTML remains inert. A fixed local navigation script highlights the current section and toggles the compact table of contents, with its exact hash permitted by the report's Content Security Policy.
 
-Changes from the reference interaction include automatic combined export during cleanup, available partial outputs after interruption, and loading the saved complete Markdown into the Reports tab. No explicit export button, save-destination question, HTML toggle, or browser-opening offer was added to the TUI.
+Changes from the reference interaction include automatic combined export during cleanup, available partial outputs after interruption, and loading the saved complete Markdown into the Reports tab. Exports remain automatic. After a completed interactive run, the CLI offers to open the HTML report in a browser and print the full report in the terminal. Headless and JSON-event runs skip those offers.
 
 Chronological debate entries use recorded speaker/round/turn events when they reconstruct the full debate exactly. Otherwise the full combined discussion is retained, avoiding content loss or guessed speaker attribution.
 

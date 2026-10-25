@@ -29,7 +29,7 @@ uv run open-trading-agents --ticker NVDA --output-dir ./research
 
 This creates `./research/RUN_ID/` with the reports, complete `transcript.jsonl`, saved progress, and native session files. Each run gets its own folder. Relative paths and `~` are supported. Output choices apply only to the current run and do not change saved configuration. Shared cache and feedback memory remain under `~/.open-trading-agents/`.
 
-When output is unspecified, runs use `~/.open-trading-agents/runs/`, including in unattended runs. The final console summary shows reported input, output, and available cache counts, followed by the path to `reports/usage.json` for full details.
+When output is unspecified, runs use `~/.open-trading-agents/runs/`, including in unattended runs. The final console summary shows the saved report directory and reported input, output, and available cache counts. Detailed usage remains in `reports/usage.json`. Completed interactive runs then ask whether to open the HTML report in your browser and print the full report in the terminal. Headless, JSON-event, and redirected runs do not ask these questions.
 
 ```sh
 uv run open-trading-agents resume ~/.open-trading-agents/runs/RUN_ID
