@@ -7,7 +7,7 @@ from pathlib import Path
 import questionary
 import typer
 from prompt_toolkit.application import Application
-from prompt_toolkit.filters import IsDone
+from prompt_toolkit.filters import Condition, IsDone
 from prompt_toolkit.layout import ConditionalContainer, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
@@ -41,8 +41,8 @@ _SOURCE_CATEGORIES = (
 
 
 _GROUP_DESCRIPTIONS = {
-    "Working agents": "Research and trade proposals: market, fundamentals, news and sentiment analysts, bull/bear researchers, trader, three risk analysts, and reflection.",
     "Decision manager": "Research Manager weighs the bull/bear debate. Portfolio Manager makes the final recommendation after the risk debate.",
+    "Working agents": "Research and trade proposals: market, fundamentals, news and sentiment analysts, bull/bear researchers, trader, three risk analysts, and reflection.",
 }
 _ROLE_DESCRIPTIONS = {
     "market": "Examines price trends, momentum, volatility and trading volume.",
@@ -142,7 +142,8 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
                 return [("class:description", control.get_pointed_at().description or "")]
 
             help_window = Window(FormattedTextControl(explanation), wrap_lines=True, dont_extend_height=True)
-            question.application.layout.container.children.insert(1, ConditionalContainer(help_window, filter=~IsDone()))
+            show_help = Condition(lambda: bool(control.get_pointed_at().description)) & ~IsDone()
+            question.application.layout.container.children.insert(1, ConditionalContainer(help_window, filter=show_help))
 
         def style_rows(application: Application) -> None:
             """Refresh semantic colors and highlight as the selection cursor moves.
@@ -691,7 +692,7 @@ def _agent_profile(
         default = preferred
     if inherit_default and same_as is not None:
         default = 0
-    description = _GROUP_DESCRIPTIONS.get(label) or next(_ROLE_DESCRIPTIONS[key] for key, role in ROLES.items() if role.name == label)
+    description = _GROUP_DESCRIPTIONS.get(label) or next((_ROLE_DESCRIPTIONS[key] for key, role in ROLES.items() if role.name == label), "")
     choice = _choose(label, [*labels, "Configure for this run"], default, descriptions=[description] * (len(labels) + 1))
     return ProfileChoice(_runtime(current, catalogs)) if choice == len(selections) else selections[choice]
 
@@ -707,10 +708,7 @@ def select_agent_settings(settings: Settings) -> Settings:
     """
     profiles = {name: load_preset(name) for name in list_presets()}
     catalogs: dict[str, ModelCatalog] = {}
-    mode = _choose("Agent configuration", ["Simple", "Advanced"], descriptions=[
-        "Choose one profile for working agents and one for the research and portfolio managers.",
-        "Choose a separate profile for each agent role.",
-    ])
+    mode = _choose("Agent configuration", ["Simple", "Advanced"])
     selected = settings.model_copy(deep=True)
     if mode == 0:
         return _simple_agent_settings(selected, profiles, catalogs)
@@ -747,9 +745,7 @@ def _simple_agent_settings(
         manager = selected.model_settings(True)
         labels = [f"{label} · {_profile_label(profile, profiles, names.get(key), selected.default_preset)}"
                   for (key, label), profile in zip(groups, (working, manager), strict=True)]
-        descriptions = [_GROUP_DESCRIPTIONS[label] for _, label in groups]
-        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor,
-                         descriptions=[*descriptions, "Use these assignments for this run."])
+        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
         if cursor == len(groups):
             role_names = {key: names.get("deep" if role.deep else "quick") for key, role in ROLES.items()}
             return _remember_agent_presets(selected, profiles, role_names)
@@ -800,9 +796,7 @@ def _advanced_agent_settings(
     while True:
         labels = [f"{ROLES[key].name} · {_profile_label(selected.model_settings(role=key), profiles, names.get(key), selected.default_preset)}"
                   for key in roles]
-        descriptions = [_ROLE_DESCRIPTIONS[key] for key in roles]
-        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor,
-                         descriptions=[*descriptions, "Use these assignments for this run."])
+        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
         if cursor == len(roles):
             return _remember_agent_presets(selected, profiles, names)
 
