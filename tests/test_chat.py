@@ -158,6 +158,8 @@ async def test_bubble_border_cells_use_the_content_background_in_both_focus_stat
     """Avoid inherited terminal backgrounds that form colored bars beside bubble text."""
     view = ChatView(id="chat", debate=True)
     async with ChatTestApp(view).run_test(size=(100, 30)) as pilot:
+        view.consume(AgentEvent("system", "Bull Researcher", "research", "System instructions\nsecond line"))
+        view.toggle_system()
         view.consume(AgentEvent("conversation_input", "Input", "research", "Input evidence\nsecond line"))
         view.consume(AgentEvent("turn_start", "Bull Researcher", "research", data={"round": 1, "turn": 1}))
         view.consume(AgentEvent("reasoning", "Bull Researcher", "research", "Verify the values", {"message_id": "one"}))
@@ -173,7 +175,8 @@ async def test_bubble_border_cells_use_the_content_background_in_both_focus_stat
             background = view.rich_style.bgcolor
             assert background is not None
             for index, part in enumerate(view._parts):
-                if part.kind not in {"body", "detail"} or part.bubble is None:
+                boxed = part.bubble is not None or (part.section is not None and part.section.kind == "system")
+                if part.kind not in {"body", "detail"} or not boxed:
                     continue
                 row = view._offsets[index]
                 segments = list(view.render_line(row))
@@ -496,7 +499,7 @@ async def test_long_bubble_titles_stay_visible_and_switch_at_contribution_bounda
         view.scroll_to(y=view._offsets[gap], animate=False, immediate=True)
         assert view._sticky_header() is None
         assert "Bull Researcher" not in "".join(segment.text for segment in view.render_line(0))
-        bear_title = next(i for i, part in enumerate(view._parts) if part.kind == "top" and part.bubble.agent == "Bear Researcher")
+        bear_title = next(i for i, part in enumerate(view._parts) if part.kind == "top" and part.bubble is not None and part.bubble.agent == "Bear Researcher")
         view.scroll_to(y=view._offsets[bear_title], animate=False, immediate=True)
         assert view._sticky_header() is None
         assert "Turn 2" in "".join(segment.text for segment in view.render_line(0))
@@ -655,3 +658,43 @@ async def test_separate_system_panes_do_not_duplicate_inline_content_or_disclosu
         assert view.visible_plain() == "Bull Researcher\nPublic argument"
         assert all(section not in view._detail_rows for section in view.systems.values())
         assert view._parts[-1].kind == "bottom"
+
+
+async def test_system_prompt_box_keeps_disclosure_controls_and_wraps_inside_its_borders() -> None:
+    """Render system instructions as a distinct box without breaking expansion or narrow layouts."""
+    view = ChatView(id="chat")
+    source = "Use dated evidence and verify calculations with scripts. " * 4
+    async with ChatTestApp(view).run_test(size=(100, 30)) as pilot:
+        view.consume(AgentEvent("system", "Market Analyst", "analysis", source))
+        view.consume(AgentEvent("prompt", "Market Analyst", "analysis", "Research the supplied ticker."))
+        view.sync()
+        view.navigate("home")
+        await pilot.pause()
+        section = view.systems["Market Analyst"]
+        header = view.render_line(0)
+        assert header.text.startswith("╭ ▸ System · Market Analyst") and header.text.endswith("╮")
+        assert list(header)[0].style.color.get_truecolor().hex == "#9c83c9"
+        assert view.render_line(1).text.startswith("╰") and view.render_line(1).text.endswith("╯")
+        assert source not in view.visible_plain()
+
+        await pilot.click(view, offset=(3, 0))
+        assert not section.collapsed
+        for width in (100, 48):
+            await pilot.resize_terminal(width, 30)
+            view.navigate("home")
+            await pilot.pause()
+            assert source in view.visible_plain()
+            parts = [(view._offsets[index], part) for index, part in enumerate(view._parts) if part.section is section]
+            assert [part.kind for _, part in parts] == ["top", "body", "bottom"]
+            body_row, body = parts[1]
+            for row in range(body_row, body_row + body.height):
+                line = view.render_line(row)
+                assert line.text.startswith("│ ") and line.text.endswith(" │")
+                assert line.cell_length == view.scrollable_content_region.width
+                assert list(line)[0].style.color.get_truecolor().hex == "#9c83c9"
+            assert view.render_line(parts[-1][0]).text.endswith("╯")
+
+        await pilot.click(view, offset=(3, 0))
+        assert section.collapsed
+        view.toggle_selected()
+        assert not section.collapsed and source in view.plain()

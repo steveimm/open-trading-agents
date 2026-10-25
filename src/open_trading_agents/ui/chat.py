@@ -163,6 +163,13 @@ class ChatPart:
     start_row: int = 0
 
     @property
+    def border_color(self) -> str:
+        """Distinguish system instructions, supplied input, and agent output boxes."""
+        if self.section is not None and self.section.kind == "system":
+            return "#9c83c9"
+        return "#e8b86d" if self.bubble is not None and self.bubble.kind == "input" else "#668ab5"
+
+    @property
     def disclosure(self) -> ChatBubble | ChatSection | None:
         """Return the expandable turn or section controlled by this header."""
         if self.kind == "top":
@@ -485,9 +492,10 @@ class ChatView(FollowScrollView):
 
         if self.show_systems:
             for section in self.systems.values():
-                add_section(section, None)
-        if self.show_systems and self.systems:
-            parts.append(ChatPart("system-gap", "gap", 1))
+                parts.append(ChatPart(f"header:{section.key}", "top", 1, section=section))
+                add_section(section, None, header=False)
+                parts.append(ChatPart(f"bottom:{section.key}", "bottom", 1, section=section))
+                parts.append(ChatPart(f"gap:{section.key}", "gap", 1))
         for index, bubble in enumerate(self.bubbles):
             input_section = bubble.sections[0] if bubble.kind == "input" and bubble.sections else None
             parts.append(ChatPart(f"top:{bubble.key}", "top", 1, bubble, input_section))
@@ -602,29 +610,31 @@ class ChatView(FollowScrollView):
             The title before its horizontal border fill.
         """
         bubble, disclosure = part.bubble, part.disclosure
-        assert bubble is not None
+        fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
+        if bubble is None:
+            assert part.section is not None
+            return f"╭ {fold}{part.section.title} "
+
         presentation = self._presentation(bubble.agent) if bubble.kind == "agent" else None
         profile = f" · {presentation.label}" if presentation is not None and self.show_profile_labels else ""
         suffix = f" · {bubble.title}" if bubble.title else ""
         active = f" {self._activity_frame}" if bubble.status == "streaming" else ""
         if bubble.status in {"error", "stopped"}:
             active = f" · {bubble.status}"
-        fold = f"{'▸' if disclosure.collapsed else '▾'} " if disclosure is not None else ""
         return f"╭ {fold}{bubble.agent}{profile}{suffix}{active} "
 
     def _title_line(self, part: ChatPart, width: int) -> Strip:
         """Render a bubble title identically in its natural or pinned position.
 
         Args:
-            part: Bubble title and its optional input disclosure.
+            part: System, input, or agent title and its optional disclosure.
             width: Available terminal cells.
 
         Returns:
             A title row with role, round, turn and current streaming state.
         """
-        bubble, disclosure = part.bubble, part.disclosure
-        assert bubble is not None
-        color = "#e8b86d" if bubble.kind == "input" else "#668ab5"
+        disclosure = part.disclosure
+        color = part.border_color
         style = "bold #f1e5b9 on #303547" if disclosure is not None and disclosure is self._selected else f"bold {color}"
         title = Text(self._title_text(part), style=style)
         title.truncate(max(1, width - 1))
@@ -696,7 +706,7 @@ class ChatView(FollowScrollView):
             y: Row within this viewport.
 
         Returns:
-            A styled row with input/agent borders or a detail header.
+            A styled row with system, input, or agent borders, or a detail header.
         """
         width = max(1, self.scrollable_content_region.width)
         if y == 0 and (header := self._sticky_header()) is not None:
@@ -707,9 +717,9 @@ class ChatView(FollowScrollView):
             return Strip.blank(width, self.rich_style)
         part = self._parts[index]
         bubble, section = part.bubble, part.section
-        color = "#e8b86d" if bubble and bubble.kind == "input" else "#668ab5"
+        color = part.border_color
         border = self.rich_style + Style(color=color)
-        if part.kind == "top" and bubble is not None:
+        if part.kind == "top":
             return self._title_line(part, width)
         if part.kind == "bottom":
             return self._line("╰" + "─" * max(0, width - 2) + "╯", color, width)
@@ -729,8 +739,9 @@ class ChatView(FollowScrollView):
             while len(self._cache) > 256:
                 (old_index, old_key), _ = self._cache.popitem(last=False)
                 old_index.cache.pop(old_key, None)
-            side = Strip([Segment("│ " if bubble else "  ", border)])
-            end = Strip([Segment(" │" if bubble else "  ", border)])
+            boxed = bubble is not None or section.kind == "system"
+            side = Strip([Segment("│ " if boxed else "  ", border)])
+            end = Strip([Segment(" │" if boxed else "  ", border)])
             return Strip.join([side, body, end]).adjust_cell_length(width, self.rich_style)
         return Strip.blank(width, self.rich_style)
 

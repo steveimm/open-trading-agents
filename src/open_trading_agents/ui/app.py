@@ -179,7 +179,7 @@ class TradingApp(App[None]):
     .single-stage { border: round #34475e; margin: 0 1; }
     .prompt-column { width: 1fr; min-width: 18; height: 1fr; }
     .prompt-pane {
-        border: round #34475e; border-title-color: #a9bcd3; border-title-style: bold;
+        border: round #9c83c9; border-title-color: #bd9bfa; border-title-style: bold;
         padding: 0 1; height: 1fr; min-height: 3;
     }
     .prompt-pane:focus { border: round #bd9bfa; }
