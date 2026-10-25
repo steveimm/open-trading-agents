@@ -83,7 +83,7 @@ export default async function tradingTools(pi) {
   });
   pi.on("session_shutdown", () => { child.kill(); lines.close(); });
   process.once("exit", () => child.kill());
-  await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "open-trading-agents", version: "0.1.0" } });
+  await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "open-trading-agents", version: "0.2.0" } });
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const registered = new Set();
   let cursor;

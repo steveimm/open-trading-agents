@@ -44,7 +44,7 @@ class CodexSession(JsonProcess):
             args.extend(["-c", f"{key}={json.dumps(value)}"])
         await self.start_process(args, {"OTEL_SDK_DISABLED": "true"})
         await self.request({"method": "initialize", "params": {
-            "clientInfo": {"name": "open_trading_agents", "version": "0.1.0"},
+            "clientInfo": {"name": "open_trading_agents", "version": "0.2.0"},
             "capabilities": {"experimentalApi": True},
         }})
         await self.send({"method": "initialized"})

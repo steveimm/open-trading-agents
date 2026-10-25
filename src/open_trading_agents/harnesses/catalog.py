@@ -163,7 +163,7 @@ async def _codex_models(process: asyncio.subprocess.Process, provider: str | Non
     Returns:
         Native model selectors and display names from every catalog page.
     """
-    _, budget = await _rpc(process, 1, "initialize", {"clientInfo": {"name": "open_trading_agents", "version": "0.1.0"}}, _OUTPUT_LIMIT)
+    _, budget = await _rpc(process, 1, "initialize", {"clientInfo": {"name": "open_trading_agents", "version": "0.2.0"}}, _OUTPUT_LIMIT)
     assert process.stdin is not None
     process.stdin.write(b'{"method":"initialized"}\n')
     await process.stdin.drain()
