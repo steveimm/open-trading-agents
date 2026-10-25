@@ -47,6 +47,7 @@ _MENU_STYLE = questionary.Style([
     ("selected", "fg:#d9e2ef bg:#303547 bold"),
     ("highlighted", "bg:#303547 bold"),
     ("forward", "fg:#91d5ac bold"),
+    ("configure", "fg:#bd9bfa bold"),
     ("back", "fg:#e8b86d"),
     ("destructive", "fg:#f2858a"),
     ("enabled", "fg:#91d5ac"),
@@ -70,6 +71,8 @@ def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
         style = "class:forward"
     elif action in {"Back", "Cancel", "No"}:
         style = "class:back"
+    elif action == "Configure for this run":
+        style = "class:configure"
     elif action == "Remove" or action.startswith("Delete "):
         style = "class:destructive"
     if highlighted:
