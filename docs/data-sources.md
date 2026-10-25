@@ -6,9 +6,13 @@ Default data sources include Yahoo Finance for prices, indicators, profiles, and
 
 Analysts can also use `search_web` and `fetch_webpage`. Search uses the configured backend, with Yahoo as the default. Page retrieval extracts text, titles, links, and reported dates from static HTML. It does not run JavaScript or read PDFs.
 
-Agents use native harness tools to write and run scripts for calculations. The prompt asks them to batch related calculations where possible. Scripts use the harness's environment. Set `allow_execution = false` to disable them, or `web_research = false` to omit the additional search/page tools.
+Agents retain native harness tools for calculations. Analysts use them for derived figures, table parsing, or specific discrepancies. Debate and decision roles use the supplied reports by default, and calculate only a new scenario, position size, or material disputed value. Quoting an existing number does not require another check. Reflection uses the supplied measured outcome. Related calculations should be batched, and scripts use the harness's environment. Set `allow_execution = false` to disable them, or `web_research = false` to omit the additional search/page tools.
 
 Data-tool results include paths to exact evidence files in the agent's `data/` directory. CSV results with source-comment headers also get a clean CSV file for direct parsing. Agents can read these files from calculation scripts instead of transcribing tool output. The complete evidence remains in the tool response.
+
+After analysis, `evidence.json` in the run directory lists the exact tool-produced files available for optional downstream checks. Entries identify the agent, tool, format, and available indicator definitions, periods, units, or CSV columns. Scripts and native session logs are excluded. Agents are instructed to read relevant listed evidence without directory searches or executing another agent’s scripts. This is prompt guidance, alongside the harness’s existing permissions.
+
+Indicator results state their provider and calculation parameters. Yahoo’s `vwma` uses 14 daily trading observations of typical price `(High + Low + Close) / 3`, weighted by volume. The returned history window is separate from the calculation period. Agents must match periods, units, price bases, and methods before calling two values inconsistent.
 
 SEC financial statements use JSON records labelled by period and metric. Units are explicit, values retain their original precision, and missing observations are `null`. Quarter and year-to-date periods are identified separately.
 

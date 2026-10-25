@@ -1,5 +1,6 @@
 # Adapted from TauricResearch/TradingAgents (Apache-2.0).
 # Imports, typing, configuration and tool integration modified for Open Trading Agents.
+import json
 import logging
 
 from open_trading_agents.dataflows.errors import NoMarketDataError, VendorError
@@ -168,8 +169,19 @@ def get_indicator(
         if not ind_string:
             ind_string = "No data available for the specified date range.\n"
 
+        period = {"close_50_sma": 50, "close_200_sma": 200, "close_10_ema": 10,
+                  "boll": 20, "boll_ub": 20, "boll_lb": 20, "rsi": time_period, "atr": time_period}.get(indicator)
+        definition = {"provider": "Alpha Vantage", "interval": interval,
+                      "price_basis": "High, Low, previous Close" if indicator == "atr" else series_type,
+                      "period_observations": period} if period is not None else {
+                          "provider": "Alpha Vantage", "interval": interval, "price_basis": series_type,
+                          "periods": "Provider MACD defaults; fast, slow and signal periods were not overridden."}
         result_str = (
-            f"## {indicator.upper()} values from {before.strftime('%Y-%m-%d')} to {as_of_date}:\n\n"
+            f"""## {indicator.upper()} values from {before.strftime('%Y-%m-%d')} to {as_of_date}:
+Calculation parameters: {json.dumps(definition)}
+look_back_days selects the displayed history, not the calculation period. Do not assume another provider uses an identical implementation.
+
+"""
             + ind_string
             + "\n\n"
             + INDICATOR_DESCRIPTIONS.get(indicator, "No description available.")

@@ -16,6 +16,7 @@ from open_trading_agents.analysis.decisions import SCHEMAS, decision_error, deci
 from open_trading_agents.analysis.models import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.config import Portfolio, Settings, default_config_path, validate_date
+from open_trading_agents.dataflows.artifacts import write_evidence_index
 from open_trading_agents.dataflows.config import DATA_CREDENTIAL_KEYS, build_data_config
 from open_trading_agents.dataflows.files import locked, replace_file
 from open_trading_agents.dataflows.symbols import crypto_base, normalize_symbol, safe_ticker_component
@@ -569,7 +570,14 @@ class Workflow:
                     raise result
             self.outputs = {ROLES[key].name: self.outputs[ROLES[key].name] for key in selected}
             await self._event("stage_end", "analysis")
+
+            index = await asyncio.to_thread(write_evidence_index, self.directory / "evidence.json", self.ticker, self.trade_date,
+                                            {ROLES[key].name: self._workspace(ROLES[key].name) / "data" for key in selected})
+            handoff = (f"Optional evidence index: {index}. Consult it only for a targeted check that needs source data. Do not search other files."
+                       if index is not None else "No raw source artifacts were handed off. Use the supplied reports and state any verification limitation without searching for files.")
             evidence = "\n\n".join(f"## {name}\n\n{text}" for name, text in self.outputs.items())
+            evidence += f"\n\n{handoff}"
+
             research = await self._debate("research", ("bull", "bear"), self.settings.research_rounds, evidence)
             self.outputs["Research Debate"] = research
             plan = await self._decision("research_manager", f"Analyst reports:\n{evidence}\n\nResearch debate:\n{research}")
@@ -584,7 +592,7 @@ class Workflow:
 
                 memory = MemoryLog(self.settings.state_dir / "memory.sqlite")
                 lessons = memory.past_context(self.ticker, as_of=self.trade_date)
-            final = await self._decision("portfolio_manager", f"{portfolio}\n\nResearch plan:\n{plan}\n\nTrader proposal:\n{proposal}\n\nRisk debate:\n{risk}\n\nResolved prior lessons:\n{lessons or 'None available.'}")
+            final = await self._decision("portfolio_manager", f"{portfolio}\n\nResearch plan:\n{plan}\n\nTrader proposal:\n{proposal}\n\nRisk debate:\n{risk}\n\nResolved prior lessons:\n{lessons or 'None available.'}\n\n{handoff}")
             if self.settings.memory_enabled:
                 memory.record(self.ticker, self.trade_date, self.rating, final, self.run_id,
                               holding_days=self.settings.holding_period_days, benchmark=self.settings.benchmark_ticker)

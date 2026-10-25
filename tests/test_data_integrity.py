@@ -457,3 +457,44 @@ def test_http_failure_does_not_retain_secret_in_request_or_context(monkeypatch: 
         get_scrubbed("https://provider.invalid", params={}, timeout=1, secret="fixture-secret")
     assert "fixture-secret" not in str(error.value)
     assert error.value.request is None and error.value.response is None and error.value.__context__ is None
+
+
+def test_vwma_metadata_matches_the_actual_fourteen_observation_typical_price_calculation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent the recorded 14-versus-20-period false correction from recurring through ambiguous output.
+
+    Args:
+        monkeypatch: Offline OHLCV source replacement.
+    """
+    frame = pd.DataFrame({"Date": pd.bdate_range("2024-01-01", periods=30),
+                          "High": [100 + i * 1.3 for i in range(30)], "Low": [98 + i * 0.8 for i in range(30)],
+                          "Close": [99 + i for i in range(30)], "Volume": [100 + (i % 5) * 37 for i in range(30)]})
+    monkeypatch.setattr(market, "load_ohlcv", lambda *args: frame.copy())
+    date = frame["Date"].iloc[-1].strftime("%Y-%m-%d")
+    report = market.get_stock_stats_indicators_window("MSFT", "vwma", date, 3)
+    actual = float(next(line.split(": ", 1)[1] for line in report.splitlines() if line.startswith(date + ": ")))
+    sample = frame.tail(14)
+    typical = (sample.High + sample.Low + sample.Close) / 3
+    expected = (typical * sample.Volume).sum() / sample.Volume.sum()
+    alternative = (frame.Close.tail(20) * frame.Volume.tail(20)).sum() / frame.Volume.tail(20).sum()
+
+    assert actual == pytest.approx(expected)
+    assert actual != pytest.approx(alternative)
+    assert "14 observations" in report and "(High+Low+Close)/3" in report
+    assert "not the indicator's calculation window" in report
+
+
+def test_alpha_indicator_metadata_reports_its_requested_period_without_yahoo_assumptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Describe the actual fallback-provider request, including custom periods.
+
+    Args:
+        monkeypatch: Offline Alpha Vantage request replacement.
+    """
+    from open_trading_agents.dataflows.vendors.alpha_vantage import indicator
+
+    request = Mock(return_value="time,RSI\n2024-03-15,52.5\n")
+    monkeypatch.setattr(indicator, "_make_api_request", request)
+    report = indicator.get_indicator("MSFT", "rsi", "2024-03-15", 5, time_period=21)
+    metadata = json.loads(next(line.removeprefix("Calculation parameters: ") for line in report.splitlines() if line.startswith("Calculation parameters:")))
+    assert request.call_args.args[1]["time_period"] == "21"
+    assert metadata["period_observations"] == 21 and metadata["price_basis"] == "close"
+    assert metadata["provider"] == "Alpha Vantage"

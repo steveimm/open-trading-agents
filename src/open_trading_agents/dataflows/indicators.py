@@ -13,6 +13,23 @@ INDICATOR_DESCRIPTIONS: dict[str, str] = {
     "boll_ub": "Bollinger Upper Band: Typically 2 standard deviations above the middle line. Usage: Signals potential overbought conditions and breakout zones. Tips: Confirm signals with other tools; prices may ride the band in strong trends.",
     "boll_lb": "Bollinger Lower Band: Typically 2 standard deviations below the middle line. Usage: Indicates potential oversold conditions. Tips: Use additional analysis to avoid false reversal signals.",
     "atr": "ATR: Averages true range to measure volatility. Usage: Set stop-loss levels and adjust position sizes based on current market volatility. Tips: It's a reactive measure, so use it as part of a broader risk management strategy.",
-    "vwma": "VWMA: A moving average weighted by volume. Usage: Confirm trends by integrating price action with volume data. Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses.",
+    "vwma": "VWMA: A moving average weighted by volume. Match the returned calculation window and price basis before comparing values. Usage: Confirm trends by integrating price action with volume data. Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses.",
     "mfi": "MFI: The Money Flow Index is a momentum indicator that uses both price and volume to measure buying and selling pressure. Usage: Identify overbought (>80) or oversold (<20) conditions and confirm the strength of trends or reversals. Tips: Use alongside RSI or MACD to confirm signals; divergence between price and MFI can indicate potential reversals.",
+}
+
+
+YAHOO_INDICATOR_DEFINITIONS = {
+    "close_50_sma": "50-observation simple moving average of Close.",
+    "close_200_sma": "200-observation simple moving average of Close.",
+    "close_10_ema": "10-observation exponential moving average of Close, stockstats implementation.",
+    "macd": "Close-based MACD with fast=12 and slow=26, stockstats implementation.",
+    "macds": "9-observation EMA signal of Close-based MACD(12,26), stockstats implementation.",
+    "macdh": "MACD(12,26) minus its 9-observation EMA signal, stockstats implementation.",
+    "rsi": "14-observation RSI of Close, stockstats smoothed gains/losses implementation.",
+    "boll": "20-observation simple moving average of Close, the Bollinger middle band.",
+    "boll_ub": "20-observation Close mean plus 2 rolling standard deviations, stockstats implementation.",
+    "boll_lb": "20-observation Close mean minus 2 rolling standard deviations, stockstats implementation.",
+    "atr": "14-observation smoothed true range using High, Low and previous Close, stockstats implementation.",
+    "vwma": "14-observation volume-weighted moving average of typical price, where typical price=(High+Low+Close)/3. Formula: sum(typical_price*Volume)/sum(Volume) over the last 14 observations. This is not a 20-observation or Close-only VWMA.",
+    "mfi": "14-observation money flow index using typical price=(High+Low+Close)/3 and Volume, stockstats implementation.",
 }

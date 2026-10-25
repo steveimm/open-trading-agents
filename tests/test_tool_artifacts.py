@@ -98,3 +98,44 @@ async def test_actual_mcp_server_saves_evidence_in_the_supplied_workspace(tmp_pa
 
     artifact, = directory.iterdir()
     assert str(artifact) in output and "withheld" in artifact.read_text().lower()
+
+
+def test_evidence_index_labels_sources_and_excludes_scripts_logs_and_symlinks(tmp_path: Path) -> None:
+    """Hand off exact data artifacts with enough metadata to avoid filesystem discovery.
+
+    Args:
+        tmp_path: Isolated analyst and downstream directories.
+    """
+    from open_trading_agents.dataflows.artifacts import write_evidence_index
+
+    market = tmp_path / "Market_Analyst" / "data"
+    fundamentals = tmp_path / "Fundamentals_Analyst" / "data"
+    save_tool_data(market, "get_stock_data", "Date,High,Low,Close,Volume\n2024-03-15,12,10,11,100\n")
+    save_tool_data(market, "get_indicators", "## vwma values from 2024-03-01 to 2024-03-15:\nCalculation: 14-observation typical-price VWMA.\n2024-03-15: 11.5\n")
+    save_tool_data(fundamentals, "get_cashflow", json.dumps({"source": "SEC EDGAR", "frequency": "annual", "filing_cutoff": "2024-03-15",
+                                                           "units": {"Operating Cash Flow": "USD"}, "periods": [{"values": {"Operating Cash Flow": 123}}]}))
+    (market / "verify.py").write_text("raise RuntimeError('do not execute')")
+    (market / "transcript.jsonl").write_text("private reasoning")
+    outside = tmp_path / "unrelated.json"
+    outside.write_text('{"secret": "not evidence"}')
+    (market / ("get_stock_data-" + "a" * 32 + ".json")).symlink_to(outside)
+    before = {path: path.read_bytes() for path in (*market.iterdir(), *fundamentals.iterdir())}
+
+    index = write_evidence_index(tmp_path / "evidence.json", "NVDA", "2024-03-15", {"Market Analyst": market, "Fundamentals Analyst": fundamentals})
+    document = json.loads(index.read_text())
+    assert document["ticker"] == "NVDA" and document["analysis_date"] == "2024-03-15"
+    assert len(document["files"]) == 3
+    rows = {row["tool"]: row for row in document["files"]}
+    assert rows["get_indicators"]["indicator"] == "vwma"
+    assert rows["get_indicators"]["history_end"] == "2024-03-15"
+    assert "14-observation" in rows["get_indicators"]["calculation"]
+    assert rows["get_stock_data"]["columns"] == ["Date", "High", "Low", "Close", "Volume"]
+    assert rows["get_cashflow"]["frequency"] == "annual"
+    assert rows["get_cashflow"]["units"] == {"Operating Cash Flow": "USD"}
+    assert "periods" not in rows["get_cashflow"]
+    assert all(Path(row["path"]).is_absolute() for row in rows.values())
+    assert {path: path.read_bytes() for path in before} == before
+    original = index.read_bytes()
+    write_evidence_index(index, "NVDA", "2024-03-15", {"Market Analyst": market, "Fundamentals Analyst": fundamentals})
+    assert index.read_bytes() == original
+    assert write_evidence_index(tmp_path / "absent.json", "NVDA", "2024-03-15", {"Missing": tmp_path / "missing"}) is None

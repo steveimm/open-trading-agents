@@ -146,7 +146,7 @@ The MCP entry point is now `python -m open_trading_agents.dataflows.tools` after
 
 Native file/script tools are supplied by the harness, not reimplemented by the application. Pi exposes `read`, `write`, `edit`, and `bash`; Claude exposes its native Read/Write/Edit/Bash tools; Codex supplies native execution subject to its configured workspace permissions.
 
-The rewrite temporarily added a dedicated `calculate` tool as a bounded arithmetic fallback. It was later removed at the user's request. The final code has no calculator registration or implementation. Prompts now ask agents to write and execute scripts, batch related calculations where possible, and state unverified numerical claims if execution is unavailable.
+The rewrite temporarily added a dedicated `calculate` tool as a bounded arithmetic fallback. It was later removed at the user's request. The final code has no calculator registration or implementation. Prompts make script use selective. Analysts derive new numerical results, while debate and decision roles calculate new scenarios or resolve specific material discrepancies rather than auditing all prior reports. A run-local evidence index supplies exact source paths and metadata for those checks. Scripts remain available through the native harness, and unavailable verification is stated explicitly.
 
 The earlier prompt hint directing agents to the application's virtualenv Python was also removed. The application's interpreter still starts its own MCP server, while an agent's script interpreter is selected through the native shell environment.
 

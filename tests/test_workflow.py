@@ -398,3 +398,33 @@ async def test_debate_reconstructs_completed_public_output_when_stream_events_we
     assert outputs[0].text == "The saved final bull argument"
     assert outputs[0].timestamp == finished_at
     assert outputs[0].data["conversation_turn_id"] == "research:1:bull"
+
+
+async def test_downstream_roles_receive_an_exact_source_index_only_on_their_initial_turn(tmp_path: Path) -> None:
+    """Make analyst evidence accessible without replaying it in later debate turns or sharing scripts.
+
+    Args:
+        tmp_path: Isolated run and native workspaces.
+    """
+    from open_trading_agents.dataflows.artifacts import save_tool_data
+
+    calls = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> FakeHarness:
+        """Produce a tool artifact from the analyst while keeping its report independent of file paths."""
+        if spec.agent == "Market Analyst":
+            await asyncio.to_thread(save_tool_data, spec.workspace / "data", "get_stock_data", "Date,Close\n2024-03-15,123.45\n")
+        return FakeHarness(spec, emit, calls, [])
+
+    workflow = Workflow("NVDA", "2024-03-15", Settings(state_dir=tmp_path, analysts=("market",), research_rounds=2, risk_rounds=2,
+                                                       memory_enabled=False), session_factory=factory)
+    await workflow.run()
+    index = workflow.directory / "evidence.json"
+    source = json.loads(await asyncio.to_thread(index.read_text))["files"]
+    assert len(source) == 1 and source[0]["agent"] == "Market Analyst"
+    roles = ("Bull Researcher", "Bear Researcher", "Research Manager", "Trader", "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager")
+    for role in roles:
+        prompts = [prompt for agent, prompt in calls if agent == role]
+        assert prompts[0].count(str(index)) == 1
+        assert all(str(index) not in prompt for prompt in prompts[1:])
+    assert all(str(index) not in prompt for agent, prompt in calls if agent == "Market Analyst")

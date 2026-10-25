@@ -10,7 +10,7 @@ from dateutil.relativedelta import relativedelta
 from stockstats import wrap
 
 from open_trading_agents.dataflows.errors import NoMarketDataError, VendorError
-from open_trading_agents.dataflows.indicators import INDICATOR_DESCRIPTIONS
+from open_trading_agents.dataflows.indicators import INDICATOR_DESCRIPTIONS, YAHOO_INDICATOR_DEFINITIONS
 from open_trading_agents.dataflows.symbols import normalize_symbol
 from open_trading_agents.dataflows.vendors.yahoo.common import raise_for_empty, yf_retry
 from open_trading_agents.dataflows.vendors.yahoo.ohlcv import _assert_ohlcv_not_stale, load_ohlcv
@@ -106,7 +106,12 @@ def get_stock_stats_indicators_window(
             as_of_dt = as_of_dt - relativedelta(days=1)
 
     result_str = (
-        f"## {indicator} values from {before.strftime('%Y-%m-%d')} to {end_date}:\n\n"
+        f"""## {indicator} values from {before.strftime('%Y-%m-%d')} to {end_date}:
+Provider: Yahoo Finance OHLCV; calculation library: stockstats.
+Calculation: {YAHOO_INDICATOR_DEFINITIONS[indicator]}
+Periods count daily trading observations. look_back_days selects the displayed history, not the indicator's calculation window.
+
+"""
         + ind_string
         + "\n\n"
         + INDICATOR_DESCRIPTIONS.get(indicator, "No description available.")
