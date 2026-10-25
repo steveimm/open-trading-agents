@@ -433,12 +433,12 @@ def configure_agents(
         raise typer.Exit(1) from exc
 
 
-@configure_app.command("data", help="Configure data-source API keys and SEC contact identity.")
+@configure_app.command("data", help="Choose data sources and configure API keys and SEC contact identity.")
 def configure_data(
     ctx: typer.Context,
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
 ) -> None:
-    """Edit data credentials stored in the selected TOML configuration.
+    """Edit data sources and credentials stored in the selected TOML configuration.
 
     Args:
         ctx: Command context carrying an optional parent configuration path.

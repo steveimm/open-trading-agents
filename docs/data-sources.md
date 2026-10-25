@@ -20,7 +20,9 @@ Open the data-source editor with:
 uv run open-trading-agents configure data
 ```
 
-Select FRED, Alpha Vantage, or SEC EDGAR to edit its setting, then choose **Save** at the bottom. API keys appear as `****abcde`, showing only their last five characters. Short keys remain fully masked. Blank input keeps the existing value. **Remove** clears it. Ctrl+C discards unsaved changes.
+Select FRED, Alpha Vantage, or SEC EDGAR to edit its credential. Open **Source selection** to choose providers for prices, technical indicators, fundamentals, or news and insider data. Arrows show fallback order, for example **Alpha Vantage → Yahoo Finance**. Then choose **Back** and **Save** at the bottom. API keys appear as `****abcde`, showing only their last five characters. Short keys remain fully masked. Blank input keeps the existing value. **Remove** clears it. Ctrl+C discards unsaved changes.
+
+To enable Alpha Vantage, enter its API key and select it for the categories you want to use. Selecting a category replaces any individual tool overrides in that category. Other categories and settings are preserved.
 
 These settings live in `~/.open-trading-agents/config.toml`:
 
@@ -45,7 +47,7 @@ The application no longer reads `.env` or the former data-source environment var
 
 Run `uv run open-trading-agents doctor` to see which data credentials are configured or missing. It checks local setup without displaying keys or making provider requests.
 
-Set category defaults or individual tool overrides in `config.toml`:
+The wizard saves category selections in `[data.data_vendors]`. You can also edit custom fallback chains or individual tool overrides in `config.toml`:
 
 ```toml
 [data]

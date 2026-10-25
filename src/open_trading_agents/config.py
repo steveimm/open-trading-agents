@@ -477,12 +477,20 @@ def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) 
             temporary.unlink(missing_ok=True)
 
 
-def save_data_configuration(path: Path, values: Mapping[str, str]) -> Path:
-    """Update data credentials without replacing unrelated configuration or comments.
+def save_data_configuration(
+    path: Path,
+    values: Mapping[str, str],
+    *,
+    data_vendors: Mapping[str, str] | None = None,
+    tool_vendors: Mapping[str, str] | None = None,
+) -> Path:
+    """Update data access and source selections while retaining unrelated settings and comments.
 
     Args:
         path: Destination application configuration.
         values: Supported credential fields, with blank values requesting removal.
+        data_vendors: Category selections to merge into the existing source table.
+        tool_vendors: Complete individual-tool overrides, or None to leave them unchanged.
 
     Returns:
         The absolute path of the atomically saved configuration.
@@ -495,6 +503,10 @@ def save_data_configuration(path: Path, values: Mapping[str, str]) -> Path:
     if any(not isinstance(value, str) for value in values.values()):
         raise ValueError("Data credential fields must be strings.")
 
+    for selections in (data_vendors, tool_vendors):
+        if selections is not None and any(not isinstance(key, str) or not isinstance(value, str) for key, value in selections.items()):
+            raise ValueError("Data source selections must be strings.")
+
     path = path.expanduser().resolve()
     document = _configuration_document(path)
     if "data" not in document:
@@ -504,6 +516,21 @@ def save_data_configuration(path: Path, values: Mapping[str, str]) -> Path:
             document["data"][key] = cleaned
         else:
             document["data"].pop(key, None)
+
+    for name, selections in (("data_vendors", data_vendors), ("tool_vendors", tool_vendors)):
+        if selections is None:
+            continue
+        if name not in document["data"]:
+            if not selections:
+                continue
+            document["data"][name] = tomlkit.table()
+        table = document["data"][name]
+        if name == "tool_vendors":
+            for key in list(table):
+                if key not in selections:
+                    del table[key]
+        table.update(selections)
+
     _write_document(path, document)
 
     return path

@@ -23,8 +23,18 @@ from open_trading_agents.config import (
     set_default_preset,
     validate_date,
 )
-from open_trading_agents.dataflows.config import read_data_credentials
+from open_trading_agents.dataflows.config import build_data_config, read_data_credentials
+from open_trading_agents.dataflows.router import TOOLS_CATEGORIES
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
+
+_SOURCE_CATEGORIES = (
+    ("core_stock_apis", "Prices"),
+    ("technical_indicators", "Technical indicators"),
+    ("fundamental_data", "Fundamentals and financial statements"),
+    ("news_data", "News and insider data"),
+)
+_SOURCE_NAMES = {"yfinance": "Yahoo Finance", "alpha_vantage": "Alpha Vantage", "sec_edgar": "SEC EDGAR"}
+
 
 _MENU_STYLE = questionary.Style([
     ("selected", "noinherit noreverse"),
@@ -163,8 +173,56 @@ def _api_key_prompt(label: str) -> str:
     return value
 
 
+def _source_label(chain: str) -> str:
+    """Describe a configured source chain in request order.
+
+    Args:
+        chain: Comma-separated source identifiers.
+
+    Returns:
+        Source names separated by fallback arrows.
+    """
+    return " → ".join(_SOURCE_NAMES.get(source.strip(), source.strip()) for source in chain.split(","))
+
+
+def _configure_sources(vendors: dict[str, str], overrides: dict[str, str]) -> None:
+    """Edit category sources in memory and remove overrides only for explicitly selected categories.
+
+    Args:
+        vendors: Effective category selections, updated in place.
+        overrides: Individual tool selections, updated in place.
+    """
+    cursor = 0
+    while True:
+        labels = []
+        for category, title in _SOURCE_CATEGORIES:
+            suffix = " (individual overrides)" if any(tool in overrides for tool in TOOLS_CATEGORIES[category]["tools"]) else ""
+            labels.append(f"{title} · {_source_label(vendors[category])}{suffix}")
+        cursor = _choose("Source selection", [*labels, "Back"], cursor)
+        if cursor == len(_SOURCE_CATEGORIES):
+            return
+
+        category, title = _SOURCE_CATEGORIES[cursor]
+        chains = ["yfinance", "alpha_vantage", "alpha_vantage,yfinance", "yfinance,alpha_vantage"]
+        if category == "fundamental_data":
+            chains = ["sec_edgar,yfinance", "sec_edgar,alpha_vantage", *chains, "alpha_vantage,sec_edgar,yfinance"]
+        current = vendors[category]
+        if current not in chains:
+            chains.append(current)
+        tools = TOOLS_CATEGORIES[category]["tools"]
+        if any(tool in overrides for tool in tools):
+            typer.echo("Selecting a source replaces individual tool overrides in this category.")
+        options = [*map(_source_label, chains), "Back"]
+        selected = _choose(title, options, chains.index(current))
+        if selected == len(chains):
+            continue
+        vendors[category] = chains[selected]
+        for tool in tools:
+            overrides.pop(tool, None)
+
+
 def configure_data_interactively(path: Path) -> None:
-    """Edit optional data-source credentials and save all changes together.
+    """Edit data-source credentials and provider selections, then save changes together.
 
     Args:
         path: Application configuration file to create or update.
@@ -181,6 +239,10 @@ def configure_data_interactively(path: Path) -> None:
          "SEC EDGAR provides company filings. Enter your name or organization and contact email, for example: Research Team research@example.com."),
     )
     values = read_data_credentials(path).copy()
+    settings = load_settings(path) if path.exists() else Settings()
+    data = build_data_config(settings.data)
+    vendors, overrides = data["data_vendors"], data["tool_vendors"]
+    original_vendors = vendors.copy()
     cursor = 0
     typer.echo("Leave a value blank to keep it. Ctrl+C cancels without saving.")
 
@@ -190,9 +252,13 @@ def configure_data_interactively(path: Path) -> None:
             value = values.get(key, "")
             status = _key_preview(value) if secret and value else "Set" if value else "Not set"
             labels.append(f"{label} · {status}")
-        cursor = _choose("Data sources", [*labels, "Save"], cursor)
+        cursor = _choose("Data sources", [*labels, "Source selection", "Save"], cursor)
         if cursor == len(fields):
-            target = save_data_configuration(path, values)
+            _configure_sources(vendors, overrides)
+            continue
+        if cursor == len(fields) + 1:
+            changes = {key: value for key, value in vendors.items() if value != original_vendors[key]}
+            target = save_data_configuration(path, values, data_vendors=changes, tool_vendors=overrides)
             typer.echo(f"Saved data sources: {target}")
             return
 

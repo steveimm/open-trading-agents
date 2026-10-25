@@ -111,7 +111,7 @@ def test_data_editor_masks_keys_and_saves_all_fields_without_agent_setup(
         configuration_path: Isolated destination with no saved presets.
         monkeypatch: Scoped input adapters.
     """
-    shown = select_menus(monkeypatch, configuration_path, [0, 1, 2, 3])
+    shown = select_menus(monkeypatch, configuration_path, [0, 1, 2, 4])
     prompts = record_prompts(monkeypatch)
     keys = iter(["fred-private-key", "alpha-private-key"])
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: next(keys))
@@ -158,7 +158,7 @@ web_search_backend = "yahoo"
 [data.data_vendors]
 news_data = "yfinance"
 ''')
-    shown = select_menus(monkeypatch, configuration_path, [0, 0, 1, 0, 2, 2, 2, 1, 3])
+    shown = select_menus(monkeypatch, configuration_path, [0, 0, 1, 0, 2, 2, 2, 1, 4])
     keys = iter(["", "replacement-alpha-key"])
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: next(keys))
     result = runner.invoke(application, [str(configuration_path)])
@@ -306,3 +306,72 @@ def test_api_key_input_blank_and_cancel_do_not_reveal_or_prefill_existing_values
         keyboard.send_text("\x03")
         with pytest.raises(typer.Abort):
             configuration_ui._api_key_prompt("API key")
+
+
+@pytest.mark.parametrize("save", [True, False])
+def test_source_selection_applies_fallbacks_and_replaces_only_related_overrides(
+    configuration_path: Path, monkeypatch: pytest.MonkeyPatch, save: bool,
+) -> None:
+    """Save a usable Alpha Vantage chain with its key, or discard the whole edit on cancellation.
+
+    Args:
+        configuration_path: Isolated settings file with per-tool overrides.
+        monkeypatch: Menu, key-entry, and vendor replacements.
+        save: Whether to save or interrupt after staging source selections.
+    """
+    from open_trading_agents.config import load_settings
+    from open_trading_agents.dataflows import router
+    from open_trading_agents.dataflows.config import run_config
+    from open_trading_agents.dataflows.errors import VendorUnavailableError
+    from open_trading_agents.diagnostics import _selected_vendors
+
+    configuration_path.parent.mkdir()
+    configuration_path.write_text('''# Keep this preference
+output_language = "Korean"
+[data]
+web_search_backend = "yahoo"
+[data.tool_vendors]
+get_news = "yfinance"
+get_indicators = "yfinance"
+''')
+    original = configuration_path.read_bytes()
+    answers = [1, 3, 3, 2, 4] + ([4] if save else [])
+    shown = select_menus(monkeypatch, configuration_path, answers)
+    monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: "private-alpha-value")
+    result = runner.invoke(application, [str(configuration_path)])
+
+    assert "private-alpha-value" not in result.output + str(shown)
+    if not save:
+        assert result.exit_code != 0
+        assert configuration_path.read_bytes() == original
+        return
+
+    assert result.exit_code == 0, result.output
+    saved = tomllib.loads(configuration_path.read_text())
+    assert saved["data"]["alpha_vantage_api_key"] == "private-alpha-value"
+    assert saved["data"]["data_vendors"] == {"news_data": "alpha_vantage,yfinance"}
+    assert saved["data"]["tool_vendors"] == {"get_indicators": "yfinance"}
+    assert saved["data"]["web_search_backend"] == "yahoo"
+    assert saved["output_language"] == "Korean"
+    assert "# Keep this preference" in configuration_path.read_text()
+    assert "individual tool overrides" in result.output
+    assert any("News and insider data · Alpha Vantage → Yahoo Finance" in choices for _, choices in shown)
+    settings = load_settings(configuration_path)
+    assert "alpha_vantage" in _selected_vendors(settings)
+
+    calls = []
+
+    def unavailable(*args: Any) -> str:
+        """Simulate an unavailable first choice to exercise the saved fallback order."""
+        calls.append("alpha_vantage")
+        raise VendorUnavailableError("fixture unavailable")
+
+    def fallback(*args: Any) -> str:
+        """Return evidence from the explicitly selected second source."""
+        calls.append("yfinance")
+        return "fixture news"
+
+    monkeypatch.setitem(router.VENDOR_METHODS, "get_news", {"alpha_vantage": unavailable, "yfinance": fallback})
+    with run_config(settings.data):
+        assert router.route_to_vendor("get_news", "NVDA", "2024-01-01", "2024-01-02") == "fixture news"
+    assert calls == ["alpha_vantage", "yfinance"]
