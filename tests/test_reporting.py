@@ -1,5 +1,8 @@
 import json
+import re
+from base64 import b64encode
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 
 from open_trading_agents.analysis.models import AgentEvent
@@ -78,6 +81,12 @@ def test_html_export_keeps_model_markup_inert(tmp_path: Path) -> None:
     assert "&lt;script&gt;model()&lt;/script&gt;" in page
     assert "&lt;img" in page
     assert "default-src 'none'" in page
+    scripts = re.findall(r"<script\b[^>]*>(.*?)</script>", page, re.DOTALL)
+    assert len(scripts) == 1
+    assert "alert(1)" not in scripts[0] and "model()" not in scripts[0]
+    digest = b64encode(sha256(scripts[0].encode()).digest()).decode()
+    assert f"script-src 'sha256-{digest}'" in page
+    assert "script-src 'unsafe-inline'" not in page
 
 
 def test_debate_reports_keep_recorded_turns_in_order_without_parsing_agent_text(tmp_path: Path) -> None:
@@ -147,6 +156,8 @@ def test_html_report_preserves_team_hierarchy_and_links_complete_sections(tmp_pa
     assert '<h5>Executive summary</h5>' in page
     assert '<div class="table"><table>' in page
     assert '<nav class="contents" aria-label="Sections">' in page
+    assert 'aria-controls="report-contents"' in page
+    assert '<ul id="report-contents">' in page
     assert 'href="#s1-1"' in page
     assert 'href="#s2-1"' in page
     assert '<h3 id="s2-1">Portfolio Manager</h3>' in page

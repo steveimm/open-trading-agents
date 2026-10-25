@@ -38,6 +38,8 @@ uv run open-trading-agents resume ~/.open-trading-agents/runs/RUN_ID --headless
 
 For a custom output directory, pass its run folder instead, for example `resume ./research/RUN_ID`. Resume retains completed steps, original inputs, native sessions, and the same output location. Only one process can drive the same saved run at a time. Pressing `q` stops an active run but retains its progress and files.
 
+HTML reports keep the table of contents visible beside the report on wide screens and highlight the current section as you scroll. On narrow screens, use **Contents** to open or close it. Reports remain self-contained and work offline.
+
 ## Reading the interface
 
 Running stage tabs and agent turns show an animated loading indicator that disappears when they finish. Debate prompts occupy the left column, with the conversation on the right. Left/Right selects a debate pane, Up/Down scrolls it, and `f` toggles fullscreen. System prompts are available before the agents' turns begin.

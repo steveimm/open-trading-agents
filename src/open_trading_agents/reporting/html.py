@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from base64 import b64encode
+from hashlib import sha256
 from html import escape
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +17,7 @@ _TONE = {"Buy": "up", "Overweight": "up", "Hold": "level", "Underweight": "down"
 _CSS = """
 :root {
   --paper: #fbfbfa; --ink: #1c2126; --muted: #5d6670; --rule: #e2e5e8; --wash: #f2f4f5;
-  --accent: #087a59; --up: #087a59; --down: #b4372f; --level: #5d6670; --edge: #d3d8dc; --mark: #878f97;
+  --accent: #087a59; --up: #087a59; --down: #b4372f; --level: #5d6670; --edge: #d3d8dc;
   --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light dark;
@@ -23,7 +25,7 @@ _CSS = """
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #131a1f; --ink: #e4e8eb; --muted: #9aa6af; --rule: #263239; --wash: #1a242a;
-    --accent: #14c290; --up: #14c290; --down: #ef6f63; --level: #9aa6af; --edge: #3d4c55; --mark: #66737c;
+    --accent: #14c290; --up: #14c290; --down: #ef6f63; --level: #9aa6af; --edge: #3d4c55;
   }
 }
 * { box-sizing: border-box; }
@@ -53,35 +55,35 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .contents > ul > li { margin: 0 0 0.75rem; }
 .contents ul ul { margin-top: 0.2rem; padding-left: 1.6rem; font-size: 0.85rem; }
 .contents ul ul li { margin: 0.1rem 0; }
-.contents a { display: flex; align-items: center; gap: 0.6rem; color: var(--muted); text-decoration: none; }
+.contents a { display: flex; align-items: baseline; gap: 0.6rem; color: var(--muted); text-decoration: none;
+  padding: 0.2rem 0.4rem; border-left: 2px solid transparent; border-radius: 3px; }
+.contents .label { min-width: 0; }
+.contents a[aria-current="location"] { color: var(--accent); background: var(--wash); border-left-color: var(--accent); }
+.contents li.active-section > a, .contents li.active-section > a .num { color: var(--accent); font-weight: 600; }
+.contents-toggle { display: none; padding: 0.5rem 0.8rem; border: 1px solid var(--edge); border-radius: 4px;
+  background: var(--paper); color: var(--accent); font: 600 0.9rem/1.4 var(--sans); cursor: pointer; }
+.contents-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.js .contents-toggle { display: block; }
+.js .contents > ul { display: none; margin-top: 0.75rem; }
+.js .contents.is-open > ul { display: block; }
 .contents > ul > li > a { color: var(--ink); }
-.contents .num { min-width: 1.6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-.contents .bar { display: none; }
+.contents .num { flex: none; min-width: 1.6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .contents a:hover .label, .contents a:focus-visible .label { color: var(--accent); text-decoration: underline; }
 .to-top { position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom));
   padding: 0.25rem 0.6rem; border: 1px solid var(--edge); border-radius: 4px; background: var(--paper);
   color: var(--muted); font: 0.8rem/1.4 var(--sans); text-decoration: none; }
-@media (min-width: 60rem) {
+@media (min-width: 72rem) {
+  .page { margin-left: max(21rem, calc((100% - 46rem) / 2)); margin-right: auto; }
   .contents { position: fixed; left: 1rem; top: 50%; transform: translateY(-50%); z-index: 1;
-    max-height: 86vh; overflow-y: auto; overscroll-behavior: contain; margin: 0;
-    padding: 0.7rem 0.9rem; border: 1px solid transparent; border-radius: 6px;
-    transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
-  .contents > ul > li { margin: 0 0 0.35rem; }
-  .contents ul ul { margin-top: 0; padding-left: 0; }
-  .contents ul ul li { margin: 0; }
+    width: 18rem; max-height: 86vh; overflow-y: auto; overscroll-behavior: contain; margin: 0;
+    padding: 0.7rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+  .contents > ul > li { margin: 0 0 0.6rem; }
+  .contents ul ul { padding-left: 1rem; }
   .contents a { min-height: 1.5rem; }
   .contents .num { min-width: 1.4rem; }
-  .contents .bar { display: block; flex: none; width: 1.25rem; height: 2px; margin-left: 0.2rem;
-    border-radius: 1px; background: var(--mark); }
-  .contents .label { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
-    transition: opacity 0.15s, max-width 0.2s; }
-  .contents:hover, .contents:focus-within { background: var(--paper); border-color: var(--rule);
-    box-shadow: 0 6px 24px rgb(0 0 0 / 0.08); }
-  .contents:hover .label, .contents:focus-within .label { max-width: 22rem; opacity: 1; }
-  .contents a:hover .bar, .contents a:focus-visible .bar { background: var(--accent); }
-  .to-top { display: none; }
+  .js .contents > ul { display: block; margin-top: 0; }
+  .js .contents-toggle, .to-top { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .contents, .contents .label { transition: none; } }
 .credit { margin-top: 4.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
   color: var(--muted); font: 0.8rem/1.4 var(--sans); }
 main { overflow-wrap: anywhere; }
@@ -119,7 +121,7 @@ tbody tr:last-child td { border-bottom: 0; }
     --edge: #bbb; --up: #087a59; --down: #b4372f; --level: #444; }
   body { font-size: 11pt; }
   .table { overflow: visible; }
-  .page { max-width: none; padding: 0; }
+  .page { max-width: none; margin: 0; padding: 0; }
   .contents, .to-top { display: none; }
   main h2 { break-before: page; border-top: 0; margin-top: 0; }
   main section:first-child h2 { break-before: auto; }
@@ -128,6 +130,75 @@ tbody tr:last-child td { border-bottom: 0; }
   table { break-inside: avoid; }
 }
 """
+
+
+_SCRIPT = """
+(() => {
+  const contents = document.querySelector('.contents');
+  const toggle = contents.querySelector('.contents-toggle');
+  const desktop = window.matchMedia('(min-width: 72rem)');
+  const entries = Array.from(contents.querySelectorAll('a[href^="#"]'), link => {
+    const target = document.getElementById(link.hash.slice(1));
+    return {link, heading: target.matches('section') ? target.querySelector('h2') : target};
+  });
+  let current = null;
+  let scheduled = false;
+
+  function update() {
+    scheduled = false;
+    toggle.setAttribute('aria-expanded', String(desktop.matches || contents.classList.contains('is-open')));
+    let active = entries[0];
+    for (const entry of entries) {
+      if (entry.heading.getBoundingClientRect().top > 32) break;
+      active = entry;
+    }
+    if (window.scrollY > 0 && window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) {
+      active = entries[entries.length - 1];
+    }
+    if (!active) return;
+    if (active !== current) {
+      if (current) {
+        current.link.removeAttribute('aria-current');
+        current.link.closest('.contents > ul > li').classList.remove('active-section');
+      }
+      current = active;
+      active.link.setAttribute('aria-current', 'location');
+      active.link.closest('.contents > ul > li').classList.add('active-section');
+    }
+    if (desktop.matches) {
+      const item = active.link.getBoundingClientRect();
+      const viewport = contents.getBoundingClientRect();
+      if (item.top < viewport.top) contents.scrollTop += item.top - viewport.top - 8;
+      else if (item.bottom > viewport.bottom) contents.scrollTop += item.bottom - viewport.bottom + 8;
+    }
+  }
+
+  function scheduleUpdate() {
+    if (!scheduled) {
+      scheduled = true;
+      window.requestAnimationFrame(update);
+    }
+  }
+
+  toggle.addEventListener('click', () => {
+    contents.classList.toggle('is-open');
+    scheduleUpdate();
+  });
+  contents.addEventListener('click', event => {
+    if (!desktop.matches && event.target.closest('a')) {
+      contents.classList.remove('is-open');
+      scheduleUpdate();
+    }
+  });
+  window.addEventListener('scroll', scheduleUpdate, {passive: true});
+  window.addEventListener('resize', scheduleUpdate);
+  window.addEventListener('hashchange', scheduleUpdate);
+  window.addEventListener('load', scheduleUpdate);
+  document.documentElement.classList.add('js');
+  update();
+})();
+"""
+_SCRIPT_HASH = b64encode(sha256(_SCRIPT.encode()).digest()).decode()
 
 
 def _table_wrapper(renderer: RendererHTML, tokens: list[Token], index: int, options: dict[str, Any], env: dict[str, Any]) -> str:
@@ -174,7 +245,7 @@ def render_report(ticker: str, trade_date: str, rating: str, details: list[tuple
         parts: Ordered sections and their complete agent outputs.
 
     Returns:
-        A standalone HTML page with no scripts or remotely loaded assets.
+        A standalone HTML page with local navigation and no remotely loaded assets.
     """
     markdown = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
     markdown.add_render_rule("table_open", _table_wrapper)
@@ -183,7 +254,7 @@ def render_report(ticker: str, trade_date: str, rating: str, details: list[tuple
     contents, body = [], []
     for section_index, (heading, _folder, entries) in enumerate(parts, 1):
         agent_links = "".join(
-            f'<li><a href="#s{section_index}-{index}"><span class="bar" aria-hidden="true"></span><span class="label">{escape(name)}</span></a></li>'
+            f'<li><a href="#s{section_index}-{index}"><span class="label">{escape(name)}</span></a></li>'
             for index, (name, _filename, _text) in enumerate(entries, 1)
         )
         numeral, separator, name = heading.partition(". ")
@@ -202,7 +273,7 @@ def render_report(ticker: str, trade_date: str, rating: str, details: list[tuple
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-{_SCRIPT_HASH}'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">
 <title>{escape(ticker)} {escape(trade_date)} {escape(rating)}: Open Trading Agents report</title>
 <style>{_CSS}</style>
 </head>
@@ -214,11 +285,15 @@ def render_report(ticker: str, trade_date: str, rating: str, details: list[tuple
 <p class="date">Analysis of {escape(trade_date)}</p>
 <dl class="run">{metadata}</dl>
 </header>
-<nav class="contents" aria-label="Sections"><ul>{"".join(contents)}</ul></nav>
+<nav class="contents" aria-label="Sections">
+<button class="contents-toggle" type="button" aria-expanded="false" aria-controls="report-contents">Contents</button>
+<ul id="report-contents">{"".join(contents)}</ul>
+</nav>
 <main>{"".join(body)}</main>
 <footer class="credit">Open Trading Agents</footer>
 </div>
 <a class="to-top" href="#top">Top</a>
+<script id="report-navigation">{_SCRIPT}</script>
 </body>
 </html>
 """
