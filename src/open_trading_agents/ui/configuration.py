@@ -11,6 +11,7 @@ from prompt_toolkit.filters import Condition, IsDone
 from prompt_toolkit.layout import ConditionalContainer, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
+from prompt_toolkit.styles import merge_styles
 from questionary.prompts.common import InquirerControl
 
 from open_trading_agents.analysis.prompts import ROLES
@@ -28,8 +29,8 @@ from open_trading_agents.config import (
     set_default_preset,
     validate_date,
 )
-from open_trading_agents.dataflows.config import build_data_config, default_data_config, read_data_credentials
-from open_trading_agents.dataflows.router import TOOLS_CATEGORIES
+from open_trading_agents.dataflows.config import build_data_config, read_data_credentials
+from open_trading_agents.dataflows.router import TOOLS_CATEGORIES, VENDOR_METHODS
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
 
 _SOURCE_CATEGORIES = (
@@ -37,7 +38,16 @@ _SOURCE_CATEGORIES = (
     ("technical_indicators", "Technical indicators"),
     ("fundamental_data", "Fundamentals and financial statements"),
     ("news_data", "News and insider data"),
+    ("macro_data", "Macroeconomic data"),
+    ("prediction_markets", "Prediction markets"),
 )
+_SOURCE_NAMES = {
+    "sec_edgar": "SEC EDGAR",
+    "yfinance": "Yahoo Finance",
+    "alpha_vantage": "Alpha Vantage",
+    "fred": "FRED",
+    "polymarket": "Polymarket",
+}
 
 
 _GROUP_DESCRIPTIONS = {
@@ -76,8 +86,6 @@ _MENU_STYLE = questionary.Style([
     ("configure", "fg:#bd9bfa bold"),
     ("back", "fg:#e8b86d"),
     ("destructive", "fg:#f2858a"),
-    ("enabled", "fg:#91d5ac"),
-    ("disabled", "fg:#8799af"),
 ])
 
 
@@ -109,11 +117,30 @@ def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
         badge_style = "class:assignment" + (" class:highlighted" if highlighted else "")
         return [(style, before), (badge_style, marker), (style, after)]
 
-    if title.endswith((" · Enabled", " · Disabled")):
-        label, status = title.rsplit(" · ", 1)
-        state_style = f"class:{status.lower()}" + (" class:highlighted" if highlighted else "")
-        return [(style, label + " · "), (state_style, status)]
     return [(style, title)]
+
+
+def _style_menu(question: questionary.Question, options: list[questionary.Choice], titles: list[str]) -> None:
+    """Apply shared semantic colors and a moving highlight to select and checklist menus.
+
+    Args:
+        question: Questionary application to style.
+        options: Choices whose titles are updated before rendering.
+        titles: Original labels in display order.
+    """
+    def style_rows(application: Application) -> None:
+        """Refresh row colors as the keyboard cursor moves.
+
+        Args:
+            application: Active menu application before rendering.
+        """
+        for control in application.layout.find_all_controls():
+            if isinstance(control, InquirerControl):
+                current = control.get_pointed_at()
+                for option, title in zip(options, titles, strict=True):
+                    option.title = _menu_tokens(title, option is current)
+
+    question.application.before_render += style_rows
 
 
 def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: list[str] | None = None) -> int:
@@ -151,19 +178,7 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
             show_help = Condition(lambda: bool(control.get_pointed_at().description)) & ~IsDone()
             question.application.layout.container.children.insert(1, ConditionalContainer(help_window, filter=show_help))
 
-        def style_rows(application: Application) -> None:
-            """Refresh semantic colors and highlight as the selection cursor moves.
-
-            Args:
-                application: Active Questionary application before rendering.
-            """
-            for control in application.layout.find_all_controls():
-                if isinstance(control, InquirerControl):
-                    current = control.get_pointed_at()
-                    for option, title in zip(options, choices, strict=True):
-                        option.title = _menu_tokens(title, option is current)
-
-        question.application.before_render += style_rows
+        _style_menu(question, options, choices)
         selected = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError) as exc:
         raise typer.Abort() from exc
@@ -272,33 +287,104 @@ def _api_key_prompt(label: str) -> str:
     return value
 
 
+def _enabled_sources(category: str, vendors: dict[str, str], overrides: dict[str, str]) -> set[str]:
+    """Collect the effective sources used by the category's tools.
+
+    Args:
+        category: Registered data category.
+        vendors: Category source chains.
+        overrides: Tool-specific source chains that take precedence.
+
+    Returns:
+        Supported sources currently used by at least one tool in this category.
+    """
+    enabled = set()
+    for tool in TOOLS_CATEGORIES[category]["tools"]:
+        chain = overrides.get(tool, vendors[category])
+        explicit = {source.strip() for source in chain.split(",") if source.strip() not in {"", "default"}}
+        enabled.update(set(VENDOR_METHODS[tool]) & explicit if explicit else VENDOR_METHODS[tool])
+    return enabled
+
+
+def _source_checklist(category: str, enabled: set[str]) -> list[str]:
+    """Edit a category's sources and validate them before returning to the category menu.
+
+    Args:
+        category: Registered category whose tools must remain covered.
+        enabled: Sources initially checked.
+
+    Returns:
+        Selected source identifiers in fixed fallback order.
+
+    Raises:
+        typer.Abort: The user cancels setup or terminal input closes.
+    """
+    tools = TOOLS_CATEGORIES[category]["tools"]
+    available = set().union(*(VENDOR_METHODS[tool] for tool in tools))
+    sources = [source for source in _SOURCE_NAMES if source in available]
+    titles = [_SOURCE_NAMES[source] for source in sources]
+    options = [questionary.Choice(title, value=source, checked=source in enabled)
+               for source, title in zip(sources, titles, strict=True)]
+
+    def validate(selected: list[str]) -> bool | str:
+        """Reject empty selections and combinations that leave a category's tools uncovered.
+
+        Args:
+            selected: Checked source identifiers.
+
+        Returns:
+            True for usable coverage, otherwise a short correction to show in the menu.
+        """
+        if not selected:
+            return "Select at least one source before going back."
+        if any(not set(selected).intersection(VENDOR_METHODS[tool]) for tool in tools):
+            return "Also select Yahoo Finance or Alpha Vantage for company profiles."
+        return True
+
+    style = merge_styles([_MENU_STYLE, questionary.Style([
+        ("selected", "fg:#91d5ac bg:default nobold"),
+        ("validation-toolbar", "fg:#f2858a"),
+    ])])
+    try:
+        question = questionary.checkbox(
+            dict(_SOURCE_CATEGORIES)[category], choices=options, validate=validate, pointer="›", style=style,
+            instruction="(↑/↓ move · Space toggle · Enter back)",
+            use_arrow_keys=True, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
+            show_description=False, erase_when_done=True,
+        )
+        _style_menu(question, options, titles)
+        result = question.unsafe_ask()
+    except (KeyboardInterrupt, EOFError) as exc:
+        raise typer.Abort() from exc
+    if result is None:
+        raise typer.Abort()
+    return [source for source in sources if source in result]
+
+
 def _configure_sources(vendors: dict[str, str], overrides: dict[str, str]) -> None:
-    """Toggle Alpha Vantage fallback without offering alternate source ordering.
+    """Open source checklists by category, keeping all edits pending until Save.
 
     Args:
         vendors: Effective category selections, updated in place.
-        overrides: Individual tool selections, cleared for explicitly toggled categories.
+        overrides: Individual tool selections, cleared for explicitly configured categories.
     """
     cursor = 0
-    defaults = default_data_config()["data_vendors"]
-    typer.echo("Alpha Vantage is tried after Yahoo Finance. Fundamentals retain SEC EDGAR.")
     while True:
-        enabled = []
+        selections = {category: _enabled_sources(category, vendors, overrides) for category, _ in _SOURCE_CATEGORIES}
         labels = []
         for category, title in _SOURCE_CATEGORIES:
-            tools = TOOLS_CATEGORIES[category]["tools"]
-            active = any("alpha_vantage" in overrides.get(tool, vendors[category]).replace(" ", "").split(",") for tool in tools)
-            enabled.append(active)
-            labels.append(f"{title} · {'Enabled' if active else 'Disabled'}")
-        cursor = _choose("Alpha Vantage fallback", [*labels, "Back"], cursor)
+            names = [_SOURCE_NAMES[source] for source in _SOURCE_NAMES if source in selections[category]]
+            labels.append(f"{title} · {', '.join(names) or 'None'}")
+        cursor = _choose("Source selection", [*labels, "Back"], cursor)
         if cursor == len(_SOURCE_CATEGORIES):
             return
 
         category, _ = _SOURCE_CATEGORIES[cursor]
+        selected = _source_checklist(category, selections[category])
         tools = TOOLS_CATEGORIES[category]["tools"]
         if any(tool in overrides for tool in tools):
             typer.echo("Replaced individual tool overrides in this category.")
-        vendors[category] = defaults[category] + (",alpha_vantage" if not enabled[cursor] else "")
+        vendors[category] = ",".join(selected)
         for tool in tools:
             overrides.pop(tool, None)
 
@@ -344,7 +430,7 @@ def _configure_credentials(values: dict[str, str]) -> None:
 
 
 def configure_data_interactively(path: Path) -> None:
-    """Edit credentials and source toggles, saving all pending changes together.
+    """Edit credentials and source checklists, saving all pending changes together.
 
     Args:
         path: Application configuration file to create or update.
@@ -370,7 +456,7 @@ def configure_data_interactively(path: Path) -> None:
             for selections in (vendors, overrides):
                 for key, chain in selections.items():
                     sources = [source.strip() for source in chain.split(",")]
-                    if "alpha_vantage" in sources:
+                    if "alpha_vantage" in sources and "yfinance" in sources:
                         sources = [source for source in sources if source != "yfinance"]
                         sources.insert(sources.index("alpha_vantage"), "yfinance")
                         selections[key] = ",".join(sources)

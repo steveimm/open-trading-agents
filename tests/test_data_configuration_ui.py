@@ -337,8 +337,9 @@ get_news = "yfinance"
 get_indicators = "yfinance"
 ''')
     original = configuration_path.read_bytes()
-    answers = [0, 1, 3, 1, 3, 4] + ([2] if save else [])
+    answers = [0, 1, 3, 1, 3, 6] + ([2] if save else [])
     shown = select_menus(monkeypatch, configuration_path, answers)
+    monkeypatch.setattr(configuration_ui, "_source_checklist", lambda category, enabled: ["yfinance", "alpha_vantage"])
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: "private-alpha-value")
     result = runner.invoke(application, [str(configuration_path)])
 
@@ -357,7 +358,7 @@ get_indicators = "yfinance"
     assert saved["output_language"] == "Korean"
     assert "# Keep this preference" in configuration_path.read_text()
     assert "individual tool overrides" in result.output
-    assert any("News and insider data · Enabled" in choices for _, choices in shown)
+    assert any("News and insider data · Yahoo Finance, Alpha Vantage" in choices for _, choices in shown)
     settings = load_settings(configuration_path)
     assert "alpha_vantage" in _selected_vendors(settings)
 
@@ -379,27 +380,31 @@ get_indicators = "yfinance"
     assert calls == ["yfinance", "alpha_vantage"]
 
 
-def test_source_toggles_disable_alpha_and_keep_sec_before_yahoo_when_enabling_fundamentals(
-    configuration_path: Path, monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("fundamentals", [["sec_edgar", "yfinance", "alpha_vantage"], ["alpha_vantage"]])
+def test_source_checklists_save_only_the_selected_providers(
+    configuration_path: Path, monkeypatch: pytest.MonkeyPatch, fundamentals: list[str],
 ) -> None:
-    """Disable an old Alpha-first chain and enable fundamentals without dropping filing evidence.
+    """Save category selections without silently enabling any unchecked providers.
 
     Args:
         configuration_path: Isolated saved source preferences.
         monkeypatch: Menu input replacement.
+        fundamentals: Enabled financial providers, including an Alpha-only selection.
     """
     configuration_path.parent.mkdir()
     configuration_path.write_text('[data.data_vendors]\nnews_data = "alpha_vantage,yfinance"\n')
-    shown = select_menus(monkeypatch, configuration_path, [1, 3, 2, 4, 2])
+    shown = select_menus(monkeypatch, configuration_path, [1, 3, 2, 6, 2])
+    monkeypatch.setattr(configuration_ui, "_source_checklist",
+                        lambda category, enabled: fundamentals if category == "fundamental_data" else ["yfinance"])
     result = runner.invoke(application, [str(configuration_path)])
 
     assert result.exit_code == 0, result.output
     vendors = tomllib.loads(configuration_path.read_text())["data"]["data_vendors"]
-    assert vendors == {"news_data": "yfinance", "fundamental_data": "sec_edgar,yfinance,alpha_vantage"}
-    menus = [choices for label, choices in shown if label == "Alpha Vantage fallback"]
-    assert menus[0][3] == "News and insider data · Enabled"
-    assert menus[-1][3] == "News and insider data · Disabled"
-    assert menus[-1][2] == "Fundamentals and financial statements · Enabled"
+    assert vendors == {"news_data": "yfinance", "fundamental_data": ",".join(fundamentals)}
+    menus = [choices for label, choices in shown if label == "Source selection"]
+    assert menus[0][3] == "News and insider data · Yahoo Finance, Alpha Vantage"
+    assert menus[-1][3] == "News and insider data · Yahoo Finance"
+    assert menus[-1][2] == "Fundamentals and financial statements · " + ", ".join(configuration_ui._SOURCE_NAMES[source] for source in fundamentals)
 
 
 def test_saving_normalizes_existing_alpha_first_categories_and_tool_overrides(
@@ -423,5 +428,64 @@ get_stock_data = "alpha_vantage"
 
     assert result.exit_code == 0, result.output
     data = tomllib.loads(configuration_path.read_text())["data"]
-    assert data["data_vendors"] == {"news_data": "yfinance,alpha_vantage", "fundamental_data": "sec_edgar,yfinance,alpha_vantage"}
-    assert data["tool_vendors"] == {"get_stock_data": "yfinance,alpha_vantage"}
+    assert data["data_vendors"] == {"news_data": "yfinance,alpha_vantage", "fundamental_data": "sec_edgar,alpha_vantage"}
+    assert data["tool_vendors"] == {"get_stock_data": "alpha_vantage"}
+
+
+@pytest.mark.parametrize("category,enabled,invalid,recover,expected,error", [
+    ("core_stock_apis", {"yfinance"}, " \r", "\x1b[B \r", ["alpha_vantage"], "at least one"),
+    ("fundamental_data", {"sec_edgar", "yfinance"}, "\x1b[B \r", "\x1b[B \r", ["sec_edgar", "alpha_vantage"], "company profiles"),
+    ("macro_data", {"fred"}, " \r", " \r", ["fred"], "at least one"),
+])
+def test_source_checklist_blocks_invalid_back_and_accepts_corrected_keyboard_selection(
+    monkeypatch: pytest.MonkeyPatch, category: str, enabled: set[str], invalid: str, recover: str,
+    expected: list[str], error: str,
+) -> None:
+    """Exercise validation and recovery through the real checklist's Space and Enter bindings.
+
+    Args:
+        monkeypatch: Real render-cycle hook for entering a correction after validation fails.
+        category: Source category to edit.
+        enabled: Initially enabled sources.
+        invalid: Keystrokes that create and submit an unusable selection.
+        recover: Keystrokes that fix the selection and return to the parent menu.
+        expected: Supported sources returned after correction.
+        error: Expected validation message fragment.
+    """
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.output import DummyOutput
+    from questionary.prompts.common import InquirerControl
+
+    original = configuration_ui.questionary.checkbox
+    errors = []
+    phase = 0
+    with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
+        def checkbox(*args: Any, **kwargs: Any) -> Any:
+            """Observe the real menu without bypassing its validation or input handling."""
+            question = original(*args, **kwargs)
+
+            def rendered(application: Application) -> None:
+                """Correct the selection only after the invalid Back attempt is rejected.
+
+                Args:
+                    application: Checklist application after rendering.
+                """
+                nonlocal phase
+                if application.is_done:
+                    return
+                control = next(control for control in application.layout.find_all_controls() if isinstance(control, InquirerControl))
+                if phase == 0:
+                    phase = 1
+                    keyboard.send_text(invalid)
+                elif phase == 1 and control.error_message:
+                    errors.append("".join(text for _, text in control.error_message))
+                    phase = 2
+                    keyboard.send_text(recover)
+
+            question.application.after_render += rendered
+            return question
+
+        monkeypatch.setattr(configuration_ui.questionary, "checkbox", checkbox)
+        assert configuration_ui._source_checklist(category, enabled) == expected
+
+    assert phase == 2 and any(error in message for message in errors)
