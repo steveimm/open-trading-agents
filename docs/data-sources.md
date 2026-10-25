@@ -20,9 +20,9 @@ Open the data-source editor with:
 uv run open-trading-agents configure data
 ```
 
-Select FRED, Alpha Vantage, or SEC EDGAR to edit its credential. Open **Source selection** to choose providers for prices, technical indicators, fundamentals, or news and insider data. Arrows show fallback order, for example **Alpha Vantage → Yahoo Finance**. Then choose **Back** and **Save** at the bottom. API keys appear as `****abcde`, showing only their last five characters. Short keys remain fully masked. Blank input keeps the existing value. **Remove** clears it. Ctrl+C discards unsaved changes.
+Open **Credentials** to edit FRED, Alpha Vantage, or SEC EDGAR access. Open **Source selection** to toggle Alpha Vantage fallback for prices, technical indicators, fundamentals, or news and insider data. Press Enter on a category to enable or disable it. Yahoo Finance is always tried before Alpha Vantage. Fundamentals retain SEC EDGAR before Yahoo Finance. Choose **Back**, then **Save** to apply your changes. API keys appear as `****abcde`, showing only their last five characters. Short keys remain fully masked. Blank input keeps the existing value. **Remove** clears it. Ctrl+C discards unsaved changes.
 
-To enable Alpha Vantage, enter its API key and select it for the categories you want to use. Selecting a category replaces any individual tool overrides in that category. Other categories and settings are preserved.
+To enable Alpha Vantage, enter its API key and enable fallback for the categories you want to use. Toggling a category replaces any individual tool overrides in that category. Saving also updates older Alpha Vantage selections to try Yahoo Finance first, including individual tool overrides. Other settings are preserved.
 
 These settings live in `~/.open-trading-agents/config.toml`:
 

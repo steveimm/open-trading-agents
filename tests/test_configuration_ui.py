@@ -580,3 +580,51 @@ def test_keyboard_cancellation_keeps_existing_configuration(wizard: Path) -> Non
     assert result.exit_code == 130, result.output
     assert "Cancelled." in result.output
     assert wizard.read_text() == original
+
+
+def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Render real keyboard selection with distinct actions and only one moving highlight.
+
+    Args:
+        monkeypatch: Hook for observing the real Questionary render cycle.
+    """
+    from prompt_toolkit.application import Application
+    from questionary.prompts.common import InquirerControl
+
+    original = configuration_ui.questionary.select
+    frames: list[list[list[tuple[str, str]]]] = []
+
+    with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
+        def question(*args: object, **kwargs: object) -> object:
+            """Capture styled rows after each render and advance using actual arrow keys."""
+            result = original(*args, **kwargs)
+
+            def rendered(application: Application) -> None:
+                """Inspect the colors shown by each rendered menu frame.
+
+                Args:
+                    application: Menu application after rendering.
+                """
+                if application.is_done:
+                    return
+                for control in application.layout.find_all_controls():
+                    if isinstance(control, InquirerControl):
+                        frames.append([choice.title for choice in control.choices])
+                        keyboard.send_text("\x1b[B" if len(frames) == 1 else "\r")
+
+            result.application.after_render += rendered
+            return result
+
+        monkeypatch.setattr(configuration_ui.questionary, "select", question)
+        assert configuration_ui._choose("Configuration", ["Profile", "Continue", "Back"], default=1) == 2
+
+    first, last = frames[0], frames[-1]
+    assert "class:highlighted" not in first[0][0][0]
+    assert "class:highlighted" in first[1][0][0] and "class:highlighted" not in first[2][0][0]
+    assert "class:highlighted" not in last[1][0][0] and "class:highlighted" in last[2][0][0]
+    style = configuration_ui._MENU_STYLE
+    forward = style.get_attrs_for_style_str(first[1][0][0])
+    back = style.get_attrs_for_style_str(last[2][0][0])
+    assert forward.bgcolor == back.bgcolor == "303547"
+    assert forward.color == "91d5ac" and back.color == "e8b86d"
+    assert style.get_attrs_for_style_str("class:question").color == "bd9bfa"

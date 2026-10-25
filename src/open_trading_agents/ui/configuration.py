@@ -6,7 +6,9 @@ from pathlib import Path
 
 import questionary
 import typer
+from prompt_toolkit.application import Application
 from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
+from questionary.prompts.common import InquirerControl
 
 from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.config import (
@@ -23,7 +25,7 @@ from open_trading_agents.config import (
     set_default_preset,
     validate_date,
 )
-from open_trading_agents.dataflows.config import build_data_config, read_data_credentials
+from open_trading_agents.dataflows.config import build_data_config, default_data_config, read_data_credentials
 from open_trading_agents.dataflows.router import TOOLS_CATEGORIES
 from open_trading_agents.harnesses.catalog import ModelCatalog, ModelChoice, discover_models, effort_choices
 
@@ -33,15 +35,51 @@ _SOURCE_CATEGORIES = (
     ("fundamental_data", "Fundamentals and financial statements"),
     ("news_data", "News and insider data"),
 )
-_SOURCE_NAMES = {"yfinance": "Yahoo Finance", "alpha_vantage": "Alpha Vantage", "sec_edgar": "SEC EDGAR"}
 
 
 _MENU_STYLE = questionary.Style([
-    ("selected", "noinherit noreverse"),
-    ("highlighted", "noinherit noreverse"),
-    ("pointer", "fg:#74b9ff bold noinherit"),
-    ("answer", "fg:#74b9ff"),
+    ("text", "fg:#d9e2ef"),
+    ("question", "fg:#bd9bfa bold"),
+    ("qmark", "fg:#bd9bfa bold"),
+    ("instruction", "fg:#8799af"),
+    ("pointer", "fg:#bd9bfa bold"),
+    ("answer", "fg:#78cbd4"),
+    ("selected", "fg:#d9e2ef bg:#303547 bold"),
+    ("highlighted", "bg:#303547 bold"),
+    ("forward", "fg:#91d5ac bold"),
+    ("back", "fg:#e8b86d"),
+    ("destructive", "fg:#f2858a"),
+    ("enabled", "fg:#91d5ac"),
+    ("disabled", "fg:#8799af"),
 ])
+
+
+def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
+    """Style menu actions and toggle states while retaining the moving row highlight.
+
+    Args:
+        title: Original menu label.
+        highlighted: Whether the keyboard cursor points to this row.
+
+    Returns:
+        Styled text fragments for Questionary.
+    """
+    action = title.split(" · ", 1)[0]
+    style = "class:text"
+    if action in {"Continue", "Save", "Yes"}:
+        style = "class:forward"
+    elif action in {"Back", "Cancel", "No"}:
+        style = "class:back"
+    elif action == "Remove" or action.startswith("Delete "):
+        style = "class:destructive"
+    if highlighted:
+        style += " class:highlighted"
+
+    if title.endswith((" · Enabled", " · Disabled")):
+        label, status = title.rsplit(" · ", 1)
+        state_style = f"class:{status.lower()}" + (" class:highlighted" if highlighted else "")
+        return [(style, label + " · "), (state_style, status)]
+    return [(style, title)]
 
 
 def _choose(label: str, choices: list[str], default: int = 0) -> int:
@@ -60,12 +98,27 @@ def _choose(label: str, choices: list[str], default: int = 0) -> int:
     """
     options = [questionary.Choice(title, value=index) for index, title in enumerate(choices)]
     try:
-        selected = questionary.select(
+        question = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
             instruction="(↑/↓ select · Enter confirm)",
             use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
             erase_when_done=True,
-        ).unsafe_ask()
+        )
+
+        def style_rows(application: Application) -> None:
+            """Refresh semantic colors and highlight as the selection cursor moves.
+
+            Args:
+                application: Active Questionary application before rendering.
+            """
+            for control in application.layout.find_all_controls():
+                if isinstance(control, InquirerControl):
+                    current = control.get_pointed_at()
+                    for option, title in zip(options, choices, strict=True):
+                        option.title = _menu_tokens(title, option is current)
+
+        question.application.before_render += style_rows
+        selected = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError) as exc:
         raise typer.Abort() from exc
     if selected is None:
@@ -173,62 +226,42 @@ def _api_key_prompt(label: str) -> str:
     return value
 
 
-def _source_label(chain: str) -> str:
-    """Describe a configured source chain in request order.
-
-    Args:
-        chain: Comma-separated source identifiers.
-
-    Returns:
-        Source names separated by fallback arrows.
-    """
-    return " → ".join(_SOURCE_NAMES.get(source.strip(), source.strip()) for source in chain.split(","))
-
-
 def _configure_sources(vendors: dict[str, str], overrides: dict[str, str]) -> None:
-    """Edit category sources in memory and remove overrides only for explicitly selected categories.
+    """Toggle Alpha Vantage fallback without offering alternate source ordering.
 
     Args:
         vendors: Effective category selections, updated in place.
-        overrides: Individual tool selections, updated in place.
+        overrides: Individual tool selections, cleared for explicitly toggled categories.
     """
     cursor = 0
+    defaults = default_data_config()["data_vendors"]
+    typer.echo("Alpha Vantage is tried after Yahoo Finance. Fundamentals retain SEC EDGAR.")
     while True:
+        enabled = []
         labels = []
         for category, title in _SOURCE_CATEGORIES:
-            suffix = " (individual overrides)" if any(tool in overrides for tool in TOOLS_CATEGORIES[category]["tools"]) else ""
-            labels.append(f"{title} · {_source_label(vendors[category])}{suffix}")
-        cursor = _choose("Source selection", [*labels, "Back"], cursor)
+            tools = TOOLS_CATEGORIES[category]["tools"]
+            active = any("alpha_vantage" in overrides.get(tool, vendors[category]).replace(" ", "").split(",") for tool in tools)
+            enabled.append(active)
+            labels.append(f"{title} · {'Enabled' if active else 'Disabled'}")
+        cursor = _choose("Alpha Vantage fallback", [*labels, "Back"], cursor)
         if cursor == len(_SOURCE_CATEGORIES):
             return
 
-        category, title = _SOURCE_CATEGORIES[cursor]
-        chains = ["yfinance", "alpha_vantage", "alpha_vantage,yfinance", "yfinance,alpha_vantage"]
-        if category == "fundamental_data":
-            chains = ["sec_edgar,yfinance", "sec_edgar,alpha_vantage", *chains, "alpha_vantage,sec_edgar,yfinance"]
-        current = vendors[category]
-        if current not in chains:
-            chains.append(current)
+        category, _ = _SOURCE_CATEGORIES[cursor]
         tools = TOOLS_CATEGORIES[category]["tools"]
         if any(tool in overrides for tool in tools):
-            typer.echo("Selecting a source replaces individual tool overrides in this category.")
-        options = [*map(_source_label, chains), "Back"]
-        selected = _choose(title, options, chains.index(current))
-        if selected == len(chains):
-            continue
-        vendors[category] = chains[selected]
+            typer.echo("Replaced individual tool overrides in this category.")
+        vendors[category] = defaults[category] + (",alpha_vantage" if not enabled[cursor] else "")
         for tool in tools:
             overrides.pop(tool, None)
 
 
-def configure_data_interactively(path: Path) -> None:
-    """Edit data-source credentials and provider selections, then save changes together.
+def _configure_credentials(values: dict[str, str]) -> None:
+    """Edit masked credentials in a submenu without saving pending changes.
 
     Args:
-        path: Application configuration file to create or update.
-
-    Raises:
-        typer.Abort: The user cancels before saving.
+        values: Pending credential fields, updated in place.
     """
     fields = (
         ("fred_api_key", "FRED (macro data)", "FRED API key", True,
@@ -238,28 +271,15 @@ def configure_data_interactively(path: Path) -> None:
         ("sec_edgar_user_agent", "SEC EDGAR (contact identity)", "SEC EDGAR contact identity", False,
          "SEC EDGAR provides company filings. Enter your name or organization and contact email, for example: Research Team research@example.com."),
     )
-    values = read_data_credentials(path).copy()
-    settings = load_settings(path) if path.exists() else Settings()
-    data = build_data_config(settings.data)
-    vendors, overrides = data["data_vendors"], data["tool_vendors"]
-    original_vendors = vendors.copy()
     cursor = 0
-    typer.echo("Leave a value blank to keep it. Ctrl+C cancels without saving.")
-
     while True:
         labels = []
         for key, label, _, secret, _ in fields:
             value = values.get(key, "")
             status = _key_preview(value) if secret and value else "Set" if value else "Not set"
             labels.append(f"{label} · {status}")
-        cursor = _choose("Data sources", [*labels, "Source selection", "Save"], cursor)
+        cursor = _choose("Credentials", [*labels, "Back"], cursor)
         if cursor == len(fields):
-            _configure_sources(vendors, overrides)
-            continue
-        if cursor == len(fields) + 1:
-            changes = {key: value for key, value in vendors.items() if value != original_vendors[key]}
-            target = save_data_configuration(path, values, data_vendors=changes, tool_vendors=overrides)
-            typer.echo(f"Saved data sources: {target}")
             return
 
         key, label, prompt, secret, explanation = fields[cursor]
@@ -275,6 +295,44 @@ def configure_data_interactively(path: Path) -> None:
         value = (_api_key_prompt(prompt) if secret else typer.prompt(prompt, default="", show_default=False)).strip()
         if value:
             values[key] = value
+
+
+def configure_data_interactively(path: Path) -> None:
+    """Edit credentials and source toggles, saving all pending changes together.
+
+    Args:
+        path: Application configuration file to create or update.
+
+    Raises:
+        typer.Abort: The user cancels before saving.
+    """
+    values = read_data_credentials(path).copy()
+    settings = load_settings(path) if path.exists() else Settings()
+    data = build_data_config(settings.data)
+    vendors, overrides = data["data_vendors"], data["tool_vendors"]
+    original_vendors = vendors.copy()
+    cursor = 0
+    typer.echo("Leave a value blank to keep it. Ctrl+C cancels without saving.")
+
+    while True:
+        cursor = _choose("Data sources", ["Credentials", "Source selection", "Save"], cursor)
+        if cursor == 0:
+            _configure_credentials(values)
+        elif cursor == 1:
+            _configure_sources(vendors, overrides)
+        else:
+            for selections in (vendors, overrides):
+                for key, chain in selections.items():
+                    sources = [source.strip() for source in chain.split(",")]
+                    if "alpha_vantage" in sources:
+                        sources = [source for source in sources if source != "yfinance"]
+                        sources.insert(sources.index("alpha_vantage"), "yfinance")
+                        selections[key] = ",".join(sources)
+
+            changes = {key: value for key, value in vendors.items() if value != original_vendors[key]}
+            target = save_data_configuration(path, values, data_vendors=changes, tool_vendors=overrides)
+            typer.echo(f"Saved data sources: {target}")
+            return
 
 
 def _describe(settings: HarnessSettings) -> str:

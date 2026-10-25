@@ -69,7 +69,9 @@ def select_menus(monkeypatch: pytest.MonkeyPatch, path: Path, answers: list[int]
         assert (path.read_bytes() if path.exists() else None) == original
         shown.append((label, choices))
         if label == "Data sources":
-            assert choices[-1] == "Save"
+            assert choices == ["Credentials", "Source selection", "Save"]
+        if label == "Credentials":
+            assert choices[-1] == "Back"
             assert all(choice.rsplit(" · ", 1)[1] == "Not set" or choice.rsplit(" · ", 1)[1].startswith("*") for choice in choices[:2])
             assert choices[2].endswith((" · Set", " · Not set"))
         try:
@@ -111,7 +113,7 @@ def test_data_editor_masks_keys_and_saves_all_fields_without_agent_setup(
         configuration_path: Isolated destination with no saved presets.
         monkeypatch: Scoped input adapters.
     """
-    shown = select_menus(monkeypatch, configuration_path, [0, 1, 2, 4])
+    shown = select_menus(monkeypatch, configuration_path, [0, 0, 1, 2, 3, 2])
     prompts = record_prompts(monkeypatch)
     keys = iter(["fred-private-key", "alpha-private-key"])
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: next(keys))
@@ -129,7 +131,7 @@ def test_data_editor_masks_keys_and_saves_all_fields_without_agent_setup(
     assert "fred-private-key" not in result.output and "alpha-private-key" not in result.output
     menu_text = str(shown)
     assert not any(value in menu_text for value in ("fred-private-key", "alpha-private-key", "contact@example.com"))
-    assert shown[-1][1][:2] == ["FRED (macro data) · ****e-key", "Alpha Vantage (alternative market/news data) · ****e-key"]
+    assert [choices for label, choices in shown if label == "Credentials"][-1][:2] == ["FRED (macro data) · ****e-key", "Alpha Vantage (alternative market/news data) · ****e-key"]
     assert "macroeconomic series" in result.output and "alternative source" in result.output and "contact email" in result.output
     assert "Saved data sources:" in result.output
     assert not (configuration_path.parent / "presets").exists()
@@ -158,7 +160,7 @@ web_search_backend = "yahoo"
 [data.data_vendors]
 news_data = "yfinance"
 ''')
-    shown = select_menus(monkeypatch, configuration_path, [0, 0, 1, 0, 2, 2, 2, 1, 4])
+    shown = select_menus(monkeypatch, configuration_path, [0, 0, 0, 1, 0, 2, 2, 2, 1, 3, 2])
     keys = iter(["", "replacement-alpha-key"])
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: next(keys))
     result = runner.invoke(application, [str(configuration_path)])
@@ -174,8 +176,8 @@ news_data = "yfinance"
     assert "# retained preferences" in configuration_path.read_text()
     visible = result.output + str(shown)
     assert not any(value in visible for value in ("existing-fred-key", "existing-alpha-key", "replacement-alpha-key", "old@example.com"))
-    assert shown[-1][1][2] == "SEC EDGAR (contact identity) · Not set"
-    assert all(choices == ["Update", "Remove", "Back"] for label, choices in shown if label != "Data sources")
+    assert [choices for label, choices in shown if label == "Credentials"][-1][2] == "SEC EDGAR (contact identity) · Not set"
+    assert all(choices == ["Update", "Remove", "Back"] for label, choices in shown if label not in {"Data sources", "Credentials"})
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -195,7 +197,7 @@ def test_cancel_after_editing_leaves_configuration_unchanged(
     if original is not None:
         configuration_path.parent.mkdir()
         configuration_path.write_bytes(original)
-    answers = [0] if cancel_at == "menu" else [0, 1]
+    answers = [0, 0] if cancel_at == "menu" else [0, 0, 1]
     select_menus(monkeypatch, configuration_path, answers)
     def cancel_prompt(label: str) -> str:
         """Interrupt the second prompt after one credential has been staged."""
@@ -335,7 +337,7 @@ get_news = "yfinance"
 get_indicators = "yfinance"
 ''')
     original = configuration_path.read_bytes()
-    answers = [1, 3, 3, 2, 4] + ([4] if save else [])
+    answers = [0, 1, 3, 1, 3, 4] + ([2] if save else [])
     shown = select_menus(monkeypatch, configuration_path, answers)
     monkeypatch.setattr(configuration_ui, "_api_key_prompt", lambda label: "private-alpha-value")
     result = runner.invoke(application, [str(configuration_path)])
@@ -349,13 +351,13 @@ get_indicators = "yfinance"
     assert result.exit_code == 0, result.output
     saved = tomllib.loads(configuration_path.read_text())
     assert saved["data"]["alpha_vantage_api_key"] == "private-alpha-value"
-    assert saved["data"]["data_vendors"] == {"news_data": "alpha_vantage,yfinance"}
+    assert saved["data"]["data_vendors"] == {"news_data": "yfinance,alpha_vantage"}
     assert saved["data"]["tool_vendors"] == {"get_indicators": "yfinance"}
     assert saved["data"]["web_search_backend"] == "yahoo"
     assert saved["output_language"] == "Korean"
     assert "# Keep this preference" in configuration_path.read_text()
     assert "individual tool overrides" in result.output
-    assert any("News and insider data · Alpha Vantage → Yahoo Finance" in choices for _, choices in shown)
+    assert any("News and insider data · Enabled" in choices for _, choices in shown)
     settings = load_settings(configuration_path)
     assert "alpha_vantage" in _selected_vendors(settings)
 
@@ -363,15 +365,63 @@ get_indicators = "yfinance"
 
     def unavailable(*args: Any) -> str:
         """Simulate an unavailable first choice to exercise the saved fallback order."""
-        calls.append("alpha_vantage")
+        calls.append("yfinance")
         raise VendorUnavailableError("fixture unavailable")
 
     def fallback(*args: Any) -> str:
         """Return evidence from the explicitly selected second source."""
-        calls.append("yfinance")
+        calls.append("alpha_vantage")
         return "fixture news"
 
-    monkeypatch.setitem(router.VENDOR_METHODS, "get_news", {"alpha_vantage": unavailable, "yfinance": fallback})
+    monkeypatch.setitem(router.VENDOR_METHODS, "get_news", {"yfinance": unavailable, "alpha_vantage": fallback})
     with run_config(settings.data):
         assert router.route_to_vendor("get_news", "NVDA", "2024-01-01", "2024-01-02") == "fixture news"
-    assert calls == ["alpha_vantage", "yfinance"]
+    assert calls == ["yfinance", "alpha_vantage"]
+
+
+def test_source_toggles_disable_alpha_and_keep_sec_before_yahoo_when_enabling_fundamentals(
+    configuration_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disable an old Alpha-first chain and enable fundamentals without dropping filing evidence.
+
+    Args:
+        configuration_path: Isolated saved source preferences.
+        monkeypatch: Menu input replacement.
+    """
+    configuration_path.parent.mkdir()
+    configuration_path.write_text('[data.data_vendors]\nnews_data = "alpha_vantage,yfinance"\n')
+    shown = select_menus(monkeypatch, configuration_path, [1, 3, 2, 4, 2])
+    result = runner.invoke(application, [str(configuration_path)])
+
+    assert result.exit_code == 0, result.output
+    vendors = tomllib.loads(configuration_path.read_text())["data"]["data_vendors"]
+    assert vendors == {"news_data": "yfinance", "fundamental_data": "sec_edgar,yfinance,alpha_vantage"}
+    menus = [choices for label, choices in shown if label == "Alpha Vantage fallback"]
+    assert menus[0][3] == "News and insider data · Enabled"
+    assert menus[-1][3] == "News and insider data · Disabled"
+    assert menus[-1][2] == "Fundamentals and financial statements · Enabled"
+
+
+def test_saving_normalizes_existing_alpha_first_categories_and_tool_overrides(
+    configuration_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply Yahoo-first ordering to old saved selections without requiring toggle cycles.
+
+    Args:
+        configuration_path: Isolated legacy source configuration.
+        monkeypatch: Save-only menu input.
+    """
+    configuration_path.parent.mkdir()
+    configuration_path.write_text('''[data.data_vendors]
+news_data = "alpha_vantage,yfinance"
+fundamental_data = "sec_edgar,alpha_vantage"
+[data.tool_vendors]
+get_stock_data = "alpha_vantage"
+''')
+    select_menus(monkeypatch, configuration_path, [2])
+    result = runner.invoke(application, [str(configuration_path)])
+
+    assert result.exit_code == 0, result.output
+    data = tomllib.loads(configuration_path.read_text())["data"]
+    assert data["data_vendors"] == {"news_data": "yfinance,alpha_vantage", "fundamental_data": "sec_edgar,yfinance,alpha_vantage"}
+    assert data["tool_vendors"] == {"get_stock_data": "yfinance,alpha_vantage"}
