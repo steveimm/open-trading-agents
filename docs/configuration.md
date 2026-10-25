@@ -58,7 +58,7 @@ These flags do not create a named preset. Use the interactive wizard to save one
 
 ## Run profile selection
 
-Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an editable list. Select a row to change its profile, return to the list, and choose **Continue** at the bottom when finished. Rows display the selected preset name, or the harness, model, and effort when no saved preset matches. A short explanation beneath the highlighted row describes the group or role. It remains visible while choosing that role’s profile.
+Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an editable list. Select a row to change its profile, return to the list, and choose **Continue** at the bottom when finished. Rows display the selected preset name, or the harness, model, and effort when no saved preset matches. A short explanation directly below the menu title describes the highlighted group or role and wraps to the terminal width. It remains visible while choosing that role’s profile.
 
 **Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
 

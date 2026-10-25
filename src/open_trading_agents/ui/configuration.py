@@ -7,6 +7,9 @@ from pathlib import Path
 import questionary
 import typer
 from prompt_toolkit.application import Application
+from prompt_toolkit.filters import IsDone
+from prompt_toolkit.layout import ConditionalContainer, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
 from questionary.prompts.common import InquirerControl
 
@@ -63,6 +66,7 @@ _MENU_STYLE = questionary.Style([
     ("question", "fg:#bd9bfa bold"),
     ("qmark", "fg:#bd9bfa bold"),
     ("instruction", "fg:#8799af"),
+    ("description", "fg:#a9bcd3"),
     ("pointer", "fg:#bd9bfa bold"),
     ("answer", "fg:#78cbd4"),
     ("selected", "fg:#d9e2ef bg:#303547 bold"),
@@ -113,7 +117,7 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
         label: Name of the selection.
         choices: Human-readable choices in display order.
         default: Initially selected index, accepted by Enter.
-        descriptions: Optional short explanations shown beneath the highlighted choice.
+        descriptions: Optional explanations shown below the title and updated with the highlighted choice.
 
     Returns:
         The selected zero-based index.
@@ -128,8 +132,17 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
             instruction="(↑/↓ select · Enter confirm)",
             use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
-            erase_when_done=True,
+            erase_when_done=True, show_description=False,
         )
+        if descriptions:
+            control = next(control for control in question.application.layout.find_all_controls() if isinstance(control, InquirerControl))
+
+            def explanation() -> list[tuple[str, str]]:
+                """Return the highlighted choice's explanation without an extra label."""
+                return [("class:description", control.get_pointed_at().description or "")]
+
+            help_window = Window(FormattedTextControl(explanation), wrap_lines=True, dont_extend_height=True)
+            question.application.layout.container.children.insert(1, ConditionalContainer(help_window, filter=~IsDone()))
 
         def style_rows(application: Application) -> None:
             """Refresh semantic colors and highlight as the selection cursor moves.

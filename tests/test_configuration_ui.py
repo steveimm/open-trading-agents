@@ -582,20 +582,26 @@ def test_keyboard_cancellation_keeps_existing_configuration(wizard: Path) -> Non
     assert wizard.read_text() == original
 
 
-def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("columns", [40, 100])
+def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatch: pytest.MonkeyPatch, columns: int) -> None:
     """Render real keyboard selection with distinct actions and only one moving highlight.
 
     Args:
         monkeypatch: Hook for observing the real Questionary render cycle.
+        columns: Terminal width used to verify wrapped descriptions.
     """
     from prompt_toolkit.application import Application
+    from prompt_toolkit.data_structures import Size
     from questionary.prompts.common import InquirerControl
 
     original = configuration_ui.questionary.select
     frames: list[list[list[tuple[str, str]]]] = []
     explanations: list[str] = []
+    long_description = "Use these assignments. " + configuration_ui._GROUP_DESCRIPTIONS["Working agents"]
+    output = DummyOutput()
+    monkeypatch.setattr(output, "get_size", lambda: Size(rows=30, columns=columns))
 
-    with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
+    with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=output):
         def question(*args: object, **kwargs: object) -> object:
             """Capture styled rows after each render and advance using actual arrow keys."""
             result = original(*args, **kwargs)
@@ -611,8 +617,21 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
                 for control in application.layout.find_all_controls():
                     if isinstance(control, InquirerControl):
                         frames.append([choice.title for choice in control.choices])
-                        content = control.create_content(width=100, height=30)
-                        explanations.append("".join(fragment[1] for row in range(content.line_count) for fragment in content.get_line(row)))
+                        content = control.create_content(width=columns, height=30)
+                        menu_text = "".join(fragment[1] for row in range(content.line_count) for fragment in content.get_line(row))
+                        assert "Description:" not in menu_text and control.get_pointed_at().description not in menu_text
+                        help_window = application.layout.container.children[1].content
+                        info = help_window.render_info
+                        menu_window = next(window for window in application.layout.find_all_windows() if window.content is control)
+                        assert info._y_offset + info.window_height == menu_window.render_info._y_offset
+                        screen = application.renderer._last_screen
+                        visible = "".join(screen.data_buffer[y][x].char
+                                          for y in range(info._y_offset, info._y_offset + info.window_height)
+                                          for x in range(columns)).rstrip()
+                        explanations.append(visible)
+                        assert visible == control.get_pointed_at().description
+                        if len(frames) == 1:
+                            assert info.window_height > 1
                         keyboard.send_text("\x1b[B" if len(frames) == 1 else "\r")
 
             result.application.after_render += rendered
@@ -620,7 +639,7 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
 
         monkeypatch.setattr(configuration_ui.questionary, "select", question)
         assert configuration_ui._choose("Configuration", ["Profile", "Continue", "Back"], default=1,
-                                        descriptions=["Choose a profile.", "Use these assignments.", "Return to the previous menu."]) == 2
+                                        descriptions=["Choose a profile.", long_description, "Return to the previous menu."]) == 2
 
     assert "Use these assignments." in explanations[0]
     assert "Return to the previous menu." in explanations[-1]
