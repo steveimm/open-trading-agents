@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import stat
@@ -32,6 +31,11 @@ def application_dir() -> Path:
 def default_config_path() -> Path:
     """Return the configuration file used when no explicit path is supplied."""
     return application_dir() / "config.toml"
+
+
+def default_portfolio_path() -> Path:
+    """Return the saved portfolio offered at the beginning of interactive runs."""
+    return application_dir() / "portfolio.json"
 
 
 def preset_path(name: str) -> Path:
@@ -460,25 +464,25 @@ def _configuration_document(path: Path) -> TOMLDocument:
     return document
 
 
-def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) -> None:
-    """Persist TOML atomically and restrict credential-bearing files to their owner.
+def _write_text(path: Path, text: str, overwrite: bool = True, mode: int | None = None) -> None:
+    """Persist text atomically while preserving existing permissions or applying an explicit mode.
 
     Args:
-        path: Destination configuration or preset file.
-        document: Validated TOML content to save.
+        path: Destination settings or portfolio file.
+        text: Validated serialized content to save.
         overwrite: Whether replacing an existing destination is allowed.
+        mode: Explicit permissions, or None to preserve existing file permissions.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
             temporary = Path(handle.name)
-            handle.write(tomlkit.dumps(document))
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        data = document.get("data", {})
-        if any(data.get(key) for key in DATA_CREDENTIAL_KEYS):
-            temporary.chmod(0o600)
+        if mode is not None:
+            temporary.chmod(mode)
         elif path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         if overwrite:
@@ -488,6 +492,19 @@ def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) 
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _write_document(path: Path, document: TOMLDocument, overwrite: bool = True) -> None:
+    """Persist TOML atomically and restrict credential-bearing files to their owner.
+
+    Args:
+        path: Destination configuration or preset file.
+        document: Validated TOML content to save.
+        overwrite: Whether replacing an existing destination is allowed.
+    """
+    data = document.get("data", {})
+    mode = 0o600 if any(data.get(key) for key in DATA_CREDENTIAL_KEYS) else None
+    _write_text(path, tomlkit.dumps(document), overwrite, mode)
 
 
 def save_data_configuration(
@@ -757,7 +774,23 @@ def load_portfolio(path: Path | None) -> Portfolio | None:
     Returns:
         Validated holdings, preserving the difference between absent and flat.
     """
-    return Portfolio.model_validate(json.loads(path.read_text())) if path else None
+    return Portfolio.model_validate_json(path.expanduser().read_text(encoding="utf-8")) if path is not None else None
+
+
+def save_portfolio(path: Path, portfolio: Portfolio) -> Path:
+    """Validate and atomically save holdings in an owner-readable JSON file.
+
+    Args:
+        path: Destination portfolio file.
+        portfolio: Pending holdings and cash from the editor.
+
+    Returns:
+        The absolute saved path.
+    """
+    validated = Portfolio.model_validate(portfolio.model_dump())
+    path = path.expanduser().resolve()
+    _write_text(path, validated.model_dump_json(indent=2, exclude_none=True) + "\n", mode=0o600)
+    return path
 
 
 def validate_date(value: str) -> str:

@@ -23,6 +23,7 @@ def run_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path.parent.mkdir()
     path.write_text('research_rounds = 1\nrisk_rounds = 1\n[harness]\nkind = "pi"\nmodel = "base-model"\n')
     save_preset("available", HarnessSettings(kind="pi", model="base-model"))
+    monkeypatch.setattr(configuration_ui, "select_run_portfolio", lambda: None)
     return path
 
 
@@ -88,12 +89,13 @@ def test_interactive_run_asks_startup_choices_before_starting(run_config: Path, 
             "deep": HarnessSettings(kind="claude-code", model="manager", effort="high"),
         })
 
+    monkeypatch.setattr(configuration_ui, "select_run_portfolio", lambda: calls.append("portfolio"))
     monkeypatch.setattr(cli.typer, "prompt", prompt)
     monkeypatch.setattr(configuration_ui, "select_research_depth", depth)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", agents)
     result = runner.invoke(cli.app, [])
     assert result.exit_code == 0, result.output
-    assert calls == ["Ticker", "Analysis date (YYYY-MM-DD)", "depth", "agents", "Output directory", "workflow"]
+    assert calls == ["portfolio", "Ticker", "Analysis date (YYYY-MM-DD)", "depth", "agents", "Output directory", "workflow"]
     ticker, trade_date, settings, output_dir = received[0]
     assert ticker == "NVDA" and trade_date == "2024-03-15"
     assert settings.model_settings().model == "worker" and settings.model_settings().effort == "low"
@@ -155,7 +157,7 @@ def test_cancelling_date_prompt_does_not_create_run_state(run_config: Path, monk
     assert {path.name for path in run_config.parent.iterdir()} == {"config.toml", "presets"}
 
 
-@pytest.mark.parametrize("stage", ["ticker", "date", "depth", "editor", "output"])
+@pytest.mark.parametrize("stage", ["portfolio", "ticker", "date", "depth", "editor", "output"])
 @pytest.mark.parametrize("exception", [typer.Abort, KeyboardInterrupt])
 def test_startup_cancellation_exits_without_creating_or_changing_files(
     run_config: Path,
@@ -190,6 +192,7 @@ def test_startup_cancellation_exits_without_creating_or_changing_files(
         raise exception()
 
     targets = {
+        "portfolio": (configuration_ui, "select_run_portfolio"),
         "ticker": (cli.typer, "prompt"),
         "date": (configuration_ui, "select_analysis_date"),
         "depth": (configuration_ui, "select_research_depth"),

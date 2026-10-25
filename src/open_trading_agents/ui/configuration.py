@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from math import isfinite
 from pathlib import Path
 
 import questionary
@@ -17,14 +18,19 @@ from questionary.prompts.common import InquirerControl
 from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.config import (
     HarnessSettings,
+    Portfolio,
+    Position,
     Settings,
+    default_portfolio_path,
     delete_preset,
     list_presets,
+    load_portfolio,
     load_preset,
     load_settings,
     preset_path,
     save_configuration,
     save_data_configuration,
+    save_portfolio,
     save_preset,
     set_default_preset,
     validate_date,
@@ -101,7 +107,7 @@ def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
     """
     action = title.split(" · ", 1)[0]
     style = "class:text"
-    if action in {"Continue", "Save", "Yes"}:
+    if action in {"Continue", "Save", "Yes", "Add position"}:
         style = "class:forward"
     elif action in {"Back", "Cancel", "No"}:
         style = "class:back"
@@ -201,12 +207,145 @@ def _confirm(label: str, default: bool = False) -> bool:
 
 
 def select_configuration_section() -> str:
-    """Choose whether to configure agent profiles or data-source access.
+    """Choose agent profiles, data-source access, or saved portfolio holdings.
 
     Returns:
-        The selected configuration section, agents or data.
+        The selected configuration section, agents, data, or portfolio.
     """
-    return ("agents", "data")[_choose("Configuration", ["Agents", "Data sources"])]
+    return ("agents", "data", "portfolio")[_choose("Configuration", ["Agents", "Data sources", "Portfolio"])]
+
+
+def _portfolio_number(label: str, current: float | None, *, optional: bool = False, nonnegative: bool = False) -> float | None:
+    """Read a finite portfolio value, preserving unknown optional amounts.
+
+    Args:
+        label: Name of the numeric field.
+        current: Existing value offered on Enter.
+        optional: Whether blank or unknown is a valid value.
+        nonnegative: Whether negative values must be rejected.
+
+    Returns:
+        The entered number, or None for an unknown optional amount.
+    """
+    default = str(current) if current is not None else "unknown" if optional else None
+    prompt = f"{label} (or unknown)" if optional else label
+    while True:
+        raw = typer.prompt(prompt, default=default).strip()
+        if optional and raw.lower() in {"", "unknown"}:
+            return None
+        try:
+            value = float(raw)
+            if isfinite(value) and (not nonnegative or value >= 0):
+                return value
+        except ValueError:
+            pass
+        typer.echo("Enter a non-negative finite number." if nonnegative else "Enter a finite number.")
+
+
+def _portfolio_position(current: Position | None = None) -> Position:
+    """Create or edit one holding with validated ticker, quantity, and optional cost.
+
+    Args:
+        current: Position being edited, or None when adding a holding.
+
+    Returns:
+        A complete validated position.
+    """
+    while True:
+        ticker = typer.prompt("Ticker", default=current.ticker if current is not None else None).strip()
+        try:
+            position = Position(ticker=ticker, quantity=0)
+            break
+        except ValueError:
+            typer.echo("Enter a valid ticker or supported alias.")
+    quantity = _portfolio_number("Quantity", current.quantity if current is not None else None)
+    average = _portfolio_number("Average price", current.average_price if current is not None else None,
+                                optional=True, nonnegative=True)
+    return Position(ticker=position.ticker, quantity=quantity, average_price=average)
+
+
+def _portfolio_currency(current: str | None) -> str | None:
+    """Choose a common currency or enter another three-letter currency code.
+
+    Args:
+        current: Existing currency, or None if unspecified.
+
+    Returns:
+        The selected currency code, or None for unknown.
+    """
+    currencies = ["USD", "KRW", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF"]
+    if current is not None and current not in currencies:
+        currencies.append(current)
+    choice = _choose("Currency", [*currencies, "Other currency", "Unknown"],
+                     currencies.index(current) if current is not None else len(currencies) + 1)
+    if choice < len(currencies):
+        return currencies[choice]
+    if choice == len(currencies) + 1:
+        return None
+    while True:
+        code = typer.prompt("Currency code (e.g. SGD)").strip().upper()
+        if len(code) == 3 and code.isascii() and code.isalpha():
+            return code
+        typer.echo("Enter a three-letter currency code.")
+
+
+def configure_portfolio_interactively(path: Path) -> None:
+    """Edit portfolio fields and holdings, writing only after the user chooses Save.
+
+    Args:
+        path: Saved portfolio file to create or update.
+    """
+    try:
+        portfolio = load_portfolio(path) if path.exists() else Portfolio(currency="USD")
+    except ValueError:
+        if not _confirm("Saved portfolio is invalid. Start a replacement?", default=False):
+            return
+        portfolio = Portfolio(currency="USD")
+    assert portfolio is not None
+    cursor = 0
+    while True:
+        cash = f"{portfolio.cash:g}" if portfolio.cash is not None else "Unknown"
+        positions = [f"{position.ticker} · {position.quantity:g} units · Average {position.average_price:g}"
+                     if position.average_price is not None else f"{position.ticker} · {position.quantity:g} units · Average unknown"
+                     for position in portfolio.positions]
+        labels = [f"Currency · {portfolio.currency or 'Unknown'}", f"Available cash · {cash}", *positions, "Add position", "Save"]
+        cursor = _choose("Portfolio", labels, min(cursor, len(labels) - 1))
+        if cursor == 0:
+            portfolio.currency = _portfolio_currency(portfolio.currency)
+        elif cursor == 1:
+            portfolio.cash = _portfolio_number("Available cash", portfolio.cash, optional=True)
+        elif cursor == len(labels) - 2:
+            portfolio.positions.append(_portfolio_position())
+        elif cursor == len(labels) - 1:
+            target = save_portfolio(path, portfolio)
+            typer.echo(f"Saved portfolio: {target}")
+            return
+        else:
+            index = cursor - 2
+            action = _choose(portfolio.positions[index].ticker, ["Edit", "Remove", "Back"])
+            if action == 0:
+                portfolio.positions[index] = _portfolio_position(portfolio.positions[index])
+            elif action == 1:
+                portfolio.positions.pop(index)
+
+
+def select_run_portfolio() -> Portfolio | None:
+    """Ask whether this run should use the saved portfolio before other research choices.
+
+    Returns:
+        Validated saved holdings, or None when the user declines.
+
+    Raises:
+        typer.Exit: The requested saved portfolio is missing or invalid.
+    """
+    path = default_portfolio_path()
+    if not _confirm("Consider your saved portfolio for this run?", default=path.is_file()):
+        return None
+    try:
+        return load_portfolio(path)
+    except (ValueError, OSError):
+        typer.echo(f"Saved portfolio is missing, unreadable, or invalid: {path}. Run uv run open-trading-agents configure portfolio.", err=True)
+        raise typer.Exit(1) from None
 
 
 def _key_preview(value: str) -> str:

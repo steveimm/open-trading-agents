@@ -3,7 +3,15 @@ import shutil
 from pathlib import Path
 
 from open_trading_agents.analysis.prompts import ROLES
-from open_trading_agents.config import Settings, default_config_path, list_presets, load_preset, load_settings
+from open_trading_agents.config import (
+    Settings,
+    default_config_path,
+    default_portfolio_path,
+    list_presets,
+    load_portfolio,
+    load_preset,
+    load_settings,
+)
 from open_trading_agents.dataflows.config import build_data_config, read_data_credentials
 from open_trading_agents.dataflows.router import TOOLS_CATEGORIES, VENDOR_METHODS
 
@@ -80,11 +88,36 @@ def _data_checks(settings: Settings, path: Path, action: str) -> list[tuple[str,
     return checks
 
 
-def doctor_checks(config_path: Path) -> list[tuple[str, str]]:
-    """Inspect local application, profile, executable, and data-source configuration.
+def _portfolio_check(path: Path) -> str:
+    """Validate saved holdings without displaying balances, tickers, or position sizes.
+
+    Args:
+        path: Portfolio JSON file to inspect.
+
+    Returns:
+        Local validity or an actionable setup message.
+    """
+    action = "uv run open-trading-agents configure portfolio"
+    if path != default_portfolio_path().resolve():
+        action += f" --file {shlex.quote(str(path))}"
+    try:
+        portfolio = load_portfolio(path)
+    except FileNotFoundError:
+        return f"Not configured (optional). Run {action}."
+    except OSError:
+        return f"Unreadable: {path}. Check file permissions."
+    except ValueError:
+        return f"Invalid portfolio JSON or holdings. Run {action}."
+    assert portfolio is not None
+    return f"Valid: {path} ({len(portfolio.positions)} positions)"
+
+
+def doctor_checks(config_path: Path, portfolio_path: Path | None = None) -> list[tuple[str, str]]:
+    """Inspect local application, profile, executable, data-source, and portfolio configuration.
 
     Args:
         config_path: Application configuration file selected for this inspection.
+        portfolio_path: Optional custom holdings file, otherwise the application portfolio.
 
     Returns:
         Label/message pairs containing local findings and setup commands, never secrets.
@@ -105,7 +138,7 @@ def doctor_checks(config_path: Path) -> list[tuple[str, str]]:
     except ValueError:
         config_message = f"Invalid: {source}. Fix the TOML configuration before running an analysis."
 
-    checks = [("Config", config_message)]
+    checks = [("Config", config_message), ("Portfolio", _portfolio_check((portfolio_path or default_portfolio_path()).expanduser().resolve()))]
     checks.extend((name, shutil.which(executable) or "Not installed")
                   for name, executable in (("pi", "pi"), ("codex", "codex"), ("claude-code", "claude")))
     try:

@@ -17,7 +17,7 @@ Use `--help` to see all options. To check installed harnesses, saved profiles, a
 uv run open-trading-agents doctor
 ```
 
-`doctor` reports whether the config is readable, the default profile is usable, and API keys or SEC contact identity are configured. It identifies missing settings without printing their values. These are local checks. It does not contact providers to validate API keys. Use `doctor --config PATH` to inspect another configuration file.
+`doctor` reports whether the config is readable, the default profile is usable, and API keys or SEC contact identity are configured. It also validates the saved portfolio JSON and reports missing or invalid holdings files. It identifies missing settings without printing API keys or portfolio balances. These are local checks. It does not contact providers to validate API keys. Use `doctor --config PATH` to inspect another configuration file.
 
 ## Saved runs and resume
 
@@ -56,13 +56,33 @@ Usage shows input, output, and cache reads. Cache writes appear only when report
 
 ## Portfolio context
 
-Use `--portfolio portfolio.json` to supply holdings and cash:
+Create or edit your saved portfolio with:
 
-```json
-{"cash": 10000, "currency": "USD", "positions": [{"ticker": "NVDA", "quantity": 10, "average_price": 120}]}
+```sh
+uv run open-trading-agents configure portfolio
 ```
 
-An omitted portfolio means holdings are unknown. An empty portfolio means a known flat account. The application does not connect to a broker or place orders.
+The wizard edits currency, available cash, and positions. Select a position to edit or remove it, or choose **Add position**. Enter `unknown` for optional cash or average prices you do not want to provide. **Save** writes `~/.open-trading-agents/portfolio.json`; Ctrl+C discards pending edits. An empty positions list means no holdings.
+
+Interactive runs ask whether to use this portfolio before the ticker question. Declining leaves holdings unknown. If you select Yes but the file is missing or invalid, the run stops with a setup instruction. `doctor` checks the default portfolio even when model configuration is missing.
+
+Use `configure portfolio --file PATH` to edit another JSON file, and `doctor --portfolio PATH` to validate it. An explicit `--portfolio PATH` on a run uses that file without asking. Headless, JSON-event, and redirected runs use a portfolio only when this flag is supplied:
+
+```sh
+uv run open-trading-agents --ticker NVDA --headless --portfolio ~/.open-trading-agents/portfolio.json
+```
+
+The JSON format remains available for manual editing:
+
+```json
+{
+  "cash": 10000,
+  "currency": "USD",
+  "positions": [{"ticker": "NVDA", "quantity": 10, "average_price": 120}]
+}
+```
+
+Each position requires a ticker and finite quantity; average price is optional and cannot be negative. Cash and currency are optional. Portfolio context reaches the Trader, all risk-debate agents, and the Portfolio Manager. Resumed runs retain their original portfolio snapshot. The application does not connect to a broker or place orders.
 
 ## Memory and backtesting
 

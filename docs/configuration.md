@@ -10,7 +10,7 @@ uv run open-trading-agents configure agents
 
 Choose **Create or update profile**, select the harness, provider, model, and reasoning effort, then enter a preset name. Interactive configuration always saves a named preset. The final question asks whether to use it by default. The first setup goes directly to profile creation.
 
-Running `configure` without a subcommand offers **Agents** and **Data sources**. Use `configure data` to enter data-source API keys and SEC contact information; these settings are stored in the same `config.toml`. See [data-source setup](data-sources.md#source-configuration).
+Running `configure` without a subcommand offers **Agents**, **Data sources**, and **Portfolio**. Use `configure data` to enter data-source API keys and SEC contact information; these settings are stored in the same `config.toml`. See [data-source setup](data-sources.md#source-configuration). Use `configure portfolio` to edit the saved holdings described in [portfolio context](usage.md#portfolio-context).
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 

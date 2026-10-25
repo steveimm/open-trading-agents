@@ -20,6 +20,7 @@ from open_trading_agents.config import (
     HarnessSettings,
     Settings,
     default_config_path,
+    default_portfolio_path,
     list_presets,
     load_portfolio,
     load_settings,
@@ -29,7 +30,7 @@ from open_trading_agents.config import (
 from open_trading_agents.reporting.usage import format_run_usage
 
 app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
-configure_app = typer.Typer(no_args_is_help=False, add_completion=False, help="Configure agent profiles and data sources.")
+configure_app = typer.Typer(no_args_is_help=False, add_completion=False, help="Configure agent profiles, data sources, and portfolio holdings.")
 app.add_typer(configure_app, name="configure")
 console = Console(stderr=True)
 
@@ -189,7 +190,7 @@ def run(
     analysts: Annotated[str | None, typer.Option(help="Comma-separated market,social,news,fundamentals.")] = None,
     research_rounds: Annotated[int | None, typer.Option(min=1, max=20)] = None,
     risk_rounds: Annotated[int | None, typer.Option(min=1, max=20)] = None,
-    portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    portfolio: Annotated[Path | None, typer.Option(exists=True, dir_okay=False, help="Holdings JSON file. Uses this portfolio without asking.")] = None,
     output_dir: Annotated[Path | None, typer.Option("--output-dir", file_okay=False, help="Parent directory for this run's output folder.")] = None,
     headless: Annotated[bool, typer.Option(help="Run without the terminal UI.")] = False,
     events: Annotated[bool, typer.Option(help="Emit normalized JSONL events to stdout.")] = False,
@@ -222,6 +223,14 @@ def run(
             raise typer.Exit(1)
 
         interactive = not headless and not events and sys.stdin.isatty() and sys.stdout.isatty()
+        if analysis_date is not None:
+            analysis_date = validate_date(analysis_date.strip())
+        selected_portfolio = load_portfolio(portfolio)
+        if interactive and portfolio is None:
+            from open_trading_agents.ui.configuration import select_run_portfolio
+
+            selected_portfolio = select_run_portfolio()
+
         if ticker is None:
             if not interactive:
                 raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
@@ -251,7 +260,7 @@ def run(
         if output_dir is not None:
             output_dir = output_dir.expanduser().resolve()
 
-        workflow = Workflow(ticker, analysis_date, settings, load_portfolio(portfolio), output_dir=output_dir, config_path=config)
+        workflow = Workflow(ticker, analysis_date, settings, selected_portfolio, output_dir=output_dir, config_path=config)
         run_workflow(workflow, headless, events)
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
@@ -360,7 +369,7 @@ def configure(
     ctx: typer.Context,
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
 ) -> None:
-    """Choose agent profiles or data sources when no configuration subcommand is supplied.
+    """Choose agent profiles, data sources, or portfolio holdings when no subcommand is supplied.
 
     Args:
         ctx: Command context identifying an optional configuration subcommand.
@@ -371,13 +380,16 @@ def configure(
 
     try:
         if not sys.stdin.isatty():
-            raise typer.BadParameter("choose 'configure agents' with selection flags, or run 'configure data' in a terminal")
+            raise typer.BadParameter("choose 'configure agents' with selection flags, or run 'configure data' or 'configure portfolio' in a terminal")
         from open_trading_agents.ui.configuration import select_configuration_section
 
-        if select_configuration_section() == "agents":
+        section = select_configuration_section()
+        if section == "agents":
             configure_agents(ctx, config=config)
-        else:
+        elif section == "data":
             configure_data(ctx, config=config)
+        else:
+            configure_portfolio()
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None
@@ -460,20 +472,47 @@ def configure_data(
         raise typer.Exit(1) from exc
 
 
+@configure_app.command("portfolio", help="Create or edit saved holdings, cash, and currency.")
+def configure_portfolio(
+    file: Annotated[Path | None, typer.Option("--file", dir_okay=False, help="Portfolio file. Defaults to ~/.open-trading-agents/portfolio.json.")] = None,
+) -> None:
+    """Edit the saved portfolio without configuring models or contacting providers.
+
+    Args:
+        file: JSON portfolio file to create or update.
+    """
+    try:
+        if not sys.stdin.isatty():
+            raise typer.BadParameter("run 'configure portfolio' in a terminal, or provide a portfolio JSON file with --portfolio")
+        from open_trading_agents.ui.configuration import configure_portfolio_interactively
+
+        configure_portfolio_interactively((file or default_portfolio_path()).expanduser())
+    except (typer.Abort, KeyboardInterrupt):
+        typer.echo("Cancelled.", err=True)
+        raise typer.Exit(130) from None
+    except typer.Exit:
+        raise
+    except (ValueError, OSError, RuntimeError) as exc:
+        console.print(f"Portfolio configuration failed: {exc}", style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
 @app.command()
 def doctor(
     ctx: typer.Context,
     config: Annotated[Path | None, typer.Option(dir_okay=False, help="Configuration file. Defaults to ~/.open-trading-agents/config.toml.")] = None,
+    portfolio: Annotated[Path | None, typer.Option(dir_okay=False, help="Portfolio file to check. Defaults to ~/.open-trading-agents/portfolio.json.")] = None,
 ) -> None:
-    """Check local harness, agent-profile, and data-source configuration.
+    """Check local harness, agent-profile, data-source, and portfolio configuration.
 
     Args:
         ctx: Command context carrying an optional parent configuration path.
         config: Configuration file to inspect without contacting model or data providers.
+        portfolio: Optional custom portfolio file to validate.
     """
     from open_trading_agents.diagnostics import doctor_checks
 
-    for label, result in doctor_checks(_configuration_path(ctx, config)):
+    for label, result in doctor_checks(_configuration_path(ctx, config), portfolio):
         typer.echo(f"{label}: {result}")
 
 

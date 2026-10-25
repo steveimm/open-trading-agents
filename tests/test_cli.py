@@ -100,7 +100,7 @@ def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(cli, "list_presets", unexpected)
     for options in (["--help"], ["configure", "--help"], ["configure", "agents", "--help"],
-                    ["configure", "data", "--help"], ["backtest", "--help"], ["resume", "--help"], ["doctor"]):
+                    ["configure", "data", "--help"], ["configure", "portfolio", "--help"], ["backtest", "--help"], ["resume", "--help"], ["doctor"]):
         result = runner.invoke(app, options)
         assert result.exit_code == 0, result.output
     configured_result = runner.invoke(app, ["configure", "agents", "--harness", "pi", "--model", "setup-model"])
@@ -113,7 +113,7 @@ def test_maintenance_commands_do_not_require_presets(tmp_path: Path, monkeypatch
     assert runner.invoke(app, ["resume", str(directory), "--headless"]).exit_code == 0
 
 
-@pytest.mark.parametrize("section", ["agents", "data"])
+@pytest.mark.parametrize("section", ["agents", "data", "portfolio"])
 def test_configure_menu_exposes_agent_and_data_editors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str) -> None:
     """Route the top-level setup menu without requiring a preset or creating run files.
 
@@ -128,12 +128,13 @@ def test_configure_menu_exposes_agent_and_data_editors(tmp_path: Path, monkeypat
     received: list[tuple[str, Path]] = []
     monkeypatch.setattr(configuration_ui, "configure_interactively", lambda path: received.append(("agents", path)))
     monkeypatch.setattr(configuration_ui, "configure_data_interactively", lambda path: received.append(("data", path)))
+    monkeypatch.setattr(configuration_ui, "configure_portfolio_interactively", lambda path: received.append(("portfolio", path)))
     path = tmp_path / "selected.toml"
 
     result = runner.invoke(app, ["configure", "--config", str(path)])
 
     assert result.exit_code == 0, result.output
-    assert received == [(section, path)]
+    assert received == [(section, tmp_path / ".open-trading-agents" / "portfolio.json" if section == "portfolio" else path)]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -257,6 +258,7 @@ def test_tui_cancellation_preserves_resume_command_and_exit_status(tmp_path: Pat
     monkeypatch.setattr(cli, "Workflow", lambda *args, **kwargs: workflow)
     monkeypatch.setattr(configuration_ui, "select_research_depth", lambda settings: settings)
     monkeypatch.setattr(configuration_ui, "select_agent_settings", lambda settings: settings)
+    monkeypatch.setattr(configuration_ui, "select_run_portfolio", lambda: None)
     monkeypatch.setattr(tui, "TradingApp", lambda *args, **kwargs: SimpleNamespace(run=lambda: None, error=None, result=None))
 
     result = runner.invoke(app, ["--ticker", "NVDA", "--date", "2024-03-15", "--output-dir", str(tmp_path)])

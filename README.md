@@ -12,11 +12,11 @@ uv run open-trading-agents configure
 uv run open-trading-agents
 ```
 
-The configuration menu offers **Agents** and **Data sources**. Agents saves named presets containing the harness, provider, model, and reasoning effort. At least one preset is required to start an analysis. Data sources configures FRED and Alpha Vantage API keys and your SEC contact identity. You can open either editor directly with `configure agents` or `configure data`.
+The configuration menu offers **Agents**, **Data sources**, and **Portfolio**. Agents saves named presets containing the harness, provider, model, and reasoning effort. At least one preset is required to start an analysis. Data sources configures providers and API access. Portfolio edits holdings, cash, and currency. Open the editors directly with `configure agents`, `configure data`, or `configure portfolio`.
 
-Run `uv run open-trading-agents doctor` to check local harness, profile, and data-source setup.
+Run `uv run open-trading-agents doctor` to check local harness, profile, data-source, and portfolio setup.
 
-The run wizard asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(default)` identifies your saved default preset.
+The run wizard first asks whether to consider your saved portfolio, then asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(selected)` identifies the current assignment inside each agent’s profile menu.
 
 Choose **Simple** to edit the working-agent and decision-manager profiles, or **Advanced** to assign profiles directly to individual agents. Select a row to change it, then choose **Continue** at the bottom when finished. Rows show the selected preset name or a compact model summary.
 
