@@ -37,6 +37,27 @@ _SOURCE_CATEGORIES = (
 )
 
 
+_GROUP_DESCRIPTIONS = {
+    "Working agents": "Research and trade proposals: market, fundamentals, news and sentiment analysts, bull/bear researchers, trader, three risk analysts, and reflection.",
+    "Decision manager": "Research Manager weighs the bull/bear debate. Portfolio Manager makes the final recommendation after the risk debate.",
+}
+_ROLE_DESCRIPTIONS = {
+    "market": "Examines price trends, momentum, volatility and trading volume.",
+    "fundamentals": "Examines financial statements, valuation, cash flow and balance-sheet strength.",
+    "news": "Reviews company news, macroeconomic events and upcoming catalysts.",
+    "social": "Assesses sentiment from news, StockTwits and Reddit evidence.",
+    "bull": "Argues the case for investing and challenges the bearish arguments.",
+    "bear": "Argues the case against investing and challenges the bullish arguments.",
+    "research_manager": "Weighs the bull/bear debate and gives the trader an investment plan.",
+    "trader": "Turns the research plan into a trade proposal with entry, stop and sizing guidance.",
+    "aggressive": "Examines upside opportunities and the cost of excessive caution in the proposed trade.",
+    "conservative": "Challenges downside risk and proposes safeguards to preserve capital.",
+    "neutral": "Weighs the aggressive and conservative arguments to balance opportunity and risk.",
+    "portfolio_manager": "Combines research, the trade proposal and risk debate into the final recommendation.",
+    "reflection": "When memory is enabled, reviews past decisions with measurable outcomes to derive lessons for future runs.",
+}
+
+
 _MENU_STYLE = questionary.Style([
     ("text", "fg:#d9e2ef"),
     ("question", "fg:#bd9bfa bold"),
@@ -85,13 +106,14 @@ def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
     return [(style, title)]
 
 
-def _choose(label: str, choices: list[str], default: int = 0) -> int:
+def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: list[str] | None = None) -> int:
     """Choose from a keyboard menu without changing its supplied labels.
 
     Args:
         label: Name of the selection.
         choices: Human-readable choices in display order.
         default: Initially selected index, accepted by Enter.
+        descriptions: Optional short explanations shown beneath the highlighted choice.
 
     Returns:
         The selected zero-based index.
@@ -99,7 +121,8 @@ def _choose(label: str, choices: list[str], default: int = 0) -> int:
     Raises:
         typer.Abort: The user cancels or terminal input closes.
     """
-    options = [questionary.Choice(title, value=index) for index, title in enumerate(choices)]
+    options = [questionary.Choice(title, value=index, description=descriptions[index] if descriptions else None)
+               for index, title in enumerate(choices)]
     try:
         question = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
@@ -655,7 +678,8 @@ def _agent_profile(
         default = preferred
     if inherit_default and same_as is not None:
         default = 0
-    choice = _choose(label, [*labels, "Configure for this run"], default)
+    description = _GROUP_DESCRIPTIONS.get(label) or next(_ROLE_DESCRIPTIONS[key] for key, role in ROLES.items() if role.name == label)
+    choice = _choose(label, [*labels, "Configure for this run"], default, descriptions=[description] * (len(labels) + 1))
     return ProfileChoice(_runtime(current, catalogs)) if choice == len(selections) else selections[choice]
 
 
@@ -670,7 +694,10 @@ def select_agent_settings(settings: Settings) -> Settings:
     """
     profiles = {name: load_preset(name) for name in list_presets()}
     catalogs: dict[str, ModelCatalog] = {}
-    mode = _choose("Agent configuration", ["Simple", "Advanced"])
+    mode = _choose("Agent configuration", ["Simple", "Advanced"], descriptions=[
+        "Choose one profile for working agents and one for the research and portfolio managers.",
+        "Choose a separate profile for each agent role.",
+    ])
     selected = settings.model_copy(deep=True)
     if mode == 0:
         return _simple_agent_settings(selected, profiles, catalogs)
@@ -707,7 +734,9 @@ def _simple_agent_settings(
         manager = selected.model_settings(True)
         labels = [f"{label} · {_profile_label(profile, profiles, names.get(key), selected.default_preset)}"
                   for (key, label), profile in zip(groups, (working, manager), strict=True)]
-        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
+        descriptions = [_GROUP_DESCRIPTIONS[label] for _, label in groups]
+        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor,
+                         descriptions=[*descriptions, "Use these assignments for this run."])
         if cursor == len(groups):
             role_names = {key: names.get("deep" if role.deep else "quick") for key, role in ROLES.items()}
             return _remember_agent_presets(selected, profiles, role_names)
@@ -758,7 +787,9 @@ def _advanced_agent_settings(
     while True:
         labels = [f"{ROLES[key].name} · {_profile_label(selected.model_settings(role=key), profiles, names.get(key), selected.default_preset)}"
                   for key in roles]
-        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
+        descriptions = [_ROLE_DESCRIPTIONS[key] for key in roles]
+        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor,
+                         descriptions=[*descriptions, "Use these assignments for this run."])
         if cursor == len(roles):
             return _remember_agent_presets(selected, profiles, names)
 

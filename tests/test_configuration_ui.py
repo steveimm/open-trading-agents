@@ -31,7 +31,7 @@ def select_choices(monkeypatch: pytest.MonkeyPatch, answers: list[int | str | No
     remaining = iter(answers)
     shown: list[tuple[str, list[str]]] = []
 
-    def choose(label: str, choices: list[str], default: int = 0) -> int:
+    def choose(label: str, choices: list[str], default: int = 0, *, descriptions: list[str] | None = None) -> int:
         """Select one queued answer or abort when the user stops setup."""
         shown.append((label, choices))
         try:
@@ -593,6 +593,7 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
 
     original = configuration_ui.questionary.select
     frames: list[list[list[tuple[str, str]]]] = []
+    explanations: list[str] = []
 
     with create_pipe_input() as keyboard, create_app_session(input=keyboard, output=DummyOutput()):
         def question(*args: object, **kwargs: object) -> object:
@@ -610,14 +611,20 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
                 for control in application.layout.find_all_controls():
                     if isinstance(control, InquirerControl):
                         frames.append([choice.title for choice in control.choices])
+                        content = control.create_content(width=100, height=30)
+                        explanations.append("".join(fragment[1] for row in range(content.line_count) for fragment in content.get_line(row)))
                         keyboard.send_text("\x1b[B" if len(frames) == 1 else "\r")
 
             result.application.after_render += rendered
             return result
 
         monkeypatch.setattr(configuration_ui.questionary, "select", question)
-        assert configuration_ui._choose("Configuration", ["Profile", "Continue", "Back"], default=1) == 2
+        assert configuration_ui._choose("Configuration", ["Profile", "Continue", "Back"], default=1,
+                                        descriptions=["Choose a profile.", "Use these assignments.", "Return to the previous menu."]) == 2
 
+    assert "Use these assignments." in explanations[0]
+    assert "Return to the previous menu." in explanations[-1]
+    assert "Use these assignments." not in explanations[-1]
     first, last = frames[0], frames[-1]
     assert "class:highlighted" not in first[0][0][0]
     assert "class:highlighted" in first[1][0][0] and "class:highlighted" not in first[2][0][0]
