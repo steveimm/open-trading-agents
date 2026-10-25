@@ -40,7 +40,7 @@ def select_choices(monkeypatch: pytest.MonkeyPatch, answers: list[int | str | No
             raise typer.Abort() from exc
         if isinstance(answer, str):
             matches = [index for index, choice in enumerate(choices)
-                       if choice.split(" · ", 1)[0].removesuffix(" (default)") == answer]
+                       if choice.split(" · ", 1)[0].removesuffix(" (selected)") == answer]
             assert len(matches) == 1, f"Expected one {answer!r} choice in {choices!r}"
             return matches[0]
         return default if answer is None else answer
@@ -322,15 +322,18 @@ def test_run_selects_independent_profiles_without_changing_saved_files(wizard: P
     assert shown[0] == ("Agent configuration", ["Simple", "Advanced"])
     editors = [choices for label, choices in shown if label == "Simple agent configuration"]
     assert editors == [
-        ["Working agents · alpha (default)", "Decision manager · alpha (default)", "Continue"],
+        ["Working agents · alpha", "Decision manager · alpha", "Continue"],
         ["Working agents · beta", "Decision manager · beta", "Continue"],
         ["Working agents · beta", "Decision manager · zeta", "Continue"],
-        ["Working agents · beta", "Decision manager · alpha (default)", "Continue"],
+        ["Working agents · beta", "Decision manager · alpha", "Continue"],
     ]
     assert [label for label, _ in shown].count("Decision manager") == 2
     profile_menus = [choices for label, choices in shown if label in {"Working agents", "Decision manager"}]
-    for choices in profile_menus:
-        assert [choice for choice in choices if "(default)" in choice] == ["alpha (default) · pi / small / low"]
+    assert [[choice.split(" · ", 1)[0] for choice in choices if "(selected)" in choice] for choices in profile_menus] == [
+        ["alpha (selected)"], ["Same as working agents (selected)"], ["zeta (selected)"],
+    ]
+    assert not any("(default)" in choice for _, choices in shown for choice in choices)
+    assert not any("(selected)" in choice for choices in editors for choice in choices)
     assert selected.default_preset == original.default_preset == load_settings().default_preset == "alpha"
     assert {path: path.read_bytes() for path in paths} == before
 
@@ -357,7 +360,7 @@ def test_manager_can_inherit_or_select_an_equal_independent_profile(
     assert selected.model_settings(True) == (original_profile if independent else next_profile)
     assert selected.agent_presets["research_manager"] == ("alpha-copy" if independent else "beta")
     editors = [choices for label, choices in shown if label == "Simple agent configuration"]
-    assert editors[1][1] == f"Decision manager · {'alpha-copy' if independent else 'alpha (default)'}"
+    assert editors[1][1] == f"Decision manager · {'alpha-copy' if independent else 'alpha'}"
     assert editors[-1][1] == f"Decision manager · {'alpha-copy' if independent else 'beta'}"
     assert original.deep is None and original.harness == original_profile
     assert not wizard.exists()
@@ -507,7 +510,7 @@ def test_saved_harness_defaults_reset_inherited_selectors(wizard: Path, monkeypa
     assert selected.agents["bull"].model_dump(exclude_unset=True) == HarnessSettings().model_dump()
     assert selected.model_settings() == original.harness
     role_choices = next(choices for label, choices in shown if label == "Bull Researcher")
-    assert "daily (default) · pi / Harness default / Harness default" in role_choices
+    assert "daily · pi / Harness default / Harness default" in role_choices
     assert not any(choice.startswith(("Harness default", "Default profile")) for choice in role_choices)
     assert not wizard.exists()
 
@@ -527,7 +530,7 @@ def test_advanced_role_can_select_the_saved_default(wizard: Path, monkeypatch: p
 
     role = ROLES[role_key]
     role_choices = next(choices for label, choices in shown if label == role.name)
-    assert "daily (default) · pi / saved-default / Harness default" in role_choices
+    assert "daily · pi / saved-default / Harness default" in role_choices
     assert not any(choice.startswith(("Harness default", "Default profile")) for choice in role_choices)
     assert selected.agents == {role_key: saved_default, "bull": override}
     assert selected.agents[role_key].model_dump(exclude_unset=True) == saved_default.model_dump()
@@ -638,7 +641,7 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
             return result
 
         monkeypatch.setattr(configuration_ui.questionary, "select", question)
-        assert configuration_ui._choose("Configuration", ["Profile", "Continue", "Back"], default=1,
+        assert configuration_ui._choose("Configuration", ["Profile (selected)", "Continue", "Back"], default=1,
                                         descriptions=["Choose a profile.", long_description, "Return to the previous menu."]) == 2
 
     assert "Use these assignments." in explanations[0]
@@ -654,3 +657,8 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
     assert forward.bgcolor == back.bgcolor == "303547"
     assert forward.color == "91d5ac" and back.color == "e8b86d"
     assert style.get_attrs_for_style_str("class:question").color == "bd9bfa"
+    for frame in (first, last):
+        badge, = [(token_style, text) for row in frame for token_style, text in row if text == "(selected)"]
+        assert badge in frame[0]
+        assert style.get_attrs_for_style_str(badge[0]).color == "78cbd4"
+        assert "class:highlighted" not in badge[0]

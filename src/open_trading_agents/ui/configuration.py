@@ -69,6 +69,7 @@ _MENU_STYLE = questionary.Style([
     ("description", "fg:#a9bcd3"),
     ("pointer", "fg:#bd9bfa bold"),
     ("answer", "fg:#78cbd4"),
+    ("assignment", "fg:#78cbd4 bold"),
     ("selected", "fg:#d9e2ef bg:#303547 bold"),
     ("highlighted", "bg:#303547 bold"),
     ("forward", "fg:#91d5ac bold"),
@@ -102,6 +103,11 @@ def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
         style = "class:destructive"
     if highlighted:
         style += " class:highlighted"
+
+    if " (selected)" in title:
+        before, marker, after = title.partition("(selected)")
+        badge_style = "class:assignment" + (" class:highlighted" if highlighted else "")
+        return [(style, before), (badge_style, marker), (style, after)]
 
     if title.endswith((" · Enabled", " · Disabled")):
         label, status = title.rsplit(" · ", 1)
@@ -567,19 +573,6 @@ class ProfileChoice:
     inherited: bool = False
 
 
-def _preset_label(name: str, default_preset: str | None) -> str:
-    """Mark the saved default preset independently of the menu pointer.
-
-    Args:
-        name: Saved preset name.
-        default_preset: Name configured as the application's default preset.
-
-    Returns:
-        The preset name with its persistent default marker when applicable.
-    """
-    return f"{name} (default)" if name == default_preset else name
-
-
 def _matching_preset(
     settings: HarnessSettings,
     profiles: dict[str, HarnessSettings],
@@ -592,7 +585,7 @@ def _matching_preset(
         settings: Effective profile shown in the editor.
         profiles: Available saved profiles.
         name: Exact preset chosen during this editing session.
-        default_preset: Saved default to mark and prefer when no explicit name was chosen.
+        default_preset: Saved default to prefer when no explicit name was chosen.
 
     Returns:
         A matching preset name, or None for a custom runtime.
@@ -611,19 +604,19 @@ def _profile_label(
     name: str | None = None,
     default_preset: str | None = None,
 ) -> str:
-    """Show a preset name and saved-default marker, or a compact custom runtime.
+    """Show a preset name or a compact custom runtime without assignment badges.
 
     Args:
         settings: Effective profile shown in the editor.
         profiles: Available saved profiles.
         name: Exact preset chosen during this editing session.
-        default_preset: Saved default to mark and prefer for matching selections.
+        default_preset: Saved default to prefer for matching selections.
 
     Returns:
         A preset name or harness/model/effort summary.
     """
     matched = _matching_preset(settings, profiles, name, default_preset)
-    return _preset_label(matched, default_preset) if matched is not None else _describe(settings)
+    return matched if matched is not None else _describe(settings)
 
 
 def _remember_agent_presets(selected: Settings, profiles: dict[str, HarnessSettings], names: dict[str, str | None]) -> Settings:
@@ -664,7 +657,7 @@ def _agent_profile(
         label: Group or individual role shown as the menu title.
         current: Existing runtime selection for this group or role.
         profiles: Saved named single-agent profiles.
-        default_preset: Saved default preset to label independently of the current selection.
+        default_preset: Saved default used to resolve otherwise identical profile choices.
         catalogs: Shared native discovery results for custom selections.
         same_as: Runtime offered as an explicit inheritance choice.
         inherit_default: Whether inheritance is initially selected.
@@ -683,7 +676,7 @@ def _agent_profile(
         selections.append(ProfileChoice(current))
     preferred = None
     for name, profile in profiles.items():
-        labels.append(f"{_preset_label(name, default_preset)} · {_describe(profile)}")
+        labels.append(f"{name} · {_describe(profile)}")
         if name == (current_name or default_preset) and profile == current:
             preferred = len(selections)
         selections.append(ProfileChoice(profile, name))
@@ -692,6 +685,9 @@ def _agent_profile(
         default = preferred
     if inherit_default and same_as is not None:
         default = 0
+
+    name, separator, details = labels[default].partition(" · ")
+    labels[default] = f"{name} (selected){separator}{details}"
     description = _GROUP_DESCRIPTIONS.get(label) or next((_ROLE_DESCRIPTIONS[key] for key, role in ROLES.items() if role.name == label), "")
     choice = _choose(label, [*labels, "Configure for this run"], default, descriptions=[description] * (len(labels) + 1))
     return ProfileChoice(_runtime(current, catalogs)) if choice == len(selections) else selections[choice]

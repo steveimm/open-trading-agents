@@ -14,7 +14,7 @@ Running `configure` without a subcommand offers **Agents** and **Data sources**.
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
-Use Up/Down to move the pointer and Enter to confirm. The `(default)` suffix identifies your saved default preset. Moving the pointer or selecting another profile for a run does not change that default. Ctrl+C cancels setup without saving.
+Use Up/Down to move the pointer and Enter to confirm. Inside a group or role’s profile menu, the colored `(selected)` badge identifies its current assignment. Moving the pointer does not move that badge. Selecting a profile for a run does not change your saved default. Ctrl+C cancels setup without saving.
 
 To remove a preset, choose **Delete saved profile**, select its name, and confirm. Deleting the default clears its default selection in the selected and global configuration. Other presets and saved runs are retained.
 
@@ -62,7 +62,7 @@ Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an 
 
 **Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
 
-**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, or reflection agent. Choose a saved profile or **Configure for this run**. To use your saved default, select the named preset marked `(default)`.
+**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, or reflection agent. Choose a saved profile or **Configure for this run**. The current assignment is marked `(selected)` inside the profile menu.
 
 These choices are saved with the run for resume and do not modify your presets or configuration file. Cancelling either editor discards its changes.
 
