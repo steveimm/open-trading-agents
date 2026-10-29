@@ -588,7 +588,6 @@ class TradingApp(App[None]):
             return
         field.value = ""
         self.stage_views["chat"].following = True
-        self.stage_views["chat"].focus()
         self._chat_task = asyncio.create_task(self._answer_chat(question))
 
     async def _answer_chat(self, question: str) -> None:

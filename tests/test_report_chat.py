@@ -127,8 +127,9 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         await pilot.pause()
         assert len(sessions) == 1 and len(sessions[0].prompts) == 1
         assert "Answer" in app.stage_views["chat"].plain()
-        await pilot.press("enter")
-        field.value = "second question"
+        assert field.has_focus and field.value == ""
+        await pilot.press(*"second question")
+        assert field.value == "second question"
         await pilot.press("enter")
         assert len(sessions[0].prompts) == 1
         sessions[0].wait.set()
@@ -136,6 +137,7 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         await pilot.press("enter")
         await pilot.pause()
         assert sessions[0].prompts[1] == "second question"
+        assert field.has_focus and field.value == ""
         assert app.error is None
     assert sessions[0].closed
 
@@ -174,13 +176,13 @@ async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path) -> None
         await pilot.pause()
         assert "Model unavailable" in app.stage_views["chat"].plain()
         assert app.error is None and app._failure is None
-        assert app.check_action("compose_chat", ())
-        await pilot.press("enter")
+        assert field.has_focus
+        assert not app.check_action("compose_chat", ())
         field.value = "Retry"
         await pilot.press("enter")
         await pilot.pause()
         assert session is not None and not session.closed
-        await pilot.press("enter", "escape", "q")
+        await pilot.press("escape", "q")
         assert session.closed
     assert (reports / "complete_report.md").read_text() == report
 
