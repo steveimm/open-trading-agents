@@ -14,7 +14,7 @@ class EventRecorder:
             directory: The run's database directory.
         """
         self.directory = directory
-        self.queue: queue.Queue[AgentEvent | None] = queue.Queue()
+        self.queue: queue.Queue[AgentEvent | threading.Event | None] = queue.Queue()
         self.error: Exception | None = None
         self.closed = False
         self.worker = threading.Thread(target=self._write, name="trading-event-writer", daemon=True)
@@ -49,6 +49,11 @@ class EventRecorder:
                     first = self.queue.get()
                     if first is None:
                         break
+                    if isinstance(first, threading.Event):
+                        transcript.flush()
+                        first.set()
+                        continue
+                    barrier = None
                     batch = [first]
                     while len(batch) < 256:
                         try:
@@ -58,15 +63,36 @@ class EventRecorder:
                         if event is None:
                             done = True
                             break
+                        if isinstance(event, threading.Event):
+                            barrier = event
+                            break
                         batch.append(event)
                     for body in store.append(batch):
                         transcript.write(body + "\n")
                     transcript.flush()
+                    if barrier is not None:
+                        barrier.set()
         except Exception as exc:
             self.error = exc
         finally:
             if store:
                 store.close()
+
+    def flush(self) -> None:
+        """Wait until queued events reach SQLite and the transcript.
+
+        Raises:
+            RuntimeError: The writer failed or was already closed.
+        """
+        if self.closed:
+            raise RuntimeError("event recorder is closed")
+        barrier = threading.Event()
+        self.queue.put_nowait(barrier)
+        while not barrier.wait(0.05):
+            if not self.worker.is_alive():
+                raise RuntimeError("event persistence failed") from self.error
+        if self.error:
+            raise RuntimeError("event persistence failed") from self.error
 
     def close(self) -> None:
         """Flush all queued events and report any disk-writing failure.

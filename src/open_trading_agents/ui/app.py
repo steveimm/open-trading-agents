@@ -558,6 +558,11 @@ class TradingApp(App[None]):
         self._browser_ready = (self.run_dir / "reports" / "complete_report.html").is_file()
         self._refresh_shortcuts()
         if self.report_chat is not None:
+            try:
+                await self.report_chat.replay(self.receive)
+            except Exception as exc:
+                self.notify(f"Could not restore chat: {exc}", severity="error")
+                return
             self.query_one("#chat-input", Input).disabled = False
             self.query_one("#chat-input", Input).placeholder = "Ask about the report"
 
@@ -617,7 +622,7 @@ class TradingApp(App[None]):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            await self.receive(AgentEvent("error", "Report Assistant", "chat", str(exc)))
+            self.notify(str(exc), severity="error")
         finally:
             await self.receive(AgentEvent("stage_end", "Report Assistant", "chat"))
             self.flush_events()

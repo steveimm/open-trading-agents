@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from textual.widgets import Input, Static, Tabs
 from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
 from open_trading_agents.dataflows.tools import TOOL_NAMES
+from open_trading_agents.persistence.storage import RunStore
 from open_trading_agents.ui.app import TradingApp
 
 
@@ -22,6 +24,7 @@ class Session:
     async def prompt(self, text: str) -> AgentResult:
         """Stream one answer while optionally holding the response open."""
         self.prompts.append(text)
+        await self.emit(AgentEvent("status", "Report Assistant", "chat", data={"prompt_accepted": True}))
         await self.emit(AgentEvent("prompt", "Report Assistant", "chat", text))
         await self.emit(AgentEvent("text", "Report Assistant", "chat", "Answer"))
         if self.wait is not None:
@@ -329,3 +332,178 @@ async def test_reports_fullscreen_preserves_columns_and_focus(tmp_path: Path, co
         assert app.report_document.plain() == report
         assert app.fullscreen
         assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0
+
+
+async def test_saved_chat_replays_and_resumes_native_context(tmp_path: Path) -> None:
+    """Reopen the saved conversation without resending its report or changing research artifacts."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    report_path = reports / "complete_report.md"
+    report_path.write_text("Original report")
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("original research transcript\n")
+    opened: list[AgentSpec] = []
+    sessions: list[Session] = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> Session:
+        """Record the exact native session and system instructions chosen on reopen."""
+        opened.append(spec)
+        session = Session(emit)
+        sessions.append(session)
+        return session
+
+    async def emit(event: AgentEvent) -> None:
+        """Accept events from the first interface."""
+
+    first = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    first.system_prompt = "Original chat instructions"
+    try:
+        await first.ask("First question", emit)
+        saved = [json.loads(line) for line in (tmp_path / "chat" / "transcript.jsonl").read_text().splitlines()]
+        assert [event["text"] for event in saved if event["kind"] == "prompt"] == ["First question"]
+        assert saved[-1]["kind"] == "agent_end" and saved[-1]["data"]["output"] == "Answer"
+    finally:
+        await first.close()
+    assert sessions[0].closed
+
+    restored = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    assert restored.system_prompt == "Original chat instructions"
+    app = TradingApp(run_dir=tmp_path, report_chat=restored)
+    async with app.run_test() as pilot:
+        await app.receive(AgentEvent("run_end", "Workflow", "reports"))
+        app.flush_events()
+        await pilot.pause()
+        view = app.stage_views["chat"]
+        assert "First question" in view.plain() and "Answer" in view.plain()
+        assert len(opened) == 1
+        app.query_one("#stage-tabs", Tabs).active = "tab-reports"
+        await pilot.pause()
+        await pilot.press("enter")
+        app.query_one("#chat-input", Input).value = "Follow-up question"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert opened[0].session_id is None and opened[1].session_id == "chat-session"
+        assert opened[1].system_prompt == "Original chat instructions"
+        assert sessions[1].prompts == ["Follow-up question"]
+        assert "Follow-up question" in view.plain()
+    assert report_path.read_text() == "Original report"
+    assert transcript.read_text() == "original research transcript\n"
+    store = RunStore(tmp_path / "chat")
+    try:
+        assert store.session("Report Assistant") == "chat-session"
+        assert store.metadata("context_sent") is True
+        assert [event.text for event in store.events() if event.kind == "prompt"] == ["First question", "Follow-up question"]
+    finally:
+        store.close()
+
+
+async def test_interrupted_chat_keeps_partial_output_and_native_context(tmp_path: Path) -> None:
+    """Retain an accepted question and partial answer when quitting, then resume without duplicating context."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "complete_report.md").write_text("Report context")
+    started = asyncio.Event()
+    opened = []
+    sessions = []
+    replayed = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> Session:
+        """Hold the first response open until cancellation."""
+        opened.append(spec)
+        session = Session(emit)
+        if len(opened) == 1:
+            session.wait = asyncio.Event()
+        sessions.append(session)
+        return session
+
+    async def emit(event: AgentEvent) -> None:
+        """Detect a partial response without waiting for its completion."""
+        if event.kind == "text":
+            started.set()
+
+    async def collect(event: AgentEvent) -> None:
+        """Capture the saved transcript for the reopened interface."""
+        replayed.append(event)
+
+    first = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    task = asyncio.create_task(first.ask("Long question", emit))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await first.close()
+    restored = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    try:
+        await restored.replay(collect)
+        assert any(event.kind == "text" and event.text == "Answer" for event in replayed)
+        assert any(event.kind == "error" and "interrupted" in event.text for event in replayed)
+        await restored.ask("Continue that answer", collect)
+        assert opened[1].session_id == "chat-session"
+        assert sessions[1].prompts == ["Continue that answer"]
+    finally:
+        await restored.close()
+
+
+async def test_chat_excludes_a_second_writer_and_releases_its_lock(tmp_path: Path) -> None:
+    """Prevent two interfaces from driving the same native conversation at once."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "complete_report.md").write_text("Report")
+    sessions = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> Session:
+        """Record model work only after the conversation lock is acquired."""
+        session = Session(emit)
+        sessions.append((spec.session_id, session))
+        return session
+
+    async def emit(event: AgentEvent) -> None:
+        """Accept fixture events."""
+
+    first = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    second = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    try:
+        await first.ask("First", emit)
+        with pytest.raises(RuntimeError, match="already active"):
+            await second.ask("Concurrent", emit)
+        assert len(sessions) == 1
+        await first.close()
+        await second.ask("After closing", emit)
+        assert sessions[1][0] == "chat-session"
+        assert sessions[1][1].prompts == ["After closing"]
+    finally:
+        await first.close()
+        await second.close()
+
+
+async def test_replay_marks_a_crashed_turn_without_model_requests(tmp_path: Path) -> None:
+    """Recover a committed question even if the process stopped before streaming events were written."""
+    store = RunStore(tmp_path / "chat")
+    store.set_metadata("pending_turn", {"id": "unfinished", "question": "Saved question"})
+    store.save_session("Report Assistant", "saved-session")
+    store.set_metadata("context_sent", True)
+    store.close()
+    replayed = []
+
+    async def emit(event: AgentEvent) -> None:
+        """Capture recovery events without opening a harness."""
+        replayed.append(event)
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, sink: EventSink) -> Session:
+        """Resume the saved context without needing another report injection."""
+        assert spec.session_id == "saved-session"
+        return Session(sink)
+
+    chat = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    await chat.replay(emit)
+    assert chat.session is None
+    assert [(event.kind, event.event_id) for event in replayed] == [("prompt", "unfinished:prompt"), ("error", "unfinished:error")]
+    assert replayed[0].text == "Saved question"
+
+    try:
+        await chat.ask("Next question", emit)
+    finally:
+        await chat.close()
+    replayed.clear()
+    await ReportChat(tmp_path, HarnessConfig(), "English").replay(emit)
+    assert [event.text for event in replayed if event.kind == "prompt"] == ["Saved question", "Next question"]
