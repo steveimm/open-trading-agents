@@ -316,16 +316,16 @@ def test_run_selects_independent_profiles_without_changing_saved_files(wizard: P
     assert selected.model_settings() == alternate and selected.model_settings(True) == working
     assert selected.agent_presets["market"] == selected.agent_presets["bull"] == "beta"
     assert selected.agent_presets["research_manager"] == selected.agent_presets["portfolio_manager"] == "alpha"
-    assert selected.agents == {}
+    assert selected.agents == {"chat": original.model_settings(role="chat")}
     assert original.agents == {"news": override}
     assert original.quick is None and original.deep is None
     assert shown[0] == ("Agent configuration", ["Simple", "Advanced"])
     editors = [choices for label, choices in shown if label == "Simple agent configuration"]
     assert editors == [
-        ["Working agents · alpha", "Decision manager · alpha", "Continue"],
-        ["Working agents · beta", "Decision manager · beta", "Continue"],
-        ["Working agents · beta", "Decision manager · zeta", "Continue"],
-        ["Working agents · beta", "Decision manager · alpha", "Continue"],
+        ["Working agents · alpha", "Decision manager · alpha", "Report Assistant · alpha", "Continue"],
+        ["Working agents · beta", "Decision manager · beta", "Report Assistant · alpha", "Continue"],
+        ["Working agents · beta", "Decision manager · zeta", "Report Assistant · alpha", "Continue"],
+        ["Working agents · beta", "Decision manager · alpha", "Report Assistant · alpha", "Continue"],
     ]
     assert [label for label, _ in shown].count("Decision manager") == 2
     profile_menus = [choices for label, choices in shown if label in {"Working agents", "Decision manager"}]
@@ -397,10 +397,10 @@ def test_simple_defaults_need_no_profile_questions_and_clear_role_overrides(wiza
 
     assert selected.model_settings(role="bull") == original.harness
     assert selected.model_settings(True) == original.deep
-    assert selected.agents == {}
+    assert selected.agents == {"chat": original.model_settings(role="chat")}
     assert shown == [
         ("Agent configuration", ["Simple", "Advanced"]),
-        ("Simple agent configuration", ["Working agents · pi / worker / low", "Decision manager · claude-code / manager / high", "Continue"]),
+        ("Simple agent configuration", ["Working agents · pi / worker / low", "Decision manager · claude-code / manager / high", "Report Assistant · pi / worker / low", "Continue"]),
     ]
     assert original.model_dump() == before
     assert not wizard.exists()
@@ -416,7 +416,7 @@ def test_custom_runtime_choices_are_only_applied_to_the_run(wizard: Path, monkey
     assert selected.quick == HarnessSettings(provider="local", model="large", effort="high")
     assert selected.model_settings(True) == selected.quick
     assert shown[-1] == (
-        "Simple agent configuration", ["Working agents · pi / large / high", "Decision manager · pi / large / high", "Continue"],
+        "Simple agent configuration", ["Working agents · pi / large / high", "Decision manager · pi / large / high", "Report Assistant · pi / small / low", "Continue"],
     )
     assert wizard.read_text() == original
     assert not (wizard.parent / "presets").exists()
@@ -662,3 +662,25 @@ def test_menu_highlight_moves_with_cursor_and_preserves_action_colors(monkeypatc
         assert badge in frame[0]
         assert style.get_attrs_for_style_str(badge[0]).color == "78cbd4"
         assert "class:highlighted" not in badge[0]
+
+
+@pytest.mark.parametrize("mode", ["Simple", "Advanced"])
+def test_chat_profile_is_independent_and_preserved(wizard: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    """Select a named chat preset independently and preserve it when reopening the editor."""
+    worker = HarnessSettings(model="worker")
+    manager = HarnessSettings(kind="codex", model="manager")
+    chat = HarnessSettings(kind="claude-code", model="chat", effort="high")
+    save_preset("conversation", chat)
+    original = Settings(harness=worker, deep=manager)
+    select_choices(monkeypatch, [mode, "Report Assistant", "conversation", "Continue"])
+    selected = configuration_ui.select_agent_settings(original)
+    assert selected.model_settings(role="chat") == chat
+    assert selected.agent_presets["chat"] == "conversation"
+    assert selected.model_settings(role="portfolio_manager") == manager
+    assert selected.model_settings(role="market") == worker
+    restored = Settings.model_validate_json(selected.model_dump_json())
+    select_choices(monkeypatch, ["Simple", "Continue"])
+    reopened = configuration_ui.select_agent_settings(restored)
+    assert reopened.model_settings(role="chat") == chat
+    assert reopened.agent_presets["chat"] == "conversation"
+    assert original.agents == {}

@@ -159,8 +159,9 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
             agent_configs=agent_configs,
             agent_presets=agent_presets,
             output_language=workflow.settings.output_language,
-            report_chat=ReportChat(workflow.directory, workflow.settings.model_settings(role="portfolio_manager").runtime(),
-                                   workflow.settings.output_language),
+            report_chat=ReportChat(workflow.directory, workflow.settings.model_settings(role="chat").runtime(),
+                                   workflow.settings.output_language, allow_execution=workflow.settings.allow_execution,
+                                   web_research=workflow.settings.web_research, max_tool_rounds=workflow.settings.max_tool_rounds),
         )
         ui.run()
         if ui.error:

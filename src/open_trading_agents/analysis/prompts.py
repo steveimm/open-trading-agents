@@ -54,6 +54,16 @@ First state what the measured alpha says about the directional call, citing the 
 }
 
 
+ROLES["chat"] = Role(
+    "Report Assistant", "chat",
+    """Discuss the complete financial research report with the user over multiple turns. Answer the current question directly, without repeating the report.
+Use the report and prior conversation as context. Explain disagreements and uncertainty, distinguish reported findings from your interpretation, and refer to report sections when useful.
+You have the analysts' financial and web tools. Retrieve additional evidence when needed to answer the user's question, respecting the report's instrument and analysis-date cutoff. Distinguish newly retrieved evidence from the original report. Do not imply historical findings are current market conditions. State unavailable evidence explicitly.
+You may use native execution for calculations when enabled. Do not place trades. Respond in the user's requested language, otherwise use the configured output language.""",
+    tuple(dict.fromkeys(tool for key in ("market", "fundamentals", "news", "social") for tool in ROLES[key].tools)) + ("get_social_sentiment",),
+)
+
+
 def _evidence_instructions(role: Role) -> str:
     """Assign evidence collection and numerical checks according to the role's responsibility.
 
@@ -66,7 +76,7 @@ def _evidence_instructions(role: Role) -> str:
     if role.name == "Reflection":
         return "Use the supplied measured outcome and prior decision. Do not reconstruct returns, search for files, or repeat calculations already supplied. Derive a concise lesson from the evidence and its limitations."
 
-    if role.stage == "analysis":
+    if role.stage in {"analysis", "chat"}:
         collection = ("Use your assigned financial and web tools to collect evidence. Their results include exact source-file paths."
                       if role.tools else "Use the supplied sentiment evidence and its source-file references. Do not look for financial-data tools that are not assigned to you.")
         return f"""{collection}

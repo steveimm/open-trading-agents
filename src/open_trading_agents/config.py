@@ -345,7 +345,7 @@ class Settings(BaseModel):
                 raise ValueError(f"Unknown agent role: {role}.")
             deep = ROLES[role].deep
 
-        baseline = (self.deep if deep else self.quick) or self.harness
+        baseline = self.harness if role == "chat" else (self.deep if deep else self.quick) or self.harness
         return _resolve_harness(self.agents[role], baseline) if role in self.agents else baseline
 
 

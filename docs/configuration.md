@@ -60,9 +60,9 @@ These flags do not create a named preset. Use the interactive wizard to save one
 
 Choose **Simple** or **Advanced** before selecting profiles. Each mode opens an editable list. Select a row to change its profile, return to the list, and choose **Continue** at the bottom when finished. Rows display the selected preset name, or the harness, model, and effort when no saved preset matches. After opening a group or role to choose its profile, a short explanation appears directly below the title and wraps to the terminal width. The overview lists have no descriptions.
 
-**Simple** has two rows: **Working agents** and **Decision manager**. It uses only those group assignments for the current run, clearing individual overrides from that run's settings. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
+**Simple** has three rows: **Working agents**, **Decision manager**, and **Report Assistant**. Report Assistant selects Chat’s own preset independently of the other two rows. Simple preserves the chat assignment while clearing other individual overrides from the current run. When no separate manager profile is set, the decision manager follows the working profile. Choosing an independent profile fixes that assignment. **Same as working agents** restores the link.
 
-**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, or reflection agent. Choose a saved profile or **Configure for this run**. The current assignment is marked `(selected)` inside the profile menu.
+**Advanced** opens the individual-agent list directly. Edit any analyst, bull or bear researcher, trader, risk participant, manager, reflection agent, or Report Assistant. Choose a saved profile or **Configure for this run**. The current assignment is marked `(selected)` inside the profile menu.
 
 These choices are saved with the run for resume and do not modify your presets or configuration file. Cancelling either editor discards its changes.
 
@@ -78,11 +78,15 @@ effort = "high"
 kind = "codex"
 model = "my-model"
 
+[agents.chat]
+kind = "pi"
+model = "chat-model"
+
 [agents.portfolio_manager]
 model = "my-manager-model"
 ```
 
-Omitted fields inherit from the role's group profile when using the same harness. Role keys are `market`, `social`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `trader`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`, and `reflection`. Configuring an analyst or supporting role does not enable it if it is disabled elsewhere.
+Omitted fields inherit from the role's group profile when using the same harness. Role keys are `market`, `social`, `news`, `fundamentals`, `bull`, `bear`, `research_manager`, `trader`, `aggressive`, `conservative`, `neutral`, `portfolio_manager`, `reflection`, and `chat`. Chat inherits unspecified fields from `[harness]`, independently of `[quick]` and `[deep]`. Configuring an analyst or supporting role does not enable it if it is disabled elsewhere.
 
 ## Application preferences
 
@@ -98,7 +102,7 @@ Edit `config.toml` for settings outside the profile picker:
 | `holding_period_days` | `5` | Trading sessions used to evaluate outcomes |
 | `benchmark_ticker` | Regional default | Reference instrument for outcome scoring |
 | `allow_execution` | `true` | Permit native script execution |
-| `web_research` | `true` | Offer search and page retrieval to analysts |
+| `web_research` | `true` | Offer search and page retrieval to analysts and Chat |
 
 The fundamentals analyst is omitted for crypto. Language and analyst selection are configured here rather than asked in the run wizard.
 

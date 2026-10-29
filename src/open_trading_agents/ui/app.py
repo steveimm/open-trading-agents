@@ -17,7 +17,7 @@ from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical
 from textual.content import Content
 from textual.geometry import Size
-from textual.widgets import Button, Collapsible, ContentSwitcher, Input, Static, Tab, Tabs
+from textual.widgets import Collapsible, ContentSwitcher, Input, Static, Tab, Tabs
 
 from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
@@ -191,10 +191,11 @@ class TradingApp(App[None]):
     #memory-details { height: auto; max-height: 14; padding: 0; border: none; }
     #memory-transcript { height: 9; }
     #memory-status { height: 2; }
-    #chat-controls { height: 3; }
-    #chat-input { width: 1fr; }
-    #chat-send { min-width: 8; }
-    #chat-hint { height: auto; max-height: 2; padding: 0 1; }
+    #chat-conversation { height: 1fr; min-height: 0; }
+    #chat-input, #chat-input:focus {
+        height: 3; margin: 1 1 0 1; padding: 0; background: #0d131c;
+        border: none; border-top: solid #9c83c9; border-bottom: solid #9c83c9;
+    }
     #usage { height: 1; padding: 0 1; background: #1a2635; }
     #shortcuts { height: auto; max-height: 2; padding: 0 1; color: #8799af; }
     Screen.compact #run-status, Screen.compact #stage-status { height: 1; }
@@ -217,7 +218,8 @@ class TradingApp(App[None]):
         Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
         Binding("b", "open_report", "Open in browser", priority=True),
         Binding("m", "memory", "Supporting analysis", show=False, priority=True),
-        Binding("ctrl+c", "stop", "Quit", priority=True),
+        Binding("enter", "compose_chat", "Write message", priority=True),
+        Binding("escape", "leave_chat_input", "Leave input", priority=True),
         Binding("q", "stop", "Quit"),
     ]
 
@@ -253,7 +255,7 @@ class TradingApp(App[None]):
         }
         if report_chat is not None:
             self._agent_presentations["Report Assistant"] = _agent_presentation(
-                "Report Assistant", report_chat.config, (agent_presets or {}).get("Portfolio Manager"),
+                "Report Assistant", report_chat.config, (agent_presets or {}).get("Report Assistant"),
             )
         self.report_chat = report_chat
         self._chat_task: asyncio.Task[None] | None = None
@@ -275,6 +277,10 @@ class TradingApp(App[None]):
                             agent_presentations=self._agent_presentations, id=f"transcript-{stage}")
             for stage, _ in STAGES[1:] if stage != "reports"
         }
+        chat_prompt = report_chat.system_prompt if report_chat is not None else system_prompt(ROLES["chat"], output_language)
+        self.stage_views["chat"].consume(AgentEvent("system", ROLES["chat"].name, "chat", chat_prompt))
+        self.stage_views["chat"].systems[ROLES["chat"].name].collapsed = False
+        self.stage_views["chat"].following = False
         self.prompt_views: dict[str, dict[str, TranscriptView]] = {}
         for stage, roles in DEBATE_ROLES.items():
             self.prompt_views[stage] = {}
@@ -339,17 +345,14 @@ class TradingApp(App[None]):
                         with Vertical(id=f"prompts-{stage}", classes="prompt-column"):
                             yield from self.prompt_views[stage].values()
                         yield self.stage_views[stage]
+                elif stage == "chat":
+                    with Vertical(id="stage-chat", classes="stage"):
+                        with Vertical(id="chat-conversation", classes="single-stage"):
+                            yield self.stage_views[stage]
+                        yield Input(placeholder="Chat becomes available when the report is ready.", id="chat-input", disabled=True)
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
-                        if stage == "reports":
-                            yield self.report_view
-                        else:
-                            yield self.stage_views[stage]
-                        if stage == "chat":
-                            yield Static("Chat becomes available when the report is ready.", id="chat-hint", markup=False)
-                            with Horizontal(id="chat-controls"):
-                                yield Input(placeholder="Ask about the report…", id="chat-input", disabled=True)
-                                yield Button("Send", id="chat-send", disabled=True)
+                        yield self.report_view if stage == "reports" else self.stage_views[stage]
         with Collapsible(title="Supporting analysis", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status", markup=False)
             yield self.memory_view
@@ -542,8 +545,7 @@ class TradingApp(App[None]):
         self._refresh_shortcuts()
         if self.report_chat is not None:
             self.query_one("#chat-input", Input).disabled = False
-            self.query_one("#chat-send", Button).disabled = False
-            self.query_one("#chat-hint", Static).update("Ask a follow-up question about this report. Enter sends · Ctrl+C quits.")
+            self.query_one("#chat-input", Input).placeholder = "Ask about the report…"
 
     async def action_open_report(self) -> None:
         """Open the completed HTML report from the Reports stage shortcut."""
@@ -557,14 +559,15 @@ class TradingApp(App[None]):
         if not opened:
             self.notify(f"Could not open a browser. Report: {page}", severity="error")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Send a follow-up question from the chat button.
+    def action_compose_chat(self) -> None:
+        """Focus the composer without taking printable quit keys away from the conversation."""
+        if self._action_available("compose_chat"):
+            self.query_one("#chat-input", Input).focus()
 
-        Args:
-            event: Activated chat button.
-        """
-        if event.button.id == "chat-send":
-            self._send_chat()
+    def action_leave_chat_input(self) -> None:
+        """Return to the conversation, preserving any unfinished question."""
+        if self._action_available("leave_chat_input"):
+            self.stage_views["chat"].focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Send the question entered in the chat composer.
@@ -584,7 +587,8 @@ class TradingApp(App[None]):
         if not question:
             return
         field.value = ""
-        self.query_one("#chat-send", Button).disabled = True
+        self.stage_views["chat"].following = True
+        self.stage_views["chat"].focus()
         self._chat_task = asyncio.create_task(self._answer_chat(question))
 
     async def _answer_chat(self, question: str) -> None:
@@ -603,7 +607,6 @@ class TradingApp(App[None]):
             await self.receive(AgentEvent("error", "Report Assistant", "chat", str(exc)))
         finally:
             await self.receive(AgentEvent("stage_end", "Report Assistant", "chat"))
-            self.query_one("#chat-send", Button).disabled = False
             self.flush_events()
 
     def _refresh_tabs(self, now: float | None = None) -> None:
@@ -697,12 +700,15 @@ class TradingApp(App[None]):
             header.append("Failed")
         elif self._finished is not None:
             header.append("Complete")
-        header.append(f"Total {elapsed}")
+        if self.active_stage not in {"reports", "chat"}:
+            header.append(f"Total {elapsed}")
         compact = self.screen.has_class("compact")
         self._status_widgets["run-status"].update(" · ".join(header))
         stage = self.stages[self.active_stage]
         stage_suffix = status_suffixes.get(stage.status, f" · {stage.status}")
-        stage_text = f"{STAGES[self.stage_index][1]}{stage_suffix} · {duration(stage.elapsed(now))}"
+        stage_text = f"{STAGES[self.stage_index][1]}{stage_suffix}"
+        if self.active_stage not in {"reports", "chat"}:
+            stage_text += f" · {duration(stage.elapsed(now))}"
         participants = self._stage_agents[self.active_stage]
         if self.active_stage not in {"analysis", "reports"} and participants:
             name = self.current_speakers.get(self.active_stage, participants[-1])
@@ -776,6 +782,10 @@ class TradingApp(App[None]):
         """
         if not self.is_running:
             return False
+        if action == "compose_chat":
+            return self.active_stage == "chat" and self._report_ready and self.report_chat is not None and not isinstance(self.focused, Input)
+        if action == "leave_chat_input":
+            return self.active_stage == "chat" and isinstance(self.focused, Input)
         if action == "open_report":
             return self.active_stage == "reports" and self._browser_ready
         if isinstance(self.focused, Input) and action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
@@ -805,7 +815,7 @@ class TradingApp(App[None]):
         Returns:
             The current availability, or the framework's behavior for other actions.
         """
-        if action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate", "open_report"}:
+        if action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate", "open_report", "compose_chat", "leave_chat_input"}:
             return self._action_available(action, parameters)
         return super().check_action(action, parameters)
 
@@ -834,7 +844,11 @@ class TradingApp(App[None]):
             parts.append("m support")
         if self._action_available("open_report"):
             parts.append("b open in browser")
-        parts.append("Ctrl+C quit" if isinstance(self.focused, Input) else "q quit")
+        if self._action_available("compose_chat"):
+            parts.append("Enter write")
+        elif self._action_available("leave_chat_input"):
+            parts.extend(["Enter send", "Esc leave input"])
+        parts.append("q quit")
         text = " · ".join(parts)
         if text != self._shortcuts_text:
             self._shortcuts_text = text
@@ -853,10 +867,7 @@ class TradingApp(App[None]):
         self.stage_index = [key for key, _ in STAGES].index(stage)
         self.query_one("#stages", ContentSwitcher).current = f"stage-{stage}"
         self.query_one("#memory-details", Collapsible).set_class(stage != "analysis" or not self._memory_agents, "hidden")
-        if stage == "chat" and self._report_ready and self.report_chat is not None:
-            self.query_one("#chat-input", Input).focus()
-        else:
-            self._active_view().focus()
+        self._active_view().focus()
         self.call_after_refresh(self.flush_events)
         self.refresh_clocks()
 

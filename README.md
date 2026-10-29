@@ -18,7 +18,7 @@ Run `uv run open-trading-agents doctor` to check local harness, profile, data-so
 
 The run wizard first asks whether to consider your saved portfolio, then asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(selected)` identifies the current assignment inside each agent’s profile menu.
 
-Choose **Simple** to edit the working-agent and decision-manager profiles, or **Advanced** to assign profiles directly to individual agents. Select a row to change it, then choose **Continue** at the bottom when finished. Rows show the selected preset name or a compact model summary.
+Choose **Simple** to edit the working-agent, decision-manager, and Report Assistant profiles, or **Advanced** to assign profiles directly to individual agents. Select a row to change it, then choose **Continue** at the bottom when finished. Rows show the selected preset name or a compact model summary.
 
 To supply the ticker and date directly:
 
@@ -49,7 +49,7 @@ Reports are exported automatically under `~/.open-trading-agents/runs/RUN_ID/rep
 - `complete_report.md`
 - `complete_report.html`
 
-Press **b** in the Reports pane to open the HTML report in your browser. The shortcut appears in the bottom bar once the report is ready. The **Chat** pane after Reports supports follow-up questions using the full report and the Portfolio Manager’s model. Chat retains conversation history while the interface is open and uses no live data or execution tools. Quitting returns directly to the terminal.
+Press **b** in the Reports pane to open the HTML report in your browser. The shortcut appears in the bottom bar once the report is ready. The **Chat** pane after Reports supports follow-up questions using the full report and its own **Report Assistant** profile. Chat shows its system prompt and has the analysts’ tools, subject to the run’s date cutoff and tool settings. Enter focuses the input, Enter sends, and Escape returns to the conversation where **q** quits. Chat retains conversation history while the interface is open. Quitting returns directly to the terminal.
 
 Press Enter at the output-directory prompt to keep this default, or choose another parent directory. You can also pass `--output-dir ./research`; reports then appear under `./research/RUN_ID/reports/`.
 

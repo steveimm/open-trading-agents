@@ -2,10 +2,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Static, Tabs
+from textual.widgets import Input, Static, Tabs
 
 from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.dataflows.tools import TOOL_NAMES
 from open_trading_agents.ui.app import TradingApp
 
 
@@ -46,8 +47,12 @@ async def test_report_context_and_native_history(tmp_path: Path) -> None:
         events.append(event)
 
     async def factory(config: HarnessConfig, spec: AgentSpec, sink: EventSink) -> Session:
-        """Check that report chat cannot execute scripts or retrieve data."""
-        assert not spec.allow_execution and not spec.tools
+        """Give chat all analyst tools through the existing run context."""
+        assert spec.allow_execution and set(spec.tools) == set(TOOL_NAMES)
+        command = spec.tool_server_command
+        assert command[command.index("--context") + 1] == str(tmp_path / "tool-context.json")
+        assert command[command.index("--artifact-dir") + 1] == str(tmp_path / "chat" / "data")
+        assert set(command[command.index("--tools") + 1].split(",")) == set(TOOL_NAMES)
         assert "Korean" in spec.system_prompt
         session = Session(sink)
         opened.append(session)
@@ -94,6 +99,8 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         app.query_one("#stage-tabs", Tabs).active = "tab-reports"
         await pilot.pause()
         assert "b open in browser" in str(app.query_one("#shortcuts", Static).render())
+        assert "Total" not in str(app.query_one("#run-status", Static).render())
+        assert "00:" not in str(app.query_one("#stage-status", Static).render())
         await pilot.press("b")
         assert opened == [(reports / "complete_report.html").as_uri()]
         app.query_one("#stage-tabs", Tabs).active = "tab-chat"
@@ -101,9 +108,18 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         field = app.query_one("#chat-input", Input)
         assert not app.check_action("open_report", ())
         assert "open in browser" not in str(app.query_one("#shortcuts", Static).render())
+        assert not field.has_focus
+        assert "q quit" in str(app.query_one("#shortcuts", Static).render())
+        assert "Ctrl+C" not in str(app.query_one("#shortcuts", Static).render())
+        assert "Total" not in str(app.query_one("#run-status", Static).render())
+        assert "00:" not in str(app.query_one("#stage-status", Static).render())
+        assert chat.system_prompt in app.stage_views["chat"].visible_plain()
+        await pilot.press("enter")
         assert field.has_focus
         assert field.region.bottom <= size[1]
-        assert app.query_one("#chat-send", Button).region.right <= size[0]
+        assert not app.query("Button")
+        assert field.region.right <= size[0]
+        assert field.region.y >= app.query_one("#chat-conversation").region.bottom
         assert app.stage_views["chat"].size.height > 0
         await pilot.press("b", "q", "f", "m", "space", "left_square_bracket", "right_square_bracket", "left", "right")
         assert field.value == "bqfm []"
@@ -111,6 +127,7 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         await pilot.pause()
         assert len(sessions) == 1 and len(sessions[0].prompts) == 1
         assert "Answer" in app.stage_views["chat"].plain()
+        await pilot.press("enter")
         field.value = "second question"
         await pilot.press("enter")
         assert len(sessions[0].prompts) == 1
@@ -151,17 +168,19 @@ async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path) -> None
         app.query_one("#stage-tabs", Tabs).active = "tab-chat"
         await pilot.pause()
         field = app.query_one("#chat-input", Input)
+        await pilot.press("enter")
         field.value = "Question"
         await pilot.press("enter")
         await pilot.pause()
         assert "Model unavailable" in app.stage_views["chat"].plain()
         assert app.error is None and app._failure is None
-        assert not app.query_one("#chat-send", Button).disabled
+        assert app.check_action("compose_chat", ())
+        await pilot.press("enter")
         field.value = "Retry"
         await pilot.press("enter")
         await pilot.pause()
         assert session is not None and not session.closed
-        await pilot.press("ctrl+c")
+        await pilot.press("enter", "escape", "q")
         assert session.closed
     assert (reports / "complete_report.md").read_text() == report
 
@@ -194,3 +213,26 @@ async def test_browser_failure_keeps_report_available(tmp_path: Path, monkeypatc
         await pilot.press("b")
         assert notices and "Could not open a browser" in notices[0]
         assert app.error is None and app.report_document.plain() == "Report"
+
+
+async def test_chat_respects_execution_web_and_budget_settings(tmp_path: Path) -> None:
+    """Apply run-level tool restrictions to the chat native session."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "complete_report.md").write_text("Report")
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> Session:
+        """Check the native capabilities after run-level restrictions are applied."""
+        assert not spec.allow_execution
+        assert set(spec.tools) == set(TOOL_NAMES) - {"search_web", "fetch_webpage"}
+        assert spec.max_tool_rounds == 7
+        return Session(emit)
+
+    async def emit(event: AgentEvent) -> None:
+        """Accept fixture events without a terminal."""
+
+    chat = ReportChat(tmp_path, HarnessConfig(), "English", factory, allow_execution=False, web_research=False, max_tool_rounds=7)
+    try:
+        await chat.ask("Explain", emit)
+    finally:
+        await chat.close()

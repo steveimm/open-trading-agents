@@ -192,6 +192,7 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(
     )
     if individual:
         settings.agents["bull"] = HarnessSettings(kind="codex", model="selected-bull", effort="medium")
+        settings.agents["chat"] = HarnessSettings(kind="pi", model="selected-chat", effort="high")
     result = RunResult("fixture", tmp_path, "Hold", {})
     report_dir = tmp_path / "reports"
     report_dir.mkdir()
@@ -212,6 +213,8 @@ def test_cli_forwards_final_working_and_decision_settings_to_the_tui(
     assert received["ticker"] == "NVDA"
     assert "working_config" not in received and "decision_config" not in received
     assert received["output_language"] == settings.output_language
+    assert received["report_chat"].config == settings.model_settings(role="chat").runtime()
+    assert received["report_chat"].config != settings.model_settings(role="portfolio_manager").runtime()
     profiles = received["agent_configs"]
     assert isinstance(profiles, dict)
     assert set(profiles) == {role.name for role in ROLES.values()}

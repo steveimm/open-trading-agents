@@ -73,6 +73,7 @@ _ROLE_DESCRIPTIONS = {
     "conservative": "Challenges downside risk and proposes safeguards to preserve capital.",
     "neutral": "Weighs the aggressive and conservative arguments to balance opportunity and risk.",
     "portfolio_manager": "Combines research, the trade proposal and risk debate into the final recommendation.",
+    "chat": "Answers follow-up questions using the complete report, conversation history, and analyst tools.",
     "reflection": "When memory is enabled, reviews past decisions with measurable outcomes to derive lessons for future runs.",
 }
 
@@ -942,7 +943,7 @@ def _simple_agent_settings(
     profiles: dict[str, HarnessSettings],
     catalogs: dict[str, ModelCatalog],
 ) -> Settings:
-    """Edit the working and manager profiles in one reusable list.
+    """Edit working, manager, and chat profiles in one reusable list.
 
     Args:
         selected: Private copy of settings for this run.
@@ -950,31 +951,33 @@ def _simple_agent_settings(
         catalogs: Cached native choices for custom configuration.
 
     Returns:
-        Group assignments with individual overrides cleared for this run.
+        Group assignments and an independent chat profile for this run.
     """
-    selected.agents = {}
+    chat = selected.model_settings(role="chat")
+    chat_name = selected.agent_presets.get("chat")
+    selected.agents = {"chat": chat}
     selected.agent_presets = {}
     inherited_manager = selected.deep is None
     if inherited_manager:
         selected.deep = selected.model_settings().model_copy(deep=True)
 
-    groups = (("quick", "Working agents"), ("deep", "Decision manager"))
-    names: dict[str, str | None] = {}
+    groups = (("quick", "Working agents"), ("deep", "Decision manager"), ("chat", "Report Assistant"))
+    names: dict[str, str | None] = {"chat": chat_name}
     cursor = len(groups)
     while True:
         working = selected.model_settings()
         manager = selected.model_settings(True)
         labels = [f"{label} · {_profile_label(profile, profiles, names.get(key), selected.default_preset)}"
-                  for (key, label), profile in zip(groups, (working, manager), strict=True)]
+                  for (key, label), profile in zip(groups, (working, manager, selected.model_settings(role="chat")), strict=True)]
         cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
         if cursor == len(groups):
-            role_names = {key: names.get("deep" if role.deep else "quick") for key, role in ROLES.items()}
+            role_names = {key: names.get("chat" if key == "chat" else "deep" if role.deep else "quick") for key, role in ROLES.items()}
             return _remember_agent_presets(selected, profiles, role_names)
 
         key, label = groups[cursor]
         choice = _agent_profile(
             label,
-            working if cursor == 0 else manager,
+            selected.model_settings(role="chat") if key == "chat" else working if cursor == 0 else manager,
             profiles,
             selected.default_preset,
             catalogs,
@@ -989,6 +992,9 @@ def _simple_agent_settings(
             if inherited_manager:
                 selected.deep = profile.model_copy(deep=True)
                 names["deep"] = choice.name
+        elif key == "chat":
+            selected.agents["chat"] = profile
+            names[key] = choice.name
         else:
             inherited_manager = choice.inherited
             selected.deep = profile
