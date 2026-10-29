@@ -164,9 +164,9 @@ class PiSession(JsonProcess):
             if not self.ready.done():
                 self.ready.set_result(None)
         elif kind == "ota_budget":
-            await self.event("status", "Tool-round budget exhausted; writing final report", native=record)
+            await self.event("status", "Tool-round budget exhausted; completing response", native=record)
         elif kind == "ota_budget_exceeded":
-            self.budget_error = f"Pi exceeded {record['maximumRounds']} tool rounds after its final-report opportunity"
+            self.budget_error = f"Pi exceeded {record['maximumRounds']} tool rounds after its final-response opportunity"
             await self.event("error", self.budget_error, source="tool_budget", native=record)
         elif kind == "ota_provider_request":
             self.raw_usage = {}

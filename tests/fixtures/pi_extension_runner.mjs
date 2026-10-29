@@ -23,6 +23,9 @@ assert.equal(result.content[0].text, "123.45");
 handlers.get("turn_end")({ toolResults: [result] });
 assert.deepEqual(active, []);
 assert.match(messages[0].content, /budget is exhausted/);
+assert.match(messages[0].content, /current task/);
+assert.match(messages[0].content, /requested response format/);
+assert.doesNotMatch(messages[0].content, /final report/);
 
 let aborted = false;
 const boundary = handlers.get("turn_end")({ toolResults: [{ isError: true }] }, { abort: () => { aborted = true; } });

@@ -34,7 +34,7 @@ export default async function tradingTools(pi) {
     }
     if (rounds === maximumRounds) {
       pi.setActiveTools([]);
-      pi.sendMessage({ customType: "tool_budget", content: "The tool-round budget is exhausted. Write your final report using the evidence already collected, identifying missing evidence.", display: true });
+      pi.sendMessage({ customType: "tool_budget", content: "The tool-round budget is exhausted. Answer the current task using the evidence already collected, identifying missing evidence and following its requested response format.", display: true });
       publish("ota_budget", { rounds, maximumRounds });
     }
   });

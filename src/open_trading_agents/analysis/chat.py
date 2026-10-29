@@ -32,7 +32,7 @@ class ReportChat:
         self.directory, self.config, self.language = directory, config, language
         self.session_factory = session_factory
         self.allow_execution, self.web_research, self.max_tool_rounds = allow_execution, web_research, max_tool_rounds
-        self.system_prompt = system_prompt(ROLES["chat"], language)
+        self.system_prompt = system_prompt(ROLES["chat"], language, allow_execution=allow_execution, web_research=web_research)
         self.session: HarnessSession | None = None
         self.context_sent = False
         self.sink: EventSink | None = None

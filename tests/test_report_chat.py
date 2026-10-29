@@ -33,7 +33,8 @@ class Session:
         self.closed = True
 
 
-async def test_report_context_and_native_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("allow_execution,web_research", [(True, True), (True, False), (False, True), (False, False)])
+async def test_report_context_and_native_history(tmp_path: Path, allow_execution: bool, web_research: bool) -> None:
     """Supply the entire report once, preserve subsequent turns, and display only user questions."""
     reports = tmp_path / "reports"
     reports.mkdir()
@@ -48,17 +49,31 @@ async def test_report_context_and_native_history(tmp_path: Path) -> None:
 
     async def factory(config: HarnessConfig, spec: AgentSpec, sink: EventSink) -> Session:
         """Give chat all analyst tools through the existing run context."""
-        assert spec.allow_execution and set(spec.tools) == set(TOOL_NAMES)
+        expected_tools = set(TOOL_NAMES) if web_research else set(TOOL_NAMES) - {"search_web", "fetch_webpage"}
+        assert spec.allow_execution == allow_execution and set(spec.tools) == expected_tools
         command = spec.tool_server_command
         assert command[command.index("--context") + 1] == str(tmp_path / "tool-context.json")
         assert command[command.index("--artifact-dir") + 1] == str(tmp_path / "chat" / "data")
-        assert set(command[command.index("--tools") + 1].split(",")) == set(TOOL_NAMES)
-        assert "Korean" in spec.system_prompt
+        assert set(command[command.index("--tools") + 1].split(",")) == expected_tools
+        assert spec.system_prompt == chat.system_prompt
+        assert "Answer each user message in the conversation" in spec.system_prompt
+        assert "Respond in Korean unless the user requests another language." in spec.system_prompt
+        assert "analysis-date cutoff" in spec.system_prompt
+        assert "required JSON" not in spec.system_prompt
+        assert "rating values in English" not in spec.system_prompt
+        assert "Return your report or decision once" not in spec.system_prompt
+        assert "exports the reports" not in spec.system_prompt
+        assert "Write the report in" not in spec.system_prompt
+        assert "Do not rerun the analyst workflow" in spec.system_prompt
+        assert ("Native execution is disabled" in spec.system_prompt) == (not allow_execution)
+        assert ("Web search and page retrieval are disabled" in spec.system_prompt) == (not web_research)
+        if not allow_execution:
+            assert "use the harness's native execution tools" not in spec.system_prompt
         session = Session(sink)
         opened.append(session)
         return session
 
-    chat = ReportChat(tmp_path, HarnessConfig(), "Korean", factory)
+    chat = ReportChat(tmp_path, HarnessConfig(), "Korean", factory, allow_execution=allow_execution, web_research=web_research)
     await chat.ask("What are the risks?", emit)
     await chat.ask("Explain the second risk.", emit)
     assert len(opened) == 1

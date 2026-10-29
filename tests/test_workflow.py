@@ -99,6 +99,7 @@ async def test_managers_receive_the_schema_initially_and_repair_only_invalid_out
         opened.append(spec.agent)
         for name, key in (("Research Manager", "research_manager"), ("Trader", "trader"), ("Portfolio Manager", "portfolio_manager")):
             if spec.agent == name:
+                assert "Keep required JSON field names and rating values in English." in spec.system_prompt
                 seen_schemas[key] = json.loads(spec.system_prompt.split("JSON schema:\n", 1)[1])
                 assert seen_schemas[key] == SCHEMAS[key].model_json_schema()
         return DecisionHarness(spec, emit, calls, [])
