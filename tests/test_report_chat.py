@@ -272,3 +272,60 @@ async def test_chat_respects_execution_web_and_budget_settings(tmp_path: Path) -
         await chat.ask("Explain", emit)
     finally:
         await chat.close()
+
+
+@pytest.mark.parametrize("column,size", [("chat", (80, 24)), ("report", (120, 40))])
+async def test_reports_fullscreen_preserves_columns_and_focus(tmp_path: Path, column: str, size: tuple[int, int]) -> None:
+    """Expand either column, retain drafts and scrollback, and restore the split without hidden focus."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    report = "\n".join(f"Report line {number}" for number in range(200))
+    (reports / "complete_report.md").write_text(report)
+    chat = ReportChat(tmp_path, HarnessConfig(), "English")
+    app = TradingApp(run_dir=tmp_path, report_chat=chat)
+    async with app.run_test(size=size) as pilot:
+        await app.receive(AgentEvent("run_end", "Workflow", "reports"))
+        app.flush_events()
+        await pilot.pause()
+        app.query_one("#stage-tabs", Tabs).active = "tab-reports"
+        await pilot.pause()
+        await pilot.press("left" if column == "chat" else "right", "home")
+        view = app._active_view()
+        split_width = view.size.width
+        field = app.query_one("#chat-input", Input)
+        field.value = "Unsent question"
+        assert "f toggle fullscreen" in str(app.query_one("#shortcuts", Static).render())
+        await pilot.press("f")
+        await pilot.pause()
+        assert app._report_fullscreen == column
+        assert view.size.width > split_width and view.size.width >= size[0] - 6
+        assert view.has_focus and view.scroll_y == 0 and not view.following
+        assert app.query_one("#report-chat").display == (column == "chat")
+        assert app.query_one("#report-document").display == (column == "report")
+        assert not app.check_action("navigate", ("left",))
+        assert not app.check_action("navigate", ("right",))
+        await pilot.press("left", "right")
+        assert app._active_view() is view and view.has_focus
+        if column == "chat":
+            await pilot.press("enter", "end", "f")
+            assert field.has_focus and field.value == "Unsent questionf"
+            assert not app.check_action("fullscreen", ())
+            await pilot.press("escape")
+        else:
+            assert not app.check_action("compose_chat", ())
+            await pilot.press("enter")
+            assert view.has_focus
+        await pilot.press("tab", "f")
+        assert app.active_stage == "analysis" and app.fullscreen
+        await pilot.press("shift+tab")
+        assert app.active_stage == "reports" and app._report_fullscreen == column
+        assert app._active_view() is view
+        await pilot.press("f")
+        await pilot.pause()
+        assert app._report_fullscreen is None
+        assert app.query_one("#report-chat").display and app.query_one("#report-document").display
+        assert view.size.width == split_width and view.scroll_y == 0
+        assert field.value.startswith("Unsent question")
+        assert app.report_document.plain() == report
+        assert app.fullscreen
+        assert app.screen.max_scroll_x == app.screen.max_scroll_y == 0

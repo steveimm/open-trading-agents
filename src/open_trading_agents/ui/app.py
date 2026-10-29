@@ -265,6 +265,7 @@ class TradingApp(App[None]):
         self._report_ready = False
         self._browser_ready = False
         self._report_focus = "report"
+        self._report_fullscreen: str | None = None
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -795,7 +796,8 @@ class TradingApp(App[None]):
         if not self.is_running:
             return False
         if action == "compose_chat":
-            return self.active_stage == "reports" and self._report_ready and self.report_chat is not None and not isinstance(self.focused, Input)
+            return (self.active_stage == "reports" and self._report_fullscreen != "report"
+                    and self._report_ready and self.report_chat is not None and not isinstance(self.focused, Input))
         if action == "leave_chat_input":
             return self.active_stage == "reports" and isinstance(self.focused, Input)
         if action == "open_report":
@@ -805,7 +807,7 @@ class TradingApp(App[None]):
         view = self._active_view()
         analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
         if action == "fullscreen":
-            return analyst or self.active_stage in DEBATE_STAGES and view in self._debate_views(self.active_stage)
+            return self.active_stage == "reports" or analyst or self.active_stage in DEBATE_STAGES and view in self._debate_views(self.active_stage)
         if action in {"detail", "toggle_detail"}:
             return isinstance(view, ChatView) and view.has_details
         if action == "memory":
@@ -813,7 +815,7 @@ class TradingApp(App[None]):
         if action == "navigate":
             direction = parameters[0] if parameters else ""
             if direction in {"left", "right"}:
-                return self.active_stage == "reports" or self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._debate_fullscreen[self.active_stage] is None)
+                return (self.active_stage == "reports" and self._report_fullscreen is None) or self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._debate_fullscreen[self.active_stage] is None)
             return view.is_on_screen
         return True
 
@@ -999,10 +1001,17 @@ class TradingApp(App[None]):
         self.call_after_refresh(self._refresh_shortcuts)
 
     def action_fullscreen(self) -> None:
-        """Toggle fullscreen for the selected analyst or debate pane."""
+        """Toggle fullscreen for the selected analyst, debate, chat, or report pane."""
         if not self._action_available("fullscreen"):
             return
         view = self._active_view()
+        if self.active_stage == "reports":
+            self._report_fullscreen = None if self._report_fullscreen is not None else self._report_focus
+            self.query_one("#report-chat", Vertical).set_class(self._report_fullscreen == "report", "hidden")
+            self.query_one("#report-document", Vertical).set_class(self._report_fullscreen == "chat", "hidden")
+            view.focus()
+            self.call_after_refresh(self.flush_events)
+            return
         if self.active_stage in DEBATE_STAGES:
             stage = self.active_stage
             selected = None if self._debate_fullscreen[stage] is view else view
