@@ -191,7 +191,6 @@ class TradingApp(App[None]):
     #memory-details { height: auto; max-height: 14; padding: 0; border: none; }
     #memory-transcript { height: 9; }
     #memory-status { height: 2; }
-    #open-report { margin: 0 1; }
     #chat-controls { height: 3; }
     #chat-input { width: 1fr; }
     #chat-send { min-width: 8; }
@@ -216,6 +215,7 @@ class TradingApp(App[None]):
         Binding("left_square_bracket", "detail(-1)", "Prev", show=False, priority=True),
         Binding("right_square_bracket", "detail(1)", "Next", show=False, priority=True),
         Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
+        Binding("b", "open_report", "Open in browser", priority=True),
         Binding("m", "memory", "Supporting analysis", show=False, priority=True),
         Binding("ctrl+c", "stop", "Quit", priority=True),
         Binding("q", "stop", "Quit"),
@@ -258,6 +258,7 @@ class TradingApp(App[None]):
         self.report_chat = report_chat
         self._chat_task: asyncio.Task[None] | None = None
         self._report_ready = False
+        self._browser_ready = False
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -341,7 +342,6 @@ class TradingApp(App[None]):
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
                         if stage == "reports":
-                            yield Button("Open in browser", id="open-report", disabled=True)
                             yield self.report_view
                         else:
                             yield self.stage_views[stage]
@@ -538,27 +538,32 @@ class TradingApp(App[None]):
         self.report_document = document
         self.report_view.set_document(document)
         self._report_ready = True
-        self.query_one("#open-report", Button).disabled = not (self.run_dir / "reports" / "complete_report.html").is_file()
+        self._browser_ready = (self.run_dir / "reports" / "complete_report.html").is_file()
+        self._refresh_shortcuts()
         if self.report_chat is not None:
             self.query_one("#chat-input", Input).disabled = False
             self.query_one("#chat-send", Button).disabled = False
             self.query_one("#chat-hint", Static).update("Ask a follow-up question about this report. Enter sends · Ctrl+C quits.")
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Open the exported report or send a follow-up question.
+    async def action_open_report(self) -> None:
+        """Open the completed HTML report from the Reports stage shortcut."""
+        if not self._action_available("open_report") or self.run_dir is None:
+            return
+        page = (self.run_dir / "reports" / "complete_report.html").resolve()
+        try:
+            opened = page.is_file() and await asyncio.to_thread(webbrowser.open_new_tab, page.as_uri())
+        except (OSError, webbrowser.Error):
+            opened = False
+        if not opened:
+            self.notify(f"Could not open a browser. Report: {page}", severity="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Send a follow-up question from the chat button.
 
         Args:
-            event: Activated report or chat button.
+            event: Activated chat button.
         """
-        if event.button.id == "open-report" and self.run_dir is not None:
-            page = (self.run_dir / "reports" / "complete_report.html").resolve()
-            try:
-                opened = page.is_file() and await asyncio.to_thread(webbrowser.open_new_tab, page.as_uri())
-            except (OSError, webbrowser.Error):
-                opened = False
-            if not opened:
-                self.notify(f"Could not open a browser. Report: {page}", severity="error")
-        elif event.button.id == "chat-send":
+        if event.button.id == "chat-send":
             self._send_chat()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -771,6 +776,8 @@ class TradingApp(App[None]):
         """
         if not self.is_running:
             return False
+        if action == "open_report":
+            return self.active_stage == "reports" and self._browser_ready
         if isinstance(self.focused, Input) and action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
             return False
         view = self._active_view()
@@ -798,7 +805,7 @@ class TradingApp(App[None]):
         Returns:
             The current availability, or the framework's behavior for other actions.
         """
-        if action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
+        if action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate", "open_report"}:
             return self._action_available(action, parameters)
         return super().check_action(action, parameters)
 
@@ -825,6 +832,8 @@ class TradingApp(App[None]):
             parts.append("End follow")
         if self._action_available("memory"):
             parts.append("m support")
+        if self._action_available("open_report"):
+            parts.append("b open in browser")
         parts.append("Ctrl+C quit" if isinstance(self.focused, Input) else "q quit")
         text = " · ".join(parts)
         if text != self._shortcuts_text:

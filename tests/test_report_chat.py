@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Tabs
+from textual.widgets import Button, Input, Static, Tabs
 
 from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
@@ -85,24 +85,28 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
     chat = ReportChat(tmp_path, HarnessConfig(), "English", factory)
     app = TradingApp(run_dir=tmp_path, report_chat=chat)
     async with app.run_test(size=size) as pilot:
-        assert app.query_one("#open-report", Button).disabled
+        assert not app.query("#open-report")
+        assert not app.check_action("open_report", ())
         assert app.query_one("#chat-input", Input).disabled
         await app.receive(AgentEvent("run_end", "Workflow", "reports"))
         app.flush_events()
         await pilot.pause()
         app.query_one("#stage-tabs", Tabs).active = "tab-reports"
         await pilot.pause()
-        await pilot.click("#open-report")
+        assert "b open in browser" in str(app.query_one("#shortcuts", Static).render())
+        await pilot.press("b")
         assert opened == [(reports / "complete_report.html").as_uri()]
         app.query_one("#stage-tabs", Tabs).active = "tab-chat"
         await pilot.pause()
         field = app.query_one("#chat-input", Input)
+        assert not app.check_action("open_report", ())
+        assert "open in browser" not in str(app.query_one("#shortcuts", Static).render())
         assert field.has_focus
         assert field.region.bottom <= size[1]
         assert app.query_one("#chat-send", Button).region.right <= size[0]
         assert app.stage_views["chat"].size.height > 0
-        await pilot.press("q", "f", "m", "space", "left_square_bracket", "right_square_bracket", "left", "right")
-        assert field.value == "qfm []"
+        await pilot.press("b", "q", "f", "m", "space", "left_square_bracket", "right_square_bracket", "left", "right")
+        assert field.value == "bqfm []"
         await pilot.press("enter")
         await pilot.pause()
         assert len(sessions) == 1 and len(sessions[0].prompts) == 1
@@ -186,6 +190,7 @@ async def test_browser_failure_keeps_report_available(tmp_path: Path, monkeypatc
         await pilot.pause()
         app.query_one("#stage-tabs", Tabs).active = "tab-reports"
         await pilot.pause()
-        await pilot.click("#open-report")
+        assert "b open in browser" in str(app.query_one("#shortcuts", Static).render())
+        await pilot.press("b")
         assert notices and "Could not open a browser" in notices[0]
         assert app.error is None and app.report_document.plain() == "Report"

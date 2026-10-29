@@ -533,7 +533,8 @@ async def test_completed_report_is_loaded_with_browser_control(tmp_path: Path) -
         app.flush_events()
         await pilot.pause()
         assert app.report_document.plain() == full
-        assert app.query_one("#open-report").disabled
+        assert not app.query("#open-report")
+        assert not app.check_action("open_report", ())
         assert "e" not in {binding.key for binding in app.BINDINGS}
 
 
