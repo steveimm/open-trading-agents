@@ -4,7 +4,6 @@ import asyncio
 import json
 import shlex
 import sys
-import webbrowser
 from dataclasses import asdict
 from datetime import date
 from enum import StrEnum
@@ -13,8 +12,8 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.markdown import Markdown
 
+from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import AgentEvent
 from open_trading_agents.analysis.prompts import ROLES
 from open_trading_agents.analysis.workflow import RunResult, Workflow
@@ -120,37 +119,6 @@ def runtime_overrides(
     return settings
 
 
-def _offer_report_views(report_dir: Path) -> None:
-    """Offer optional browser and terminal views after a completed interactive run.
-
-    Args:
-        report_dir: Directory containing the already-exported HTML and Markdown reports.
-    """
-    from open_trading_agents.ui.configuration import _confirm
-    from open_trading_agents.ui.transcript import literal_text
-
-    try:
-        if _confirm("Open report in browser?", default=True):
-            page = (report_dir / "complete_report.html").resolve()
-            try:
-                opened = page.is_file() and webbrowser.open_new_tab(page.as_uri())
-            except (webbrowser.Error, OSError):
-                opened = False
-            if not opened:
-                typer.echo(f"Could not open a browser. HTML report: {page}")
-
-        if _confirm("Print full report in terminal?", default=True):
-            markdown = report_dir / "complete_report.md"
-            try:
-                content = markdown.read_text(encoding="utf-8")
-            except OSError:
-                typer.echo(f"Could not read the report: {markdown}")
-            else:
-                Console().print(Markdown(literal_text(content)))
-    except (typer.Abort, KeyboardInterrupt):
-        return
-
-
 def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
     """Run a common pipeline through either the live terminal UI or a JSON observer.
 
@@ -191,6 +159,8 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
             agent_configs=agent_configs,
             agent_presets=agent_presets,
             output_language=workflow.settings.output_language,
+            report_chat=ReportChat(workflow.directory, workflow.settings.model_settings(role="portfolio_manager").runtime(),
+                                   workflow.settings.output_language),
         )
         ui.run()
         if ui.error:
@@ -207,8 +177,6 @@ def run_workflow(workflow: Workflow, headless: bool, events: bool) -> RunResult:
         usage_path = report_dir / "usage.json"
         usage = json.loads(usage_path.read_text(encoding="utf-8"))["totals"]
         typer.echo(format_run_usage(usage))
-        if interactive:
-            _offer_report_views(report_dir)
 
     return result
 

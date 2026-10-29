@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import webbrowser
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -16,8 +17,9 @@ from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical
 from textual.content import Content
 from textual.geometry import Size
-from textual.widgets import Collapsible, ContentSwitcher, Static, Tab, Tabs
+from textual.widgets import Button, Collapsible, ContentSwitcher, Input, Static, Tab, Tabs
 
+from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import ANALYSTS, STAGES, AgentEvent, EventSink, HarnessConfig, Usage
 from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.reporting.usage import format_usage as usage_label
@@ -189,6 +191,11 @@ class TradingApp(App[None]):
     #memory-details { height: auto; max-height: 14; padding: 0; border: none; }
     #memory-transcript { height: 9; }
     #memory-status { height: 2; }
+    #open-report { margin: 0 1; }
+    #chat-controls { height: 3; }
+    #chat-input { width: 1fr; }
+    #chat-send { min-width: 8; }
+    #chat-hint { height: auto; max-height: 2; padding: 0 1; }
     #usage { height: 1; padding: 0 1; background: #1a2635; }
     #shortcuts { height: auto; max-height: 2; padding: 0 1; color: #8799af; }
     Screen.compact #run-status, Screen.compact #stage-status { height: 1; }
@@ -210,7 +217,8 @@ class TradingApp(App[None]):
         Binding("right_square_bracket", "detail(1)", "Next", show=False, priority=True),
         Binding("space", "toggle_detail", "Expand/collapse section", priority=True),
         Binding("m", "memory", "Supporting analysis", show=False, priority=True),
-        Binding("ctrl+c,q", "stop", "Quit", priority=True),
+        Binding("ctrl+c", "stop", "Quit", priority=True),
+        Binding("q", "stop", "Quit"),
     ]
 
     def __init__(
@@ -223,10 +231,12 @@ class TradingApp(App[None]):
         agent_configs: dict[str, HarnessConfig] | None = None,
         agent_presets: dict[str, str] | None = None,
         output_language: str = "English",
+        report_chat: ReportChat | None = None,
     ) -> None:
         """Create stage views without starting native model work.
 
         Args:
+            report_chat: Follow-up conversation using the completed report.
             run: Workflow callback receiving the UI event sink.
             selected_analysts: Analyst keys shown in the initial grid.
             ticker: Instrument shown in the run header.
@@ -241,6 +251,13 @@ class TradingApp(App[None]):
             name: _agent_presentation(name, config, (agent_presets or {}).get(name))
             for name, config in (agent_configs or {}).items()
         }
+        if report_chat is not None:
+            self._agent_presentations["Report Assistant"] = _agent_presentation(
+                "Report Assistant", report_chat.config, (agent_presets or {}).get("Portfolio Manager"),
+            )
+        self.report_chat = report_chat
+        self._chat_task: asyncio.Task[None] | None = None
+        self._report_ready = False
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -323,7 +340,16 @@ class TradingApp(App[None]):
                         yield self.stage_views[stage]
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
-                        yield self.report_view if stage == "reports" else self.stage_views[stage]
+                        if stage == "reports":
+                            yield Button("Open in browser", id="open-report", disabled=True)
+                            yield self.report_view
+                        else:
+                            yield self.stage_views[stage]
+                        if stage == "chat":
+                            yield Static("Chat becomes available when the report is ready.", id="chat-hint", markup=False)
+                            with Horizontal(id="chat-controls"):
+                                yield Input(placeholder="Ask about the report…", id="chat-input", disabled=True)
+                                yield Button("Send", id="chat-send", disabled=True)
         with Collapsible(title="Supporting analysis", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status", markup=False)
             yield self.memory_view
@@ -428,7 +454,8 @@ class TradingApp(App[None]):
         if activity.started is None and agent != "Workflow" and kind in {"system", "prompt", "tool_start", "text", "reasoning"}:
             activity.started = now
         if kind == "stage_start":
-            self._finished, self._failure = None, None
+            if stage != "chat":
+                self._finished, self._failure = None, None
             self.query_one("#run-error", Static).add_class("hidden")
             self.stages[stage] = Activity(started=now, status="running")
         elif kind == "stage_end":
@@ -510,6 +537,69 @@ class TradingApp(App[None]):
         document.append(text, "#b5e3c8")
         self.report_document = document
         self.report_view.set_document(document)
+        self._report_ready = True
+        self.query_one("#open-report", Button).disabled = not (self.run_dir / "reports" / "complete_report.html").is_file()
+        if self.report_chat is not None:
+            self.query_one("#chat-input", Input).disabled = False
+            self.query_one("#chat-send", Button).disabled = False
+            self.query_one("#chat-hint", Static).update("Ask a follow-up question about this report. Enter sends · Ctrl+C quits.")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Open the exported report or send a follow-up question.
+
+        Args:
+            event: Activated report or chat button.
+        """
+        if event.button.id == "open-report" and self.run_dir is not None:
+            page = (self.run_dir / "reports" / "complete_report.html").resolve()
+            try:
+                opened = page.is_file() and await asyncio.to_thread(webbrowser.open_new_tab, page.as_uri())
+            except (OSError, webbrowser.Error):
+                opened = False
+            if not opened:
+                self.notify(f"Could not open a browser. Report: {page}", severity="error")
+        elif event.button.id == "chat-send":
+            self._send_chat()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Send the question entered in the chat composer.
+
+        Args:
+            event: Submitted input field.
+        """
+        if event.input.id == "chat-input":
+            self._send_chat()
+
+    def _send_chat(self) -> None:
+        """Start one response at a time while leaving the interface responsive."""
+        if not self._report_ready or self.report_chat is None or self._chat_task is not None and not self._chat_task.done():
+            return
+        field = self.query_one("#chat-input", Input)
+        question = field.value.strip()
+        if not question:
+            return
+        field.value = ""
+        self.query_one("#chat-send", Button).disabled = True
+        self._chat_task = asyncio.create_task(self._answer_chat(question))
+
+    async def _answer_chat(self, question: str) -> None:
+        """Stream a follow-up answer and keep failures separate from the research result.
+
+        Args:
+            question: Submitted user message.
+        """
+        assert self.report_chat is not None
+        await self.receive(AgentEvent("stage_start", "Report Assistant", "chat"))
+        try:
+            await self.report_chat.ask(question, self.receive)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self.receive(AgentEvent("error", "Report Assistant", "chat", str(exc)))
+        finally:
+            await self.receive(AgentEvent("stage_end", "Report Assistant", "chat"))
+            self.query_one("#chat-send", Button).disabled = False
+            self.flush_events()
 
     def _refresh_tabs(self, now: float | None = None) -> None:
         """Animate running indicators while keeping inactive tab labels unchanged.
@@ -681,6 +771,8 @@ class TradingApp(App[None]):
         """
         if not self.is_running:
             return False
+        if isinstance(self.focused, Input) and action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
+            return False
         view = self._active_view()
         analyst = self.active_stage == "analysis" and len(self.selected_analysts) > 1 and view is not self.memory_view
         if action == "fullscreen":
@@ -733,7 +825,7 @@ class TradingApp(App[None]):
             parts.append("End follow")
         if self._action_available("memory"):
             parts.append("m support")
-        parts.append("q quit")
+        parts.append("Ctrl+C quit" if isinstance(self.focused, Input) else "q quit")
         text = " · ".join(parts)
         if text != self._shortcuts_text:
             self._shortcuts_text = text
@@ -752,7 +844,10 @@ class TradingApp(App[None]):
         self.stage_index = [key for key, _ in STAGES].index(stage)
         self.query_one("#stages", ContentSwitcher).current = f"stage-{stage}"
         self.query_one("#memory-details", Collapsible).set_class(stage != "analysis" or not self._memory_agents, "hidden")
-        self._active_view().focus()
+        if stage == "chat" and self._report_ready and self.report_chat is not None:
+            self.query_one("#chat-input", Input).focus()
+        else:
+            self._active_view().focus()
         self.call_after_refresh(self.flush_events)
         self.refresh_clocks()
 
@@ -915,12 +1010,14 @@ class TradingApp(App[None]):
 
     async def _cancel_tasks(self) -> None:
         """Wait for active workflow cleanup without disturbing completed report files."""
-        tasks = [task for task in (self._run_task, self._report_task) if task is not None and not task.done()]
+        tasks = [task for task in (self._run_task, self._report_task, self._chat_task) if task is not None and not task.done()]
         for task in tasks:
             if not task.cancelling():
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if self.report_chat is not None:
+            await self.report_chat.close()
 
     async def on_unmount(self) -> None:
         """Clean up background tasks on external terminal shutdown."""

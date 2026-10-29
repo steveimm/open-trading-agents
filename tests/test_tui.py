@@ -220,7 +220,7 @@ async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections()
         assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
         await pilot.press("f", "escape")
         assert app.fullscreen
-        await pilot.press("m", "shift+tab")
+        await pilot.press("m", "shift+tab", "shift+tab")
         assert app.active_stage == "reports"
         assert not app.check_action("detail", (1,)) and not app.check_action("toggle_detail", ())
         assert "Space" not in str(footer.render()) and "section" not in str(footer.render())
@@ -521,7 +521,7 @@ async def test_prefetch_time_is_not_reset_by_model_start() -> None:
         assert app.agents["Sentiment Analyst"].elapsed(time.monotonic()) >= 9
 
 
-async def test_completed_report_is_loaded_without_export_controls(tmp_path: Path) -> None:
+async def test_completed_report_is_loaded_with_browser_control(tmp_path: Path) -> None:
     """The Reports stage reads the automatically saved full report, without another export action."""
     (tmp_path / "reports").mkdir()
     full = "# Complete report\n\nMarket evidence\n\nBull and bear\n\nFinal recommendation"
@@ -533,7 +533,7 @@ async def test_completed_report_is_loaded_without_export_controls(tmp_path: Path
         app.flush_events()
         await pilot.pause()
         assert app.report_document.plain() == full
-        assert not app.query("Button")
+        assert app.query_one("#open-report").disabled
         assert "e" not in {binding.key for binding in app.BINDINGS}
 
 

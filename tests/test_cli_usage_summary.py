@@ -1,4 +1,5 @@
 import json
+import webbrowser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -142,120 +143,19 @@ def completed_interactive_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "sys", SimpleNamespace(stdin=SimpleNamespace(isatty=lambda: True), stdout=SimpleNamespace(isatty=lambda: True)))
     monkeypatch.setattr(tui, "TradingApp", lambda *args, **kwargs: SimpleNamespace(run=lambda: None, result=result, error=None))
     monkeypatch.setattr(configuration_ui, "_confirm", unexpected)
-    monkeypatch.setattr(cli.webbrowser, "open_new_tab", unexpected)
+    monkeypatch.setattr(webbrowser, "open_new_tab", unexpected)
     return workflow, result
 
 
-@pytest.mark.parametrize("open_browser,print_terminal", [(True, True), (True, False), (False, True), (False, False)])
-def test_completion_offers_browser_then_full_terminal_report(
-    completed_interactive_run: tuple[SimpleNamespace, RunResult], monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], open_browser: bool, print_terminal: bool,
+def test_interactive_completion_has_no_viewing_prompts(
+    completed_interactive_run: tuple[SimpleNamespace, RunResult], capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Independently honor both choices, render the complete Markdown, and keep terminal controls inert.
-
-    Args:
-        completed_interactive_run: Saved fixture and TUI result.
-        monkeypatch: Prompt and browser adapters.
-        capsys: Captured completion and rendered report output.
-        open_browser: Whether to open the exported HTML.
-        print_terminal: Whether to render the exported Markdown.
-    """
-    from open_trading_agents.ui import configuration as configuration_ui
-
+    """Exit directly with the saved result and summary, without optional report prompts."""
     workflow, result = completed_interactive_run
-    actions = []
-    answers = iter((open_browser, print_terminal))
-
-    def confirm(label: str, default: bool = False) -> bool:
-        """Record prompts in the same sequence as their actions."""
-        actions.append(label)
-        return next(answers)
-
-    def open_page(uri: str) -> bool:
-        """Capture the correctly escaped saved report URI."""
-        actions.append(uri)
-        return True
-
-    monkeypatch.setattr(configuration_ui, "_confirm", confirm)
-    monkeypatch.setattr(cli.webbrowser, "open_new_tab", open_page)
-    assert cli.run_workflow(workflow, headless=False, events=False) is result
-
-    expected = ["Open report in browser?"]
-    if open_browser:
-        expected.append((result.directory / "reports" / "complete_report.html").as_uri())
-    expected.append("Print full report in terminal?")
-    assert actions == expected
-    output = capsys.readouterr().out
-    assert f"Run saved to {result.directory / 'reports'}" in output
-    assert "Usage details:" not in output and "Run: fixture-run" not in output
-    assert ("END COMPLETE REPORT" in output) is print_terminal
-    assert "\x1b" not in output
-
-
-@pytest.mark.parametrize("failure", [False, OSError("fixture browser error"), cli.webbrowser.Error("fixture browser error")])
-def test_browser_failure_does_not_prevent_terminal_report_or_fail_completed_run(
-    completed_interactive_run: tuple[SimpleNamespace, RunResult], monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], failure: bool | Exception,
-) -> None:
-    """Keep viewing failures separate from successful analysis and still offer the second view.
-
-    Args:
-        completed_interactive_run: Saved fixture and TUI result.
-        monkeypatch: Prompt and browser adapters.
-        capsys: Captured failure notice and terminal report.
-        failure: Failed launch return value or launch exception.
-    """
-    from open_trading_agents.ui import configuration as configuration_ui
-
-    workflow, result = completed_interactive_run
-    monkeypatch.setattr(configuration_ui, "_confirm", lambda *args, **kwargs: True)
-
-    def open_page(uri: str) -> bool:
-        """Simulate an unavailable browser without starting a process."""
-        if isinstance(failure, Exception):
-            raise failure
-        return failure
-
-    monkeypatch.setattr(cli.webbrowser, "open_new_tab", open_page)
     assert cli.run_workflow(workflow, headless=False, events=False) is result
     output = capsys.readouterr().out
-    assert "Could not open a browser." in output and "complete_report.html" in output
-    assert "END COMPLETE REPORT" in output
-
-
-@pytest.mark.parametrize("cancel_at", [1, 2])
-def test_cancelling_report_prompts_keeps_successful_result(
-    completed_interactive_run: tuple[SimpleNamespace, RunResult], monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], cancel_at: int,
-) -> None:
-    """Cancelling optional viewing must not label the already-completed research as cancelled.
-
-    Args:
-        completed_interactive_run: Saved fixture and TUI result.
-        monkeypatch: Prompt interruption adapter.
-        capsys: Captured completion summary.
-        cancel_at: Viewing question interrupted by the user.
-    """
-    import typer
-
-    from open_trading_agents.ui import configuration as configuration_ui
-
-    workflow, result = completed_interactive_run
-    count = 0
-
-    def confirm(label: str, default: bool = False) -> bool:
-        """Interrupt the selected question and decline any earlier question."""
-        nonlocal count
-        count += 1
-        if count == cancel_at:
-            raise typer.Abort()
-        return False
-
-    monkeypatch.setattr(configuration_ui, "_confirm", confirm)
-    assert cli.run_workflow(workflow, headless=False, events=False) is result
-    output = capsys.readouterr().out
-    assert "Run saved to" in output and "cancelled" not in output.lower()
-    assert (result.directory / "reports" / "complete_report.md").exists()
+    assert "Run saved to" in output
+    assert "END COMPLETE REPORT" not in output
 
 
 @pytest.mark.parametrize("mode", ["headless", "events", "redirected"])

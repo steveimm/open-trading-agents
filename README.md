@@ -49,7 +49,7 @@ Reports are exported automatically under `~/.open-trading-agents/runs/RUN_ID/rep
 - `complete_report.md`
 - `complete_report.html`
 
-After an interactive run completes, you can open the HTML report in your browser or print the full report in the terminal when prompted.
+Use **Open in browser** in the Reports pane to open the HTML report. The **Chat** pane after Reports supports follow-up questions using the full report and the Portfolio Manager’s model. Chat retains conversation history while the interface is open and uses no live data or execution tools. Quitting returns directly to the terminal.
 
 Press Enter at the output-directory prompt to keep this default, or choose another parent directory. You can also pass `--output-dir ./research`; reports then appear under `./research/RUN_ID/reports/`.
 
