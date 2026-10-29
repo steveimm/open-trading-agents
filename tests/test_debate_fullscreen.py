@@ -94,7 +94,7 @@ async def test_debate_fullscreen_states_are_independent_when_switching_stages() 
         await pilot.press("left", "f")
         prompt = list(app.prompt_views["risk"].values())[-1]
         assert app._debate_fullscreen["risk"] is prompt
-        await pilot.press("tab", "tab", "tab", "tab", "tab")
+        await pilot.press("tab", "tab", "tab", "tab")
         await pilot.pause()
         assert app.active_stage == "research" and app._active_view() is research
         assert app._debate_fullscreen["research"] is research

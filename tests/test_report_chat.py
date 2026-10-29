@@ -121,11 +121,21 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         assert "00:" not in str(app.query_one("#stage-status", Static).render())
         await pilot.press("b")
         assert opened == [(reports / "complete_report.html").as_uri()]
-        app.query_one("#stage-tabs", Tabs).active = "tab-chat"
+        app.query_one("#stage-tabs", Tabs).active = "tab-reports"
         await pilot.pause()
         field = app.query_one("#chat-input", Input)
-        assert not app.check_action("open_report", ())
-        assert "open in browser" not in str(app.query_one("#shortcuts", Static).render())
+        assert app.check_action("open_report", ())
+        assert not app.query("#tab-chat, #stage-chat")
+        left = app.query_one("#report-chat").region
+        right = app.query_one("#report-document").region
+        assert left.right <= right.x and left.width < right.width
+        assert right.right <= size[0]
+        assert app.report_view.is_on_screen and app.stage_views["chat"].is_on_screen
+        assert field.placeholder == "Ask about the report"
+        await pilot.press("left")
+        assert app._active_view() is app.stage_views["chat"]
+        await pilot.press("right")
+        assert app._active_view() is app.report_view
         assert not field.has_focus
         assert "q quit" in str(app.query_one("#shortcuts", Static).render())
         assert "Ctrl+C" not in str(app.query_one("#shortcuts", Static).render())
@@ -134,6 +144,8 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         assert chat.system_prompt in app.stage_views["chat"].visible_plain()
         await pilot.press("enter")
         assert field.has_focus
+        assert not app.check_action("open_report", ())
+        assert "open in browser" not in str(app.query_one("#shortcuts", Static).render())
         assert field.region.bottom <= size[1]
         assert not app.query("Button")
         assert field.region.right <= size[0]
@@ -141,6 +153,7 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
         assert app.stage_views["chat"].size.height > 0
         await pilot.press("b", "q", "f", "m", "space", "left_square_bracket", "right_square_bracket", "left", "right")
         assert field.value == "bqfm []"
+        assert len(opened) == 1
         await pilot.press("enter")
         await pilot.pause()
         assert len(sessions) == 1 and len(sessions[0].prompts) == 1
@@ -186,7 +199,7 @@ async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path, quit_ke
         await app.receive(AgentEvent("run_end", "Workflow", "reports"))
         app.flush_events()
         await pilot.pause()
-        app.query_one("#stage-tabs", Tabs).active = "tab-chat"
+        app.query_one("#stage-tabs", Tabs).active = "tab-reports"
         await pilot.pause()
         field = app.query_one("#chat-input", Input)
         await pilot.press("enter")

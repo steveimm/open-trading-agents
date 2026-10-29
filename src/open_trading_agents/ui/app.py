@@ -191,6 +191,8 @@ class TradingApp(App[None]):
     #memory-details { height: auto; max-height: 14; padding: 0; border: none; }
     #memory-transcript { height: 9; }
     #memory-status { height: 2; }
+    #report-chat { width: 1fr; min-width: 0; height: 1fr; }
+    #report-document { width: 2fr; min-width: 0; height: 1fr; }
     #chat-conversation { height: 1fr; min-height: 0; }
     #chat-input, #chat-input:focus {
         height: 3; margin: 1 1 0 1; padding: 0; background: #0d131c;
@@ -262,6 +264,7 @@ class TradingApp(App[None]):
         self._chat_task: asyncio.Task[None] | None = None
         self._report_ready = False
         self._browser_ready = False
+        self._report_focus = "report"
         self.error: Exception | None = None
         self.result: object | None = None
         self.stage_index, self.selected_agent, self.fullscreen = 0, 0, False
@@ -278,6 +281,7 @@ class TradingApp(App[None]):
                             agent_presentations=self._agent_presentations, id=f"transcript-{stage}")
             for stage, _ in STAGES[1:] if stage != "reports"
         }
+        self.stage_views["chat"] = ChatView(agent_presentations=self._agent_presentations, id="transcript-chat")
         chat_prompt = report_chat.system_prompt if report_chat is not None else system_prompt(ROLES["chat"], output_language)
         self.stage_views["chat"].consume(AgentEvent("system", ROLES["chat"].name, "chat", chat_prompt))
         self.stage_views["chat"].systems[ROLES["chat"].name].collapsed = False
@@ -346,14 +350,17 @@ class TradingApp(App[None]):
                         with Vertical(id=f"prompts-{stage}", classes="prompt-column"):
                             yield from self.prompt_views[stage].values()
                         yield self.stage_views[stage]
-                elif stage == "chat":
-                    with Vertical(id="stage-chat", classes="stage"):
-                        with Vertical(id="chat-conversation", classes="single-stage"):
-                            yield self.stage_views[stage]
-                        yield Input(placeholder="Chat becomes available when the report is ready.", id="chat-input", disabled=True)
+                elif stage == "reports":
+                    with Horizontal(id="stage-reports", classes="stage"):
+                        with Vertical(id="report-chat"):
+                            with Vertical(id="chat-conversation", classes="single-stage"):
+                                yield self.stage_views["chat"]
+                            yield Input(placeholder="Chat becomes available when the report is ready.", id="chat-input", disabled=True)
+                        with Vertical(id="report-document", classes="single-stage"):
+                            yield self.report_view
                 else:
                     with Vertical(id=f"stage-{stage}", classes="stage single-stage"):
-                        yield self.report_view if stage == "reports" else self.stage_views[stage]
+                        yield self.stage_views[stage]
         with Collapsible(title="Supporting analysis", collapsed=True, id="memory-details", classes="hidden"):
             yield Static(id="memory-status", markup=False)
             yield self.memory_view
@@ -435,6 +442,12 @@ class TradingApp(App[None]):
         """
         if event.kind in {"system", "system_prompt"} and event.data.get("source") == "native_request":
             return
+        if event.stage == "chat":
+            self.stage_views["chat"].consume(event)
+            if event.kind == "usage":
+                key, value = request_usage(event)
+                self.usage[key] = value
+            return
         now = min(time.monotonic(), event.timestamp + self._wall_offset)
         self._started = min(self._started, now)
         kind = {"system_prompt": "system", "text_delta": "text", "thinking_delta": "reasoning", "output": "text"}.get(event.kind, event.kind)
@@ -458,8 +471,7 @@ class TradingApp(App[None]):
         if activity.started is None and agent != "Workflow" and kind in {"system", "prompt", "tool_start", "text", "reasoning"}:
             activity.started = now
         if kind == "stage_start":
-            if stage != "chat":
-                self._finished, self._failure = None, None
+            self._finished, self._failure = None, None
             self.query_one("#run-error", Static).add_class("hidden")
             self.stages[stage] = Activity(started=now, status="running")
         elif kind == "stage_end":
@@ -546,7 +558,7 @@ class TradingApp(App[None]):
         self._refresh_shortcuts()
         if self.report_chat is not None:
             self.query_one("#chat-input", Input).disabled = False
-            self.query_one("#chat-input", Input).placeholder = "Ask about the report…"
+            self.query_one("#chat-input", Input).placeholder = "Ask about the report"
 
     async def action_open_report(self) -> None:
         """Open the completed HTML report from the Reports stage shortcut."""
@@ -700,14 +712,14 @@ class TradingApp(App[None]):
             header.append("Failed")
         elif self._finished is not None:
             header.append("Complete")
-        if self.active_stage not in {"reports", "chat"}:
+        if self.active_stage != "reports":
             header.append(f"Total {elapsed}")
         compact = self.screen.has_class("compact")
         self._status_widgets["run-status"].update(" · ".join(header))
         stage = self.stages[self.active_stage]
         stage_suffix = status_suffixes.get(stage.status, f" · {stage.status}")
         stage_text = f"{STAGES[self.stage_index][1]}{stage_suffix}"
-        if self.active_stage not in {"reports", "chat"}:
+        if self.active_stage != "reports":
             stage_text += f" · {duration(stage.elapsed(now))}"
         participants = self._stage_agents[self.active_stage]
         if self.active_stage not in {"analysis", "reports"} and participants:
@@ -783,11 +795,11 @@ class TradingApp(App[None]):
         if not self.is_running:
             return False
         if action == "compose_chat":
-            return self.active_stage == "chat" and self._report_ready and self.report_chat is not None and not isinstance(self.focused, Input)
+            return self.active_stage == "reports" and self._report_ready and self.report_chat is not None and not isinstance(self.focused, Input)
         if action == "leave_chat_input":
-            return self.active_stage == "chat" and isinstance(self.focused, Input)
+            return self.active_stage == "reports" and isinstance(self.focused, Input)
         if action == "open_report":
-            return self.active_stage == "reports" and self._browser_ready
+            return self.active_stage == "reports" and self._browser_ready and not isinstance(self.focused, Input)
         if isinstance(self.focused, Input) and action in {"fullscreen", "detail", "toggle_detail", "memory", "navigate"}:
             return False
         view = self._active_view()
@@ -801,7 +813,7 @@ class TradingApp(App[None]):
         if action == "navigate":
             direction = parameters[0] if parameters else ""
             if direction in {"left", "right"}:
-                return self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._debate_fullscreen[self.active_stage] is None)
+                return self.active_stage == "reports" or self._grid_navigation() or (self.active_stage in DEBATE_STAGES and self._debate_fullscreen[self.active_stage] is None)
             return view.is_on_screen
         return True
 
@@ -885,7 +897,9 @@ class TradingApp(App[None]):
             return self.report_view
         if self.active_stage in DEBATE_STAGES:
             return self._debate_fullscreen[self.active_stage] or self._debate_views(self.active_stage)[self._debate_focus[self.active_stage]]
-        return self.report_view if self.active_stage == "reports" else self.stage_views[self.active_stage]
+        if self.active_stage == "reports":
+            return self.stage_views["chat"] if self._report_focus == "chat" else self.report_view
+        return self.stage_views[self.active_stage]
 
     def _debate_views(self, stage: str) -> tuple[ChatView | TranscriptView, ...]:
         """List prompt panes followed by the shared conversation for keyboard focus.
@@ -934,6 +948,11 @@ class TradingApp(App[None]):
                 self.selected_agent = (self.selected_agent + step) % len(self.selected_analysts)
                 self._update_selection()
             return
+        if self.active_stage == "reports" and direction in {"left", "right"}:
+            self._report_focus = "chat" if direction == "left" else "report"
+            self._active_view().focus()
+            self._refresh_shortcuts()
+            return
         if self.active_stage in DEBATE_STAGES and direction in {"left", "right"}:
             views = self._debate_views(self.active_stage)
             offset = -1 if direction == "left" else 1
@@ -962,6 +981,10 @@ class TradingApp(App[None]):
         Args:
             event: Focused descendant.
         """
+        if event.widget is self.stage_views["chat"] or event.widget.id == "chat-input":
+            self._report_focus = "chat"
+        elif event.widget is self.report_view:
+            self._report_focus = "report"
         identifier = event.widget.id or ""
         if identifier.startswith("analyst-"):
             index = int(identifier.removeprefix("analyst-"))

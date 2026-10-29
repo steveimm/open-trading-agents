@@ -100,7 +100,6 @@ STAGES = (
     ("risk", "Risk Debate"),
     ("portfolio", "Portfolio Decision"),
     ("reports", "Reports"),
-    ("chat", "Chat"),
 )
 
 ANALYSTS = {

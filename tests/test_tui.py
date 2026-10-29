@@ -220,7 +220,7 @@ async def test_shortcuts_and_actions_follow_stage_focus_and_available_sections()
         assert "fullscreen" not in str(footer.render()) and "grid" not in str(footer.render())
         await pilot.press("f", "escape")
         assert app.fullscreen
-        await pilot.press("m", "shift+tab", "shift+tab")
+        await pilot.press("m", "shift+tab")
         assert app.active_stage == "reports"
         assert not app.check_action("detail", (1,)) and not app.check_action("toggle_detail", ())
         assert "Space" not in str(footer.render()) and "section" not in str(footer.render())
