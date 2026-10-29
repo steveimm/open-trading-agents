@@ -142,7 +142,8 @@ async def test_report_actions_and_chat_typing(tmp_path: Path, monkeypatch: pytes
     assert sessions[0].closed
 
 
-async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path) -> None:
+@pytest.mark.parametrize("quit_keys", [("escape", "q"), ("ctrl+c",)])
+async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path, quit_keys: tuple[str, ...]) -> None:
     """Keep failed chat independent of the research result and close an interrupted response."""
     reports = tmp_path / "reports"
     reports.mkdir()
@@ -182,7 +183,9 @@ async def test_chat_failure_and_quit_leave_report_intact(tmp_path: Path) -> None
         await pilot.press("enter")
         await pilot.pause()
         assert session is not None and not session.closed
-        await pilot.press("escape", "q")
+        assert field.has_focus
+        assert "ctrl+c" not in str(app.query_one("#shortcuts", Static).render()).lower()
+        await pilot.press(*quit_keys)
         assert session.closed
     assert (reports / "complete_report.md").read_text() == report
 

@@ -415,7 +415,8 @@ async def test_clocks_tick_without_reindexing_chats(monkeypatch: pytest.MonkeyPa
         release.set()
 
 
-async def test_quit_cancels_active_workflow_and_waits_for_cleanup() -> None:
+@pytest.mark.parametrize("key", ["q", "ctrl+c"])
+async def test_quit_cancels_active_workflow_and_waits_for_cleanup(key: str) -> None:
     """Do not leave running native models behind when the UI closes."""
     started, cleaned = asyncio.Event(), asyncio.Event()
 
@@ -429,8 +430,8 @@ async def test_quit_cancels_active_workflow_and_waits_for_cleanup() -> None:
 
     async with TradingApp(run).run_test() as pilot:
         await started.wait()
-        await pilot.press("q")
-    assert cleaned.is_set()
+        await pilot.press(key)
+        assert cleaned.is_set()
 
 
 async def test_ui_callbacks_ignore_events_after_screen_teardown() -> None:

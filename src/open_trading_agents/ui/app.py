@@ -221,6 +221,7 @@ class TradingApp(App[None]):
         Binding("enter", "compose_chat", "Write message", priority=True),
         Binding("escape", "leave_chat_input", "Leave input", priority=True),
         Binding("q", "stop", "Quit"),
+        Binding("ctrl+c", "stop", show=False, priority=True),
     ]
 
     def __init__(
