@@ -56,19 +56,22 @@ async def test_report_context_and_native_history(tmp_path: Path, allow_execution
         assert command[command.index("--artifact-dir") + 1] == str(tmp_path / "chat" / "data")
         assert set(command[command.index("--tools") + 1].split(",")) == expected_tools
         assert spec.system_prompt == chat.system_prompt
-        assert "Answer each user message in the conversation" in spec.system_prompt
+        assert "The first user message contains the report followed by a question." in spec.system_prompt
+        assert "Later messages continue the same conversation." in spec.system_prompt
         assert "Respond in Korean unless the user requests another language." in spec.system_prompt
-        assert "analysis-date cutoff" in spec.system_prompt
+        assert "limit requests to its analysis date" in spec.system_prompt
         assert "required JSON" not in spec.system_prompt
         assert "rating values in English" not in spec.system_prompt
         assert "Return your report or decision once" not in spec.system_prompt
         assert "exports the reports" not in spec.system_prompt
         assert "Write the report in" not in spec.system_prompt
-        assert "Do not rerun the analyst workflow" in spec.system_prompt
-        assert ("Native execution is disabled" in spec.system_prompt) == (not allow_execution)
-        assert ("Web search and page retrieval are disabled" in spec.system_prompt) == (not web_research)
+        for term in ("analyst", "workflow", "harness", "portfolio manager"):
+            assert term not in spec.system_prompt.lower()
+        assert "Financial data tools provide price history" in spec.system_prompt
+        assert ("Code execution is unavailable" in spec.system_prompt) == (not allow_execution)
+        assert ("Web search and page retrieval are unavailable" in spec.system_prompt) == (not web_research)
         if not allow_execution:
-            assert "use the harness's native execution tools" not in spec.system_prompt
+            assert "You can execute code" not in spec.system_prompt
         session = Session(sink)
         opened.append(session)
         return session
