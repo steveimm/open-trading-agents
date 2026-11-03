@@ -224,7 +224,6 @@ class TradingApp(App[None]):
         Binding("escape", "leave_chat_input", "Leave input", priority=True),
         Binding("q", "stop", "Quit"),
         Binding("ctrl+c", "stop", show=False, priority=True),
-        Binding("ctrl+y", "screen.copy_text", "Copy selected text", show=False),
     ]
 
     def __init__(
@@ -868,8 +867,6 @@ class TradingApp(App[None]):
             parts.append("Enter write")
         elif self._action_available("leave_chat_input"):
             parts.extend(["Enter send", "Esc leave input"])
-        if self.screen.selections and not isinstance(self.focused, Input):
-            parts.append("Ctrl+Y copy")
         parts.append("q quit")
         text = " · ".join(parts)
         if text != self._shortcuts_text:

@@ -7,8 +7,8 @@ from open_trading_agents.ui.transcript import Transcript
 
 
 @pytest.mark.parametrize("pane", ["analyst", "report", "system"])
-async def test_drag_selects_unicode_text_and_copies_without_borders(pane: str) -> None:
-    """Copy dragged text from custom panes while retaining header clicks and streaming state.
+async def test_drag_selects_unicode_text_without_borders(pane: str) -> None:
+    """Highlight dragged text while retaining header clicks and streaming state.
 
     Args:
         pane: Custom viewport to exercise through real mouse events.
@@ -50,8 +50,6 @@ async def test_drag_selects_unicode_text_and_copies_without_borders(pane: str) -
         highlighted = view.render_line(y)
         selection_style = app.screen.get_component_rich_style("screen--selection")
         assert any(segment.style and segment.style.bgcolor == selection_style.bgcolor for segment in highlighted)
-        await pilot.press("ctrl+y")
-        assert app.clipboard == "Prices 한국어 123\nSecond line"
         assert app.is_running
 
         if pane == "analyst":
@@ -64,7 +62,7 @@ async def test_drag_selects_unicode_text_and_copies_without_borders(pane: str) -
 
 
 async def test_scrolled_tool_selection_excludes_hidden_rows_and_survives_scroll() -> None:
-    """Copy a reverse drag within an expanded tool while a turn title is pinned."""
+    """Highlight a reverse drag within an expanded tool while a turn title is pinned."""
     app = TradingApp(selected_analysts=("market",))
     async with app.run_test(size=(100, 25)) as pilot:
         view = app.agent_views["Market Analyst"]
@@ -93,8 +91,6 @@ async def test_scrolled_tool_selection_excludes_hidden_rows_and_survives_scroll(
         await pilot.mouse_up(view, offset=start)
         await pilot.pause()
         assert app.screen.get_selected_text() == "한국어"
-        await pilot.press("ctrl+y")
-        assert app.clipboard == "한국어"
         view.navigate("down")
         await pilot.pause()
         assert app.screen.get_selected_text() == "한국어"
