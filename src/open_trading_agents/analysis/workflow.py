@@ -656,4 +656,5 @@ class Workflow:
             events = reader.events()
         finally:
             reader.close()
-        write_reports(self.directory, self.ticker, self.trade_date, self.outputs, self.rating, settings, events)
+        write_reports(self.directory, self.ticker, self.trade_date, self.outputs, self.rating, settings, events,
+                      portfolio=self.portfolio)

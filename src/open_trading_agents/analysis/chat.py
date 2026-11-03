@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING
 
 from open_trading_agents.analysis.models import AgentEvent, AgentSpec, EventSink, HarnessConfig, HarnessSession
 from open_trading_agents.analysis.prompts import ROLES, system_prompt
+from open_trading_agents.config import Portfolio
 from open_trading_agents.dataflows.files import locked
 from open_trading_agents.harnesses import open_session
 from open_trading_agents.persistence.events import EventRecorder
 from open_trading_agents.persistence.storage import RunStore
+from open_trading_agents.reporting.reports import portfolio_context
 
 if TYPE_CHECKING:
     from open_trading_agents.analysis.workflow import SessionFactory
@@ -42,6 +44,8 @@ class ReportChat:
         self.system_prompt = system_prompt(ROLES["chat"], language, allow_execution=allow_execution, web_research=web_research)
         self.session: HarnessSession | None = None
         self.context_sent = False
+        self.portfolio_context_sent = False
+        self._sending_portfolio = False
         self.sink: EventSink | None = None
         self.store: RunStore | None = None
         self.recorder: EventRecorder | None = None
@@ -75,6 +79,7 @@ class ReportChat:
             self.system_prompt = self.store.metadata("system_prompt", self.system_prompt)
             self.store.set_metadata("system_prompt", self.system_prompt)
             self.context_sent = self.store.metadata("context_sent", False)
+            self.portfolio_context_sent = self.store.metadata("portfolio_context_sent", False)
             self.store.append(self._interrupted_events(self.store))
             self.recorder = EventRecorder(self.workspace)
         except BaseException:
@@ -145,6 +150,9 @@ class ReportChat:
         if event.data.get("prompt_accepted"):
             self.context_sent = True
             self.store.set_metadata("context_sent", True)
+            if self._sending_portfolio:
+                self.portfolio_context_sent = True
+                self.store.set_metadata("portfolio_context_sent", True)
         self.recorder.append(event)
         if self.sink is not None:
             await self.sink(event)
@@ -157,6 +165,21 @@ class ReportChat:
         """
         if event.kind != "prompt":
             await self._record(event)
+
+    def _portfolio_context(self) -> str:
+        """Read the original run snapshot, independently of today's saved portfolio file.
+
+        Returns:
+            Explicit holdings and cash, or an unknown-portfolio statement.
+        """
+        snapshot = None
+        if (self.directory / "run.sqlite").is_file():
+            reader = RunStore(self.directory)
+            try:
+                snapshot = (reader.metadata("input") or {}).get("portfolio")
+            finally:
+                reader.close()
+        return portfolio_context(Portfolio.model_validate(snapshot) if snapshot is not None else None)
 
     async def ask(self, question: str, emit: EventSink) -> None:
         """Save a question and continue the native conversation with its original report context.
@@ -188,14 +211,23 @@ class ReportChat:
                     self.session = await self.session_factory(self.config, spec, self._emit)
                     if self.session.session_id:
                         self.store.save_session(ROLES["chat"].name, self.session.session_id)
-                prompt = question
+                context = []
                 if not self.context_sent:
                     report = await asyncio.to_thread((self.directory / "reports" / "complete_report.md").read_text, encoding="utf-8")
-                    prompt = f"Research report:\n<report>\n{report}\n</report>\n\nUser question:\n{question}"
+                    context.append(f"Research report:\n<report>\n{report}\n</report>")
+                self._sending_portfolio = not self.portfolio_context_sent
+                if self._sending_portfolio:
+                    portfolio = await asyncio.to_thread(self._portfolio_context)
+                    if not context or portfolio not in context[0]:
+                        context.append(f"Portfolio context for this saved run:\n<portfolio>\n{portfolio}\n</portfolio>")
+                prompt = "\n\n".join([*context, f"User question:\n{question}"]) if context else question
                 result = await self.session.prompt(prompt)
                 self.store.save_session(ROLES["chat"].name, result.session_id)
                 self.context_sent = True
                 self.store.set_metadata("context_sent", True)
+                if self._sending_portfolio:
+                    self.portfolio_context_sent = True
+                    self.store.set_metadata("portfolio_context_sent", True)
                 if result.stop_reason not in ("stop", "end_turn", "completed") or not result.text.strip():
                     raise RuntimeError("The chat response did not complete. Please try again.")
                 await self._record(AgentEvent("agent_end", ROLES["chat"].name, "chat", data={"output": result.text}, event_id=f"{self._turn_id}:end"))
@@ -215,6 +247,7 @@ class ReportChat:
                         self.store.set_metadata("pending_turn", None)
                 finally:
                     self._turn_id = None
+                    self._sending_portfolio = False
 
     async def close(self) -> None:
         """Flush the transcript and release native resources and the conversation lock."""

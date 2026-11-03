@@ -7,8 +7,10 @@ from textual.widgets import Input, Static, Tabs
 
 from open_trading_agents.analysis.chat import ReportChat
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
+from open_trading_agents.config import Portfolio
 from open_trading_agents.dataflows.tools import TOOL_NAMES
 from open_trading_agents.persistence.storage import RunStore
+from open_trading_agents.reporting.reports import portfolio_context
 from open_trading_agents.ui.app import TradingApp
 
 
@@ -507,3 +509,63 @@ async def test_replay_marks_a_crashed_turn_without_model_requests(tmp_path: Path
     replayed.clear()
     await ReportChat(tmp_path, HarnessConfig(), "English").replay(emit)
     assert [event.text for event in replayed if event.kind == "prompt"] == ["Saved question", "Next question"]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("included_in_report", [False, True])
+async def test_chat_supplies_run_portfolio_once_and_keeps_native_history(
+    tmp_path: Path, existing: bool, included_in_report: bool,
+) -> None:
+    """Add the original holdings to new and pre-update conversations without replaying the report.
+
+    Args:
+        tmp_path: Isolated saved research run.
+        existing: Simulate an older chat whose report context was already accepted.
+        included_in_report: Whether the report already includes the explicit snapshot.
+    """
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    snapshot = {"cash": 4500, "currency": "USD", "positions": [{"ticker": "NVDA", "quantity": 12, "average_price": 120}]}
+    report = "Research report"
+    if included_in_report:
+        report += "\n\n" + portfolio_context(Portfolio.model_validate(snapshot))
+    (reports / "complete_report.md").write_text(report)
+    run = RunStore(tmp_path)
+    run.set_metadata("input", {"portfolio": snapshot})
+    run.close()
+    if existing:
+        saved = RunStore(tmp_path / "chat")
+        saved.set_metadata("context_sent", True)
+        saved.save_session("Report Assistant", "old-native-session")
+        saved.close()
+    opened = []
+    sessions = []
+
+    async def factory(config: HarnessConfig, spec: AgentSpec, emit: EventSink) -> Session:
+        """Record native session identity and supplied prompts."""
+        opened.append(spec)
+        session = Session(emit)
+        sessions.append(session)
+        return session
+
+    async def emit(event: AgentEvent) -> None:
+        """Consume test events without writing outside the saved run."""
+
+    chat = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    try:
+        await chat.ask("What do I hold?", emit)
+        await chat.ask("What about cash?", emit)
+    finally:
+        await chat.close()
+    assert opened[0].session_id == ("old-native-session" if existing else None)
+    first = sessions[0].prompts[0]
+    assert first.count("NVDA | 12.0 | 120.0") == 1 and "4500.0" in first and "USD" in first
+    assert ("Research report" in first) == (not existing)
+    assert sessions[0].prompts[1] == "What about cash?"
+
+    restored = ReportChat(tmp_path, HarnessConfig(), "English", factory)
+    try:
+        await restored.ask("Continue", emit)
+    finally:
+        await restored.close()
+    assert sessions[1].prompts == ["Continue"]

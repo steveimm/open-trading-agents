@@ -5,7 +5,10 @@ from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.config import Portfolio, Position
 from open_trading_agents.reporting.reports import write_reports
 
 
@@ -32,7 +35,7 @@ def test_automatic_report_writer_saves_both_formats_under_reports(tmp_path: Path
     assert "2024-03-15" in markdown
     assert "Rating: **Hold**" in markdown
     assert [line for line in markdown.splitlines() if line.startswith("## ")] == [
-        "## I. Analyst Team Reports", "## II. Research Team Decision", "## III. Trading Team Plan",
+        "## Portfolio Context", "## I. Analyst Team Reports", "## II. Research Team Decision", "## III. Trading Team Plan",
         "## IV. Risk Management Team Decision", "## V. Portfolio Manager Decision",
     ]
     assert (target.parent / "1_analysts" / "market.md").read_text() == outputs["Market Analyst"]
@@ -151,7 +154,8 @@ def test_html_report_preserves_team_hierarchy_and_links_complete_sections(tmp_pa
     target = write_reports(tmp_path, "NVDA", "2024-03-15", outputs, "Hold", {}, [])
     page = target.with_suffix(".html").read_text()
     assert '<h2>I. Analyst Team Reports</h2>' in page
-    assert '<h3 id="s1-1">Market Analyst</h3>' in page
+    assert '<h3 id="s1-1">Supplied Portfolio</h3>' in page
+    assert '<h3 id="s2-1">Market Analyst</h3>' in page
     assert '<h4>Evidence</h4>' in page
     assert '<h5>Executive summary</h5>' in page
     assert '<div class="table"><table>' in page
@@ -160,8 +164,31 @@ def test_html_report_preserves_team_hierarchy_and_links_complete_sections(tmp_pa
     assert '<ul id="report-contents">' in page
     assert 'href="#s1-1"' in page
     assert 'href="#s2-1"' in page
-    assert '<h3 id="s2-1">Portfolio Manager</h3>' in page
+    assert 'href="#s3-1"' in page
+    assert '<h3 id="s3-1">Portfolio Manager</h3>' in page
     assert 'class="rating level">Hold' in page
     assert 'prefers-color-scheme: dark' in page
     assert '@media print' in page
     assert 'Tauric' not in page
+
+
+@pytest.mark.parametrize("portfolio,expected", [
+    (None, ["No portfolio was supplied", "unknown, not zero"]),
+    (Portfolio(cash=0, currency="USD"), ["Available cash: 0.0", "Currency: USD", "contains no positions"]),
+    (Portfolio(positions=[Position(ticker="NVDA", quantity=12.5, average_price=123.456789),
+                          Position(ticker="AAPL", quantity=2)]),
+     ["Available cash: Unknown", "Currency: Not supplied", "NVDA", "12.5", "123.456789", "AAPL", "Unknown"]),
+])
+def test_reports_explicitly_include_supplied_portfolio(tmp_path: Path, portfolio: Portfolio | None, expected: list[str]) -> None:
+    """Keep supplied, missing, and empty portfolios distinct in both report formats.
+
+    Args:
+        tmp_path: Isolated report directory.
+        portfolio: Original run snapshot.
+        expected: Portfolio facts that must remain visible.
+    """
+    target = write_reports(tmp_path, "NVDA", "2026-11-03", {"Portfolio Manager": "Hold"}, "Hold", {}, [], portfolio=portfolio)
+    for text in (target.read_text(), target.with_suffix(".html").read_text()):
+        assert "Portfolio Context" in text
+        for fact in expected:
+            assert fact in text

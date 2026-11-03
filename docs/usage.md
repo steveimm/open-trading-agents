@@ -88,6 +88,8 @@ The JSON format remains available for manual editing:
 
 Each position requires a ticker and finite quantity; average price is optional and cannot be negative. Cash and currency are optional. Portfolio context reaches the Trader, all risk-debate agents, and the Portfolio Manager. Resumed runs retain their original portfolio snapshot. The application does not connect to a broker or place orders.
 
+The Markdown and HTML reports include a Portfolio Context section with the supplied snapshot, or an explicit statement that holdings and cash are unknown when no portfolio was supplied. Report chat receives the same saved snapshot. Existing saved conversations receive this context once on their next question after updating. Later edits to your portfolio configuration do not change the snapshot attached to an earlier run.
+
 ## Memory and backtesting
 
 Completed recommendations can be evaluated after their holding window ends. The default measurement starts at the first closing price after the analysis date and ends five trading sessions later. Returns are compared with a regional benchmark. Historical analyses receive only prior lessons whose outcomes were known by their cutoff.

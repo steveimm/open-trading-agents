@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.config import Portfolio
 from open_trading_agents.reporting.html import render_report
 from open_trading_agents.reporting.usage import summarize_usage
 
@@ -164,6 +165,31 @@ def _markdown_value(value: str) -> str:
     return re.sub(r"([\\`*_{}\[\]<>#|])", r"\\\1", " ".join(value.splitlines()))
 
 
+def portfolio_context(portfolio: Portfolio | None) -> str:
+    """Describe the exact portfolio supplied for a run without inferring missing values.
+
+    Args:
+        portfolio: Saved run input, or None if portfolio consideration was declined.
+
+    Returns:
+        Markdown shared by the report and follow-up conversation.
+    """
+    if portfolio is None:
+        return "No portfolio was supplied for this run. Holdings, cash, and currency are unknown, not zero."
+
+    lines = ["This is the portfolio snapshot supplied for this run, not a live account balance.", "",
+             f"- Currency: {_markdown_value(portfolio.currency) if portfolio.currency else 'Not supplied'}",
+             f"- Available cash: {portfolio.cash if portfolio.cash is not None else 'Unknown'}", ""]
+    if not portfolio.positions:
+        lines.append("The supplied snapshot contains no positions.")
+    else:
+        lines.extend(["| Ticker | Quantity | Average entry price |", "| --- | ---: | ---: |"])
+        for position in portfolio.positions:
+            average = position.average_price if position.average_price is not None else "Unknown"
+            lines.append(f"| {_markdown_value(position.ticker)} | {position.quantity} | {average} |")
+    return "\n".join(lines)
+
+
 def write_transcript(path: Path, events: list[AgentEvent], append: bool = False) -> None:
     """Export ordered events as JSON lines.
 
@@ -186,6 +212,8 @@ def write_reports(
     settings: dict[str, Any],
     events: list[AgentEvent],
     include_html: bool = True,
+    *,
+    portfolio: Portfolio | None = None,
 ) -> Path:
     """Write individual reports, combined reports, and a local event transcript.
 
@@ -198,6 +226,7 @@ def write_reports(
         settings: Non-secret run settings for reproducibility.
         events: Persisted events to export as JSON lines.
         include_html: Whether to generate the standalone HTML report.
+        portfolio: Portfolio snapshot supplied for this run.
 
     Returns:
         The combined Markdown report path.
@@ -209,7 +238,8 @@ def write_reports(
     header = [f"# Trading Analysis Report: {_markdown_value(ticker)}", "",
               f"- Analysis date: {_markdown_value(trade_date)}", f"- Rating: **{_markdown_value(rating)}**"]
     header.extend(f"- {label}: {_markdown_value(value)}" for label, value in details)
-    parts = _report_parts(outputs, events)
+    parts = [("Portfolio Context", "portfolio_context", [("Supplied Portfolio", "snapshot.md", portfolio_context(portfolio))]),
+             *_report_parts(outputs, events)]
     sections = []
     usage = summarize_usage(events)
     (report_dir / "usage.json").write_text(json.dumps(usage, indent=2), encoding="utf-8")

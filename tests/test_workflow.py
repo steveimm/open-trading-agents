@@ -8,7 +8,7 @@ import pytest
 from open_trading_agents.analysis.decisions import SCHEMAS
 from open_trading_agents.analysis.models import AgentEvent, AgentResult, AgentSpec, EventSink, HarnessConfig
 from open_trading_agents.analysis.workflow import Workflow
-from open_trading_agents.config import Settings
+from open_trading_agents.config import Portfolio, Position, Settings
 from open_trading_agents.dataflows.files import locked
 from open_trading_agents.persistence.events import EventRecorder
 from open_trading_agents.persistence.storage import RunStore
@@ -59,7 +59,8 @@ async def test_debates_reuse_native_sessions_and_append_only_new_arguments(tmp_p
         return FakeHarness(spec, emit, calls, [])
 
     settings = Settings(state_dir=tmp_path, analysts=("market", "news"), research_rounds=2, memory_enabled=False)
-    workflow = Workflow("NVDA", "2026-01-02", settings, session_factory=factory)
+    portfolio = Portfolio(cash=4500, currency="USD", positions=[Position(ticker="NVDA", quantity=12, average_price=120)])
+    workflow = Workflow("NVDA", "2026-01-02", settings, portfolio=portfolio, session_factory=factory)
     result = await workflow.run()
     assert result.rating == "Overweight"
     assert opened.count("Bull Researcher") == opened.count("Bear Researcher") == 1
@@ -70,6 +71,8 @@ async def test_debates_reuse_native_sessions_and_append_only_new_arguments(tmp_p
     assert "Bear Researcher report" in bull_prompts[1]
     assert [name for name, _ in calls[-4:]] == ["Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager"]
     assert (result.directory / "reports" / "complete_report.html").is_file()
+    report = (result.directory / "reports" / "complete_report.md").read_text()
+    assert "NVDA | 12.0 | 120.0" in report and "Available cash: 4500.0" in report
     assert (result.directory / "transcript.jsonl").is_file()
 
 
