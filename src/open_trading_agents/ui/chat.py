@@ -471,6 +471,8 @@ class ChatView(FollowScrollView):
         width = max(1, self.scrollable_content_region.width)
         if not self._dirty and width == self._width:
             return
+        if width != self._width and self.text_selection is not None:
+            self.screen.clear_selection()
         anchor = self._anchor()
         parts: list[ChatPart] = []
         self._detail_rows = {}
@@ -710,8 +712,40 @@ class ChatView(FollowScrollView):
         """
         width = max(1, self.scrollable_content_region.width)
         if y == 0 and (header := self._sticky_header()) is not None:
-            return self._title_line(header, width)
+            row = self._offsets[self._parts.index(header)]
+            return self._selectable_row(self._title_line(header, width), row)
         row = int(self.scroll_y) + y
+        return self._selectable_row(self._render_row(row), row)
+
+    def _selection_content(self, row: int) -> tuple[str, int]:
+        """Exclude box decorations from copied conversation text.
+
+        Args:
+            row: Absolute wrapped conversation row.
+
+        Returns:
+            Visible content and its character column within the box.
+        """
+        index = bisect.bisect_right(self._offsets, row) - 1
+        if not 0 <= index < len(self._parts):
+            return "", 0
+        part = self._parts[index]
+        if part.kind in {"bottom", "gap"}:
+            return "", 0
+        if part.kind == "top":
+            return self._render_row(row).text[2:].rstrip("─╮ "), 2
+        return self._render_row(row).text[2:-2].rstrip(), 2
+
+    def _render_row(self, row: int) -> Strip:
+        """Render an absolute conversation row without pinned headers or selection.
+
+        Args:
+            row: Wrapped document row.
+
+        Returns:
+            Styled content including its box decoration.
+        """
+        width = max(1, self.scrollable_content_region.width)
         index = bisect.bisect_right(self._offsets, row) - 1
         if index < 0 or index >= len(self._parts):
             return Strip.blank(width, self.rich_style)
@@ -752,6 +786,8 @@ class ChatView(FollowScrollView):
             section: Selected participant turn, input, system, reasoning, or tool section.
         """
         pinned = self._sticky_header()
+        if self.text_selection is not None:
+            self.screen.clear_selection()
         header_row = self._detail_rows.get(section) if pinned is not None and pinned.disclosure is section else None
         self.following = False
         self._selected = section
@@ -835,6 +871,8 @@ class ChatView(FollowScrollView):
         Args:
             event: Pointer click within the conversation viewport.
         """
+        if self.text_selection is not None:
+            return
         self.focus()
         region = self.scrollable_content_region
         if event.screen_offset not in region:

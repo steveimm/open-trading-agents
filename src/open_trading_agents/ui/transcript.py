@@ -13,6 +13,7 @@ from textual import events
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollDown, ScrollTo, ScrollUp
+from textual.selection import Selection
 from textual.strip import Strip
 
 from open_trading_agents.analysis.models import AgentEvent
@@ -322,6 +323,80 @@ class TranscriptIndex:
 class FollowScrollView(ScrollView):
     can_focus = True
 
+    def selection_updated(self, selection: Selection | None) -> None:
+        """Pause streaming follow while text is selected and redraw its highlight.
+
+        Args:
+            selection: Selected character range, or None when cleared.
+        """
+        if selection is not None:
+            self.following = False
+        self.refresh()
+
+    def _render_row(self, row: int) -> Strip:
+        """Render an absolute document row without selection styling.
+
+        Args:
+            row: Wrapped document row.
+
+        Returns:
+            The unselected row.
+        """
+        raise NotImplementedError
+
+    def _selection_content(self, row: int) -> tuple[str, int]:
+        """Return copyable row text and its starting character column.
+
+        Args:
+            row: Wrapped document row.
+
+        Returns:
+            Text without layout padding and its column offset.
+        """
+        return self._render_row(row).text.rstrip(), 0
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Extract selected visible content without copying pane borders.
+
+        Args:
+            selection: Absolute wrapped-row character range.
+
+        Returns:
+            Selected text and its separator for selections crossing widgets.
+        """
+        start = selection.start.y if selection.start is not None else 0
+        end = selection.end.y if selection.end is not None else self.virtual_size.height - 1
+        lines = []
+        for row in range(max(0, start), min(end + 1, self.virtual_size.height)):
+            text, offset = self._selection_content(row)
+            span = selection.get_span(row)
+            if span is not None:
+                left, right = span
+                lines.append(text[max(0, left - offset):None if right == -1 else max(0, right - offset)])
+        return "\n".join(lines), "\n"
+
+    def _selectable_row(self, strip: Strip, row: int) -> Strip:
+        """Attach mouse coordinates and highlight the selected text in a rendered row.
+
+        Args:
+            strip: Unselected row, including any pane borders.
+            row: Absolute wrapped document row.
+
+        Returns:
+            Rendered text with selection styling and mouse hit coordinates.
+        """
+        selection = self.text_selection
+        if selection is not None and (span := selection.get_span(row)) is not None:
+            content, offset = self._selection_content(row)
+            start, end = span
+            start = max(start, offset)
+            end = min(len(content) + offset, len(strip.text) if end == -1 else end)
+            if start < end:
+                text = Text.assemble(*[(segment.text, segment.style) for segment in strip])
+                text.stylize(self.screen.get_component_rich_style("screen--selection"), start, end)
+                strip = Strip(text.render(self.app.console), strip.cell_length)
+        return strip.apply_offsets(0, row)
+
     def __init__(self, *, id: str | None = None) -> None:
         """Create a viewport whose follow mode changes only through explicit navigation.
 
@@ -444,6 +519,8 @@ class TranscriptView(FollowScrollView):
             document: Newly selected transcript.
         """
         if self.document is not document:
+            if self.is_mounted and self.text_selection is not None:
+                self.screen.clear_selection()
             self.document = document
             self.index = TranscriptIndex(document)
             self.following = True
@@ -455,6 +532,8 @@ class TranscriptView(FollowScrollView):
             return
         width = max(1, self.scrollable_content_region.width)
         resized = width != self.index.width
+        if resized and self.text_selection is not None:
+            self.screen.clear_selection()
         anchor = self.index.source_at(int(self.scroll_y))
         if not self.index.sync(width):
             return
@@ -475,7 +554,19 @@ class TranscriptView(FollowScrollView):
         Returns:
             A cached terminal-width strip.
         """
-        return self.index.render(int(self.scroll_y) + y, self.app.console, self.rich_style)
+        row = int(self.scroll_y) + y
+        return self._selectable_row(self._render_row(row), row)
+
+    def _render_row(self, row: int) -> Strip:
+        """Render an absolute wrapped transcript row.
+
+        Args:
+            row: Wrapped document row.
+
+        Returns:
+            Cached unselected text.
+        """
+        return self.index.render(row, self.app.console, self.rich_style)
 
     def on_resize(self, event: events.Resize) -> None:
         """Reindex the transcript after a viewport size change.

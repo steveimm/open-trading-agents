@@ -50,6 +50,8 @@ The terminal tab/window title shows the ticker and an animated activity indicato
 
 Click a turn or detail header to collapse it, or select it with `[` / `]` and press Space. Collapsed turns continue receiving output. `m` shows memory activity and reflection work when available.
 
+Drag over transcript, tool, system-prompt, or report text to select it, then press Ctrl+Y to copy. Selection pauses stream-following. Copying uses the terminal clipboard protocol (OSC 52), which must be supported and enabled in your terminal. Ctrl+C still quits. You can also use your terminal's native selection modifier, commonly Shift while dragging, and its copy shortcut.
+
 Scrolling upward pauses stream-following. Scroll to the bottom or press End to follow again. Tool previews longer than 10,000 characters show the beginning and end with an omitted-character count. Complete content remains in the saved transcript.
 
 Usage shows input, output, and cache reads. Cache writes appear only when reported. Cache counts are part of input, and reported reasoning tokens are part of output. A dash means unavailable. `+?` means some requests lack that usage detail.
