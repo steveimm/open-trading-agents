@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 from textual.widgets import Tabs
 
@@ -7,11 +9,12 @@ from open_trading_agents.ui.transcript import Transcript
 
 
 @pytest.mark.parametrize("pane", ["analyst", "report", "system"])
-async def test_drag_selects_unicode_text_without_borders(pane: str) -> None:
+async def test_drag_selects_unicode_text_without_borders(pane: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Highlight dragged text while retaining header clicks and streaming state.
 
     Args:
         pane: Custom viewport to exercise through real mouse events.
+        monkeypatch: Capture clipboard writes from the terminal driver.
     """
     app = TradingApp(selected_analysts=("market",))
     async with app.run_test(size=(120, 35)) as pilot:
@@ -39,6 +42,9 @@ async def test_drag_selects_unicode_text_without_borders(pane: str) -> None:
         region = view.scrollable_content_region
         start = (region.x - view.region.x + x, region.y - view.region.y + y)
         end = (start[0] + 10, start[1] + 1)
+        writes = []
+        assert app._driver is not None
+        monkeypatch.setattr(app._driver, "write", writes.append)
         await pilot.mouse_down(view, offset=start)
         await pilot.hover(view, offset=end)
         await pilot.mouse_up(view, offset=end)
@@ -46,10 +52,15 @@ async def test_drag_selects_unicode_text_without_borders(pane: str) -> None:
 
         assert view.text_selection is not None
         assert app.screen.get_selected_text() == "Prices 한국어 123\nSecond line"
+        assert app.clipboard == "Prices 한국어 123\nSecond line"
+        encoded = base64.b64encode(app.clipboard.encode()).decode()
+        assert f"\x1b]52;c;{encoded}\a" in writes
         assert not view.following
         highlighted = view.render_line(y)
         selection_style = app.screen.get_component_rich_style("screen--selection")
-        assert any(segment.style and segment.style.bgcolor == selection_style.bgcolor for segment in highlighted)
+        selected = [segment for segment in highlighted if segment.style and segment.style.bgcolor == selection_style.bgcolor]
+        assert selected and all(segment.style.color != segment.style.bgcolor for segment in selected)
+        assert "Prices 한국어 123" in "".join(segment.text for segment in selected)
         assert app.is_running
 
         if pane == "analyst":
@@ -91,6 +102,7 @@ async def test_scrolled_tool_selection_excludes_hidden_rows_and_survives_scroll(
         await pilot.mouse_up(view, offset=start)
         await pilot.pause()
         assert app.screen.get_selected_text() == "한국어"
+        assert app.clipboard == "한국어"
         view.navigate("down")
         await pilot.pause()
         assert app.screen.get_selected_text() == "한국어"

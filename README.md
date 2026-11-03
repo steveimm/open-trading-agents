@@ -39,7 +39,7 @@ Settings and profiles are stored under `~/.open-trading-agents/`. See [configura
 | Home / End | Go to the beginning / follow the latest output |
 | [ / ] | Select the previous / next expandable item |
 | Space or click its header | Expand or collapse an item |
-| Mouse drag | Highlight text |
+| Mouse drag | Highlight text and copy on release |
 | Hover an agent title | Show that agent's model configuration |
 | q | Quit, cancelling active work and retaining progress |
 

@@ -25,7 +25,7 @@ from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.reporting.usage import format_usage as usage_label
 from open_trading_agents.reporting.usage import request_usage
 from open_trading_agents.ui.chat import AgentPresentation, ChatView, TitleTooltip
-from open_trading_agents.ui.transcript import Transcript, TranscriptView, literal_text
+from open_trading_agents.ui.transcript import FollowScrollView, Transcript, TranscriptView, literal_text
 
 DEBATE_ROLES = {
     "research": ("bull", "bear"),
@@ -163,6 +163,7 @@ class TradingApp(App[None]):
     TITLE = "Open Trading Agents"
     CSS = """
     Screen { background: #0d131c; color: #d9e2ef; overflow: hidden hidden; }
+    Screen > .screen--selection { background: #245680; color: #f4f7ff; }
     #run-status { height: 1; padding: 0 1; background: #1a2635; }
     #run-error { height: auto; max-height: 5; padding: 0 1; color: #f2858a; }
     #stage-tabs { height: 2; }
@@ -582,6 +583,17 @@ class TradingApp(App[None]):
         """Focus the composer without taking printable quit keys away from the conversation."""
         if self._action_available("compose_chat"):
             self.query_one("#chat-input", Input).focus()
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        """Send a completed transcript selection to the terminal clipboard.
+
+        Args:
+            event: Mouse selection completed by the screen.
+        """
+        if any(isinstance(widget, FollowScrollView) for widget in self.screen.selections):
+            text = self.screen.get_selected_text()
+            if text:
+                self.copy_to_clipboard(text)
 
     def action_leave_chat_input(self) -> None:
         """Return to the conversation, preserving any unfinished question."""
