@@ -29,6 +29,7 @@ from open_trading_agents.config import (
     validate_date,
 )
 from open_trading_agents.reporting.usage import format_run_usage
+from open_trading_agents.ui.configuration import BackNavigation
 
 app = typer.Typer(no_args_is_help=False, add_completion=False, help="Financial research through native agent harness sessions.")
 configure_app = typer.Typer(no_args_is_help=False, add_completion=False, help="Configure agent profiles, data sources, and portfolio holdings.")
@@ -231,42 +232,29 @@ def run(
         if analysis_date is not None:
             analysis_date = validate_date(analysis_date.strip())
         selected_portfolio = load_portfolio(portfolio)
-        if interactive and portfolio is None:
-            from open_trading_agents.ui.configuration import select_run_portfolio
-
-            selected_portfolio = select_run_portfolio()
-
-        if ticker is None:
-            if not interactive:
-                raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
-            ticker = typer.prompt("Ticker")
-
-        if interactive and analysis_date is None:
-            from open_trading_agents.ui.configuration import select_analysis_date
-
-            analysis_date = select_analysis_date()
-        analysis_date = validate_date(analysis_date.strip() if analysis_date is not None else date.today().isoformat())
-
         settings = configured(config, harness, model, provider, effort)
         if interactive:
-            from open_trading_agents.ui.configuration import select_agent_settings, select_research_depth
+            from open_trading_agents.ui.configuration import select_run_inputs
 
-            settings = select_research_depth(settings)
-            settings = select_agent_settings(settings)
+            selected = select_run_inputs(settings, ticker, analysis_date, selected_portfolio, output_dir, ask_portfolio=portfolio is None)
+            ticker, analysis_date = selected.ticker, selected.analysis_date
+            settings, selected_portfolio, output_dir = selected.settings, selected.portfolio, selected.output_dir
             settings = runtime_overrides(settings, harness, model, provider, effort)
+        elif ticker is None:
+            raise typer.BadParameter("provide --ticker, for example: open-trading-agents --ticker NVDA --headless")
+        analysis_date = validate_date(analysis_date.strip() if analysis_date is not None else date.today().isoformat())
+
         changes = {"analysts": tuple(key.strip() for key in analysts.split(",")) if analysts else None,
                    "research_rounds": research_rounds, "risk_rounds": risk_rounds}
         settings = Settings.model_validate({**settings.model_dump(), **{k: v for k, v in changes.items() if v is not None}})
 
-        if interactive and output_dir is None:
-            from open_trading_agents.ui.configuration import select_output_directory
-
-            output_dir = select_output_directory(settings.state_dir / "runs")
         if output_dir is not None:
             output_dir = output_dir.expanduser().resolve()
 
         workflow = Workflow(ticker, analysis_date, settings, selected_portfolio, output_dir=output_dir, config_path=config)
         run_workflow(workflow, headless, events)
+    except BackNavigation:
+        return
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None
@@ -386,15 +374,29 @@ def configure(
     try:
         if not sys.stdin.isatty():
             raise typer.BadParameter("choose 'configure agents' with selection flags, or run 'configure data' or 'configure portfolio' in a terminal")
-        from open_trading_agents.ui.configuration import select_configuration_section
+        from open_trading_agents.ui.configuration import (
+            configure_data_interactively,
+            configure_interactively,
+            configure_portfolio_interactively,
+            select_configuration_section,
+        )
 
-        section = select_configuration_section()
-        if section == "agents":
-            configure_agents(ctx, config=config)
-        elif section == "data":
-            configure_data(ctx, config=config)
-        else:
-            configure_portfolio()
+        previous = None
+        while True:
+            section = select_configuration_section(previous) if previous else select_configuration_section()
+            previous = section
+            try:
+                if section == "agents":
+                    configure_interactively(_configuration_path(ctx, config))
+                elif section == "data":
+                    configure_data_interactively(_configuration_path(ctx, config))
+                else:
+                    configure_portfolio_interactively(default_portfolio_path())
+            except BackNavigation:
+                continue
+            return
+    except BackNavigation:
+        return
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None
@@ -440,6 +442,8 @@ def configure_agents(
         selected = settings.harness
         typer.echo(f"Saved default: {selected.kind} / {selected.model or 'Harness default'} / {selected.effort or 'Harness default'}")
         typer.echo(f"Config: {config.expanduser().resolve()}")
+    except BackNavigation:
+        return
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None
@@ -467,6 +471,8 @@ def configure_data(
         from open_trading_agents.ui.configuration import configure_data_interactively
 
         configure_data_interactively(_configuration_path(ctx, config))
+    except BackNavigation:
+        return
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None
@@ -492,6 +498,8 @@ def configure_portfolio(
         from open_trading_agents.ui.configuration import configure_portfolio_interactively
 
         configure_portfolio_interactively((file or default_portfolio_path()).expanduser())
+    except BackNavigation:
+        return
     except (typer.Abort, KeyboardInterrupt):
         typer.echo("Cancelled.", err=True)
         raise typer.Exit(130) from None

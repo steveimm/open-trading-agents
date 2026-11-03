@@ -16,7 +16,7 @@ The configuration menu offers **Agents**, **Data sources**, and **Portfolio**. A
 
 Run `uv run open-trading-agents doctor` to check local harness, profile, data-source, and portfolio setup.
 
-The run wizard first asks whether to consider your saved portfolio, then asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. Use arrow keys to select and Enter to confirm. `(selected)` identifies the current assignment inside each agent’s profile menu.
+The run wizard first asks whether to consider your saved portfolio, then asks for the ticker, analysis date, research depth, agent configuration, and output directory. Shallow, Medium, and Deep use 1, 3, and 5 debate rounds. In selection menus, use Up/Down to move, Right or Enter to select, and Left to go back. Text fields keep their normal arrow-key editing. `(selected)` identifies the current assignment inside each agent’s profile menu.
 
 Choose **Simple** to edit the working-agent, decision-manager, and Report Assistant profiles, or **Advanced** to assign profiles directly to individual agents. Select a row to change it, then choose **Continue** at the bottom when finished. Rows show the selected preset name or a compact model summary.
 

@@ -14,7 +14,9 @@ Running `configure` without a subcommand offers **Agents**, **Data sources**, an
 
 If the name already exists, confirm replacement or enter a different name. Declining to make a new preset the default still saves it and retains your existing default.
 
-Use Up/Down to move the pointer and Enter to confirm. Inside a group or role’s profile menu, the colored `(selected)` badge identifies its current assignment. Moving the pointer does not move that badge. Selecting a profile for a run does not change your saved default. Ctrl+C cancels setup without saving.
+In selection menus, use Up/Down to move, Right or Enter to confirm, and Left to return to the parent menu or preceding wizard question. Model setup retains your choices while you move backward through harness, provider, model, and effort. Text fields retain normal cursor editing. Source checklists use Space to toggle; Left, Right, or Enter returns after validating the checked sources.
+
+Inside a group or role’s profile menu, the colored `(selected)` badge identifies its current assignment. Moving the pointer does not move that badge. Selecting a profile for a run does not change your saved default. Changes reach disk only when you save or confirm the final preset choices. Leaving a top-level editor before saving discards its pending edits. Ctrl+C cancels setup without saving.
 
 To remove a preset, choose **Delete saved profile**, select its name, and confirm. Deleting the default clears its default selection in the selected and global configuration. Other presets and saved runs are retained.
 

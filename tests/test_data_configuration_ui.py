@@ -437,9 +437,10 @@ get_stock_data = "alpha_vantage"
     ("fundamental_data", {"sec_edgar", "yfinance"}, "\x1b[B \r", "\x1b[B \r", ["sec_edgar", "alpha_vantage"], "company profiles"),
     ("macro_data", {"fred"}, " \r", " \r", ["fred"], "at least one"),
 ])
+@pytest.mark.parametrize("confirm", ["\r", "\x1b[D", "\x1b[C"])
 def test_source_checklist_blocks_invalid_back_and_accepts_corrected_keyboard_selection(
     monkeypatch: pytest.MonkeyPatch, category: str, enabled: set[str], invalid: str, recover: str,
-    expected: list[str], error: str,
+    expected: list[str], error: str, confirm: str,
 ) -> None:
     """Exercise validation and recovery through the real checklist's Space and Enter bindings.
 
@@ -451,6 +452,7 @@ def test_source_checklist_blocks_invalid_back_and_accepts_corrected_keyboard_sel
         recover: Keystrokes that fix the selection and return to the parent menu.
         expected: Supported sources returned after correction.
         error: Expected validation message fragment.
+        confirm: Enter, Left, or Right must all run the same validation.
     """
     from prompt_toolkit.application import Application
     from prompt_toolkit.output import DummyOutput
@@ -485,11 +487,11 @@ def test_source_checklist_blocks_invalid_back_and_accepts_corrected_keyboard_sel
                 if phase == 0:
                     assert bullets
                     phase = 1
-                    keyboard.send_text(invalid)
+                    keyboard.send_text(invalid.replace("\r", confirm))
                 elif phase == 1 and control.error_message:
                     errors.append("".join(text for _, text in control.error_message))
                     phase = 2
-                    keyboard.send_text(recover)
+                    keyboard.send_text(recover.replace("\r", confirm))
 
             question.application.after_render += rendered
             return question

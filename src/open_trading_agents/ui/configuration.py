@@ -9,6 +9,9 @@ import questionary
 import typer
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition, IsDone
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
+from prompt_toolkit.key_binding.key_processor import KeyPress
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
@@ -96,6 +99,44 @@ _MENU_STYLE = questionary.Style([
 ])
 
 
+class BackNavigation(Exception):
+    """Return from a selection to its preceding step without cancelling setup."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        """Carry pending run assignments back to an earlier wizard question.
+
+        Args:
+            settings: Run choices to retain when leaving the agent editor.
+        """
+        super().__init__()
+        self.settings = settings
+
+
+def _navigation_keys(question: questionary.Question, *, checklist: bool = False) -> None:
+    """Add horizontal navigation without bypassing the menu's Enter validation.
+
+    Args:
+        question: Selection application receiving the extra key bindings.
+        checklist: Validate and accept checked values when returning to the parent.
+    """
+    bindings = KeyBindings()
+
+    @bindings.add("right", eager=True)
+    def forward(event: KeyPressEvent) -> None:
+        """Confirm the highlighted item through the existing Enter handler."""
+        event.app.key_processor.feed(KeyPress(Keys.ControlM, "\r"), first=True)
+
+    @bindings.add("left", eager=True)
+    def back(event: KeyPressEvent) -> None:
+        """Return to the parent, validating pending checklist changes first."""
+        if checklist:
+            forward(event)
+        else:
+            event.app.exit(exception=BackNavigation())
+
+    question.application.key_bindings = merge_key_bindings([question.application.key_bindings, bindings])
+
+
 def _menu_tokens(title: str, highlighted: bool) -> list[tuple[str, str]]:
     """Style menu actions and toggle states while retaining the moving row highlight.
 
@@ -170,7 +211,7 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
     try:
         question = questionary.select(
             label, choices=options, default=options[default], pointer="›", style=_MENU_STYLE,
-            instruction="(↑/↓ select · Enter confirm)",
+            instruction="(↑/↓ move · ← back · →/Enter select)",
             use_arrow_keys=True, use_shortcuts=False, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
             erase_when_done=True, show_description=False,
         )
@@ -186,6 +227,7 @@ def _choose(label: str, choices: list[str], default: int = 0, *, descriptions: l
             question.application.layout.container.children.insert(1, ConditionalContainer(help_window, filter=show_help))
 
         _style_menu(question, options, choices)
+        _navigation_keys(question)
         selected = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError) as exc:
         raise typer.Abort() from exc
@@ -207,13 +249,17 @@ def _confirm(label: str, default: bool = False) -> bool:
     return _choose(label, ["Yes", "No"], default=0 if default else 1) == 0
 
 
-def select_configuration_section() -> str:
+def select_configuration_section(previous: str | None = None) -> str:
     """Choose agent profiles, data-source access, or saved portfolio holdings.
+
+    Args:
+        previous: Section to highlight after returning from its editor.
 
     Returns:
         The selected configuration section, agents, data, or portfolio.
     """
-    return ("agents", "data", "portfolio")[_choose("Configuration", ["Agents", "Data sources", "Portfolio"])]
+    sections = ("agents", "data", "portfolio")
+    return sections[_choose("Configuration", ["Agents", "Data sources", "Portfolio"], sections.index(previous) if previous else 0)]
 
 
 def _portfolio_number(label: str, current: float | None, *, optional: bool = False, nonnegative: bool = False) -> float | None:
@@ -312,7 +358,10 @@ def configure_portfolio_interactively(path: Path) -> None:
         labels = [f"Currency · {portfolio.currency or 'Unknown'}", f"Available cash · {cash}", *positions, "Add position", "Save"]
         cursor = _choose("Portfolio", labels, min(cursor, len(labels) - 1))
         if cursor == 0:
-            portfolio.currency = _portfolio_currency(portfolio.currency)
+            try:
+                portfolio.currency = _portfolio_currency(portfolio.currency)
+            except BackNavigation:
+                continue
         elif cursor == 1:
             portfolio.cash = _portfolio_number("Available cash", portfolio.cash, optional=True)
         elif cursor == len(labels) - 2:
@@ -323,7 +372,10 @@ def configure_portfolio_interactively(path: Path) -> None:
             return
         else:
             index = cursor - 2
-            action = _choose(portfolio.positions[index].ticker, ["Edit", "Remove", "Back"])
+            try:
+                action = _choose(portfolio.positions[index].ticker, ["Edit", "Remove", "Back"])
+            except BackNavigation:
+                continue
             if action == 0:
                 portfolio.positions[index] = _portfolio_position(portfolio.positions[index])
             elif action == 1:
@@ -488,11 +540,12 @@ def _source_checklist(category: str, enabled: set[str]) -> list[str]:
     try:
         question = questionary.checkbox(
             dict(_SOURCE_CATEGORIES)[category], choices=options, validate=validate, pointer="›", style=style,
-            instruction="(↑/↓ move · Space toggle · Enter back)",
+            instruction="(↑/↓ move · Space toggle · ←/→/Enter back)",
             use_arrow_keys=True, use_jk_keys=False, use_emacs_keys=False, use_search_filter=False,
             show_description=False, erase_when_done=True,
         )
         _style_menu(question, options, titles)
+        _navigation_keys(question, checklist=True)
         result = question.unsafe_ask()
     except (KeyboardInterrupt, EOFError) as exc:
         raise typer.Abort() from exc
@@ -515,7 +568,10 @@ def _configure_sources(vendors: dict[str, str], overrides: dict[str, str]) -> No
         for category, title in _SOURCE_CATEGORIES:
             names = [_SOURCE_NAMES[source] for source in _SOURCE_NAMES if source in selections[category]]
             labels.append(f"{title} · {', '.join(names) or 'None'}")
-        cursor = _choose("Source selection", [*labels, "Back"], cursor)
+        try:
+            cursor = _choose("Source selection", [*labels, "Back"], cursor)
+        except BackNavigation:
+            return
         if cursor == len(_SOURCE_CATEGORIES):
             return
 
@@ -550,14 +606,20 @@ def _configure_credentials(values: dict[str, str]) -> None:
             value = values.get(key, "")
             status = _key_preview(value) if secret and value else "Set" if value else "Not set"
             labels.append(f"{label} · {status}")
-        cursor = _choose("Credentials", [*labels, "Back"], cursor)
+        try:
+            cursor = _choose("Credentials", [*labels, "Back"], cursor)
+        except BackNavigation:
+            return
         if cursor == len(fields):
             return
 
         key, label, prompt, secret, explanation = fields[cursor]
         typer.echo(explanation)
         if values.get(key):
-            action = _choose(label, ["Update", "Remove", "Back"])
+            try:
+                action = _choose(label, ["Update", "Remove", "Back"])
+            except BackNavigation:
+                continue
             if action == 1:
                 values[key] = ""
                 continue
@@ -721,28 +783,47 @@ def _runtime(current: HarnessSettings, catalogs: dict[str, ModelCatalog]) -> Har
         The selected runtime without changing configuration files.
     """
     kinds = ["pi", "codex", "claude-code"]
-    kind = kinds[_choose("Harness", kinds, kinds.index(current.kind))]
-    selected = current if current.kind == kind else HarnessSettings(kind=kind)
-    catalog = _catalog(selected, catalogs)
-    provider = _provider(selected, catalog)
-    if provider != selected.provider:
-        selected = selected.model_copy(update={"provider": provider, "model": None, "effort": None})
-        if selected.kind == "codex":
-            catalog = _catalog(selected, catalogs)
-    model, provider = _model(selected, catalog)
-    effort = selected.effort if (model, provider) == (selected.model, selected.provider) else None
-    selected = selected.model_copy(update={"model": model, "provider": provider, "effort": effort})
-    return selected.model_copy(update={"effort": _effort(selected, catalog)})
+    selected = current.model_copy(deep=True)
+    step = 0
+    while True:
+        try:
+            if step == 0:
+                kind = kinds[_choose("Harness", kinds, kinds.index(selected.kind))]
+                if kind != selected.kind:
+                    selected = HarnessSettings(kind=kind)
+            elif step == 1:
+                catalog = _catalog(selected, catalogs)
+                provider = _provider(selected, catalog)
+                if provider != selected.provider:
+                    selected = selected.model_copy(update={"provider": provider, "model": None, "effort": None})
+            elif step == 2:
+                catalog = _catalog(selected, catalogs)
+                model, provider = _model(selected, catalog)
+                effort = selected.effort if (model, provider) == (selected.model, selected.provider) else None
+                selected = selected.model_copy(update={"model": model, "provider": provider, "effort": effort})
+            else:
+                return selected.model_copy(update={"effort": _effort(selected, _catalog(selected, catalogs))})
+        except BackNavigation:
+            if step == 0:
+                raise
+            step -= 1
+            if step == 1 and selected.kind == "claude-code":
+                step = 0
+            continue
+        step += 1
 
 
-def select_analysis_date() -> str:
+def select_analysis_date(previous: str | None = None) -> str:
     """Ask for the analysis cutoff, defaulting to the machine's local calendar date.
+
+    Args:
+        previous: Previously entered date when returning from a later question.
 
     Returns:
         A valid YYYY-MM-DD date no later than today.
     """
     while True:
-        value = typer.prompt("Analysis date (YYYY-MM-DD)", default=date.today().isoformat()).strip()
+        value = typer.prompt("Analysis date (YYYY-MM-DD)", default=previous or date.today().isoformat()).strip()
         try:
             return validate_date(value)
         except ValueError:
@@ -771,6 +852,65 @@ def select_output_directory(default_directory: Path) -> Path | None:
             continue
 
         return None if directory == default_directory else directory
+
+
+@dataclass
+class RunSetup:
+    ticker: str | None
+    analysis_date: str | None
+    settings: Settings
+    portfolio: Portfolio | None
+    output_dir: Path | None
+
+
+def select_run_inputs(
+    settings: Settings, ticker: str | None, analysis_date: str | None, portfolio: Portfolio | None,
+    output_dir: Path | None, *, ask_portfolio: bool,
+) -> RunSetup:
+    """Collect run inputs with backward navigation before creating any run files.
+
+    Args:
+        settings: Initial configuration and explicit runtime defaults.
+        ticker: Explicit ticker, or None to ask.
+        analysis_date: Explicit date, or None to ask.
+        portfolio: Explicit holdings, or the initial unknown portfolio.
+        output_dir: Explicit output parent, or None to ask.
+        ask_portfolio: Whether to offer the saved portfolio.
+
+    Returns:
+        Completed inputs, retaining choices when earlier questions are revisited.
+    """
+    selected = RunSetup(ticker, analysis_date, settings, portfolio, output_dir)
+    steps = (["portfolio"] if ask_portfolio else []) + (["ticker"] if ticker is None else [])
+    steps += (["date"] if analysis_date is None else []) + ["depth", "agents"]
+    steps += ["output"] if output_dir is None else []
+    step = 0
+    while step < len(steps):
+        try:
+            match steps[step]:
+                case "portfolio":
+                    selected.portfolio = select_run_portfolio()
+                case "ticker":
+                    selected.ticker = (typer.prompt("Ticker", default=selected.ticker)
+                                       if selected.ticker is not None else typer.prompt("Ticker"))
+                case "date":
+                    selected.analysis_date = (select_analysis_date(selected.analysis_date)
+                                              if selected.analysis_date is not None else select_analysis_date())
+                case "depth":
+                    selected.settings = select_research_depth(selected.settings)
+                case "agents":
+                    selected.settings = select_agent_settings(selected.settings)
+                case "output":
+                    selected.output_dir = select_output_directory(selected.output_dir or selected.settings.state_dir / "runs")
+        except BackNavigation as back:
+            if back.settings is not None:
+                selected.settings = back.settings
+            if step == 0:
+                raise
+            step -= 1
+            continue
+        step += 1
+    return selected
 
 
 def select_research_depth(settings: Settings) -> Settings:
@@ -915,8 +1055,14 @@ def _agent_profile(
     name, separator, details = labels[default].partition(" · ")
     labels[default] = f"{name} (selected){separator}{details}"
     description = _GROUP_DESCRIPTIONS.get(label) or next((_ROLE_DESCRIPTIONS[key] for key, role in ROLES.items() if role.name == label), "")
-    choice = _choose(label, [*labels, "Configure for this run"], default, descriptions=[description] * (len(labels) + 1))
-    return ProfileChoice(_runtime(current, catalogs)) if choice == len(selections) else selections[choice]
+    while True:
+        choice = _choose(label, [*labels, "Configure for this run"], default, descriptions=[description] * (len(labels) + 1))
+        if choice != len(selections):
+            return selections[choice]
+        try:
+            return ProfileChoice(_runtime(current, catalogs))
+        except BackNavigation:
+            default = choice
 
 
 def select_agent_settings(settings: Settings) -> Settings:
@@ -930,12 +1076,19 @@ def select_agent_settings(settings: Settings) -> Settings:
     """
     profiles = {name: load_preset(name) for name in list_presets()}
     catalogs: dict[str, ModelCatalog] = {}
-    mode = _choose("Agent configuration", ["Simple", "Advanced"])
     selected = settings.model_copy(deep=True)
-    if mode == 0:
-        return _simple_agent_settings(selected, profiles, catalogs)
-
-    return _advanced_agent_settings(selected, profiles, catalogs)
+    mode = 0
+    while True:
+        try:
+            mode = _choose("Agent configuration", ["Simple", "Advanced"], mode)
+        except BackNavigation as back:
+            raise BackNavigation(selected) from back
+        try:
+            if mode == 0:
+                return _simple_agent_settings(selected, profiles, catalogs)
+            return _advanced_agent_settings(selected, profiles, catalogs)
+        except BackNavigation:
+            continue
 
 
 def _simple_agent_settings(
@@ -969,22 +1122,30 @@ def _simple_agent_settings(
         manager = selected.model_settings(True)
         labels = [f"{label} · {_profile_label(profile, profiles, names.get(key), selected.default_preset)}"
                   for (key, label), profile in zip(groups, (working, manager, selected.model_settings(role="chat")), strict=True)]
-        cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
+        try:
+            cursor = _choose("Simple agent configuration", [*labels, "Continue"], cursor)
+        except BackNavigation:
+            role_names = {key: names.get("chat" if key == "chat" else "deep" if role.deep else "quick") for key, role in ROLES.items()}
+            _remember_agent_presets(selected, profiles, role_names)
+            raise
         if cursor == len(groups):
             role_names = {key: names.get("chat" if key == "chat" else "deep" if role.deep else "quick") for key, role in ROLES.items()}
             return _remember_agent_presets(selected, profiles, role_names)
 
         key, label = groups[cursor]
-        choice = _agent_profile(
-            label,
-            selected.model_settings(role="chat") if key == "chat" else working if cursor == 0 else manager,
-            profiles,
-            selected.default_preset,
-            catalogs,
-            same_as=working if cursor == 1 else None,
-            inherit_default=inherited_manager if cursor == 1 else False,
-            current_name=names.get(key),
-        )
+        try:
+            choice = _agent_profile(
+                label,
+                selected.model_settings(role="chat") if key == "chat" else working if cursor == 0 else manager,
+                profiles,
+                selected.default_preset,
+                catalogs,
+                same_as=working if cursor == 1 else None,
+                inherit_default=inherited_manager if cursor == 1 else False,
+                current_name=names.get(key),
+            )
+        except BackNavigation:
+            continue
         profile = HarnessSettings.model_validate(choice.settings.model_dump())
         if key == "quick":
             selected.quick = profile
@@ -1023,27 +1184,37 @@ def _advanced_agent_settings(
     while True:
         labels = [f"{ROLES[key].name} · {_profile_label(selected.model_settings(role=key), profiles, names.get(key), selected.default_preset)}"
                   for key in roles]
-        cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
+        try:
+            cursor = _choose("Advanced agent configuration", [*labels, "Continue"], cursor)
+        except BackNavigation:
+            _remember_agent_presets(selected, profiles, names)
+            raise
         if cursor == len(roles):
             return _remember_agent_presets(selected, profiles, names)
 
         key = roles[cursor]
         role = ROLES[key]
         current = selected.model_settings(role=key)
-        choice = _agent_profile(
-            role.name,
-            current,
-            profiles,
-            selected.default_preset,
-            catalogs,
-            current_name=names.get(key),
-        )
+        try:
+            choice = _agent_profile(
+                role.name,
+                current,
+                profiles,
+                selected.default_preset,
+                catalogs,
+                current_name=names.get(key),
+            )
+        except BackNavigation:
+            continue
         selected.agents[key] = HarnessSettings.model_validate(choice.settings.model_dump())
         names[key] = choice.name
 
 
-def _preset() -> tuple[str, bool]:
+def _preset(previous: str | None = None) -> tuple[str, bool]:
     """Choose a preset name and confirm replacement of an existing profile.
+
+    Args:
+        previous: Name entered before navigating back from the final confirmation.
 
     Returns:
         The preset name and replacement permission.
@@ -1052,7 +1223,7 @@ def _preset() -> tuple[str, bool]:
         typer.echo(f"Existing presets: {', '.join(names)}")
 
     while True:
-        name = typer.prompt("Preset name").strip()
+        name = (typer.prompt("Preset name", default=previous) if previous else typer.prompt("Preset name")).strip()
         try:
             path = preset_path(name)
         except ValueError as exc:
@@ -1081,11 +1252,20 @@ def delete_profile_interactively(path: Path) -> None:
         except (ValueError, OSError):
             description = "Unreadable profile"
         labels.append(f"{name} · {description}")
-    name = names[_choose("Saved profile to delete", labels)]
-    typer.echo("Default selections for this profile will also be cleared.")
-    if not _confirm(f"Delete saved profile '{name}'?"):
-        typer.echo("Deletion cancelled.")
-        return
+    cursor = 0
+    while True:
+        cursor = _choose("Saved profile to delete", labels, cursor)
+        name = names[cursor]
+        typer.echo("Default selections for this profile will also be cleared.")
+        try:
+            confirmed = _confirm(f"Delete saved profile '{name}'?")
+        except BackNavigation:
+            continue
+        if not confirmed:
+            typer.echo("Deletion cancelled.")
+            return
+        break
+
     delete_preset(name, path)
     typer.echo(f"Deleted profile: {name}")
 
@@ -1096,16 +1276,40 @@ def configure_interactively(path: Path) -> None:
     Args:
         path: Application configuration file to create or update.
     """
-    if list_presets() and _choose("Configuration", ["Create or update profile", "Delete saved profile"]) == 1:
-        delete_profile_interactively(path)
-        return
     settings = load_settings(path) if path.exists() else Settings()
     catalogs: dict[str, ModelCatalog] = {}
+    harness = settings.harness
+    name = None
+    action = 0
+    step = 0
     typer.echo("Ctrl+C cancels setup.")
     typer.echo("\nAgent profile")
-    harness = _runtime(settings.harness, catalogs)
-    name, overwrite = _preset()
-    make_default = _confirm(f"Use preset '{name}' by default?", default=settings.default_preset in (None, name))
+    while True:
+        if step == 0:
+            if list_presets():
+                action = _choose("Configuration", ["Create or update profile", "Delete saved profile"], action)
+                if action == 1:
+                    try:
+                        delete_profile_interactively(path)
+                    except BackNavigation:
+                        continue
+                    return
+            step = 1
+        try:
+            if step == 1:
+                harness = _runtime(harness, catalogs)
+            elif step == 2:
+                name, overwrite = _preset(name) if name else _preset()
+            else:
+                make_default = _confirm(f"Use preset '{name}' by default?", default=settings.default_preset in (None, name))
+                break
+        except BackNavigation:
+            if step == 1 and not list_presets():
+                raise
+            step -= 1
+            continue
+        step += 1
+    assert name is not None
 
     saved = save_configuration(path, harness, settings.quick, settings.deep)
     target = save_preset(name, harness, overwrite=overwrite)
