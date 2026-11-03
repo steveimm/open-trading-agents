@@ -81,6 +81,7 @@ class ChatSection:
     index: TranscriptIndex = field(init=False)
 
     def __post_init__(self) -> None:
+        self.document.markdown = self.kind in {"text", "report", "reasoning", "prompt", "system"}
         self.index = TranscriptIndex(self.document)
 
     def replace(self, text: str, display: str | None = None) -> None:
@@ -100,7 +101,7 @@ class ChatSection:
         if normalized.startswith(previous):
             self.document.append(shown[len(previous):] if shown == normalized else normalized[len(previous):], style)
         else:
-            self.document = Transcript()
+            self.document = Transcript(markdown=self.document.markdown)
             self.document.append(shown, style)
             self.index = TranscriptIndex(self.document)
 
@@ -126,7 +127,7 @@ class ChatSection:
         if self.kind != "text":
             return 0, self.index.height
 
-        lines = self.document.lines
+        lines = self.index.lines
         first, last = 0, len(lines) - 1
         while first <= last and not lines[first].plain.strip():
             first += 1
@@ -136,7 +137,8 @@ class ChatSection:
             return 0, 0
 
         start = self.index.offsets[first]
-        end = self.index.row_at(last, len(lines[last].plain.rstrip()) - 1) + 1
+        local = max(0, bisect.bisect_right(self.index.starts[last], len(lines[last].plain.rstrip()) - 1) - 1)
+        end = self.index.offsets[last] + local + 1
         return start, end - start
 
 

@@ -294,7 +294,7 @@ class TradingApp(App[None]):
             self.prompt_views[stage] = {}
             for key in roles:
                 name = ROLES[key].name
-                document = Transcript()
+                document = Transcript(markdown=True)
                 document.append(system_prompt(ROLES[key], output_language), "#a9bcd3")
                 presentation = self._agent_presentations.get(name)
                 view = AgentPromptView(document, presentation, id=f"system-{stage}-{key}")
@@ -307,7 +307,7 @@ class TradingApp(App[None]):
         self._debate_focus = {stage: len(views) for stage, views in self.prompt_views.items()}
         self._debate_fullscreen: dict[str, ChatView | TranscriptView | None] = {stage: None for stage in DEBATE_STAGES}
         self.memory_view = ChatView(agent_presentations=self._agent_presentations, id="memory-transcript")
-        self.report_document = Transcript()
+        self.report_document = Transcript(markdown=True)
         self.report_view = TranscriptView(self.report_document, id="transcript-reports")
         self._render_views = [*self.agent_views.values(), *self.stage_views.values(), *self._prompt_targets, self.memory_view, self.report_view]
         self._pending: deque[AgentEvent] = deque()
@@ -459,7 +459,7 @@ class TradingApp(App[None]):
         if kind == "system" and agent in self.prompt_views.get(stage, {}):
             view = self.prompt_views[stage][agent]
             if view.document.plain() != event.text:
-                document = Transcript()
+                document = Transcript(markdown=True)
                 document.append(event.text, "#a9bcd3")
                 view.set_document(document)
                 view.navigate("home")
@@ -531,7 +531,7 @@ class TradingApp(App[None]):
             self._refresh_tabs()
         if kind == "report" and self._reports.get(agent) != event.text:
             self._reports[agent] = event.text
-            document = Transcript()
+            document = Transcript(markdown=True)
             for name, report in self._reports.items():
                 document.heading(name)
                 document.append(report + "\n", "#b5e3c8")
@@ -552,7 +552,7 @@ class TradingApp(App[None]):
             text = await asyncio.to_thread(path.read_text, encoding="utf-8")
         except OSError:
             return
-        document = Transcript()
+        document = Transcript(markdown=True)
         document.append(text, "#b5e3c8")
         self.report_document = document
         self.report_view.set_document(document)

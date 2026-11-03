@@ -255,7 +255,7 @@ async def test_text_boundaries_do_not_create_gaps_before_parallel_tools(trailing
             tool = next(index for index, row in enumerate(rows) if "▸ get_macro_indicators" in row)
             assert first == 1
             assert last == first + 2
-            assert "│     Check the evidence." in rows[last]
+            assert "Check the evidence." in rows[last]
             assert tool == last + 1 and "▸ search_web" in rows[tool + 1]
             assert not rows[first + 1][2:-2].strip()
 

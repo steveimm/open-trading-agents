@@ -17,6 +17,7 @@ from textual.selection import Selection
 from textual.strip import Strip
 
 from open_trading_agents.analysis.models import AgentEvent
+from open_trading_agents.ui.markdown import MarkdownLayout
 
 CHANNEL_COLORS = {
     "system": "#939caa",
@@ -106,8 +107,13 @@ def tool_preview(text: str) -> str:
 
 
 class Transcript:
-    def __init__(self) -> None:
-        """Keep complete logical lines independently of terminal rendering."""
+    def __init__(self, *, markdown: bool = False) -> None:
+        """Keep complete logical lines independently of terminal rendering.
+
+        Args:
+            markdown: Format prose while retaining its original source.
+        """
+        self.markdown = markdown
         self.lines = [Text()]
         self.revision = 0
         self.last_channel = ""
@@ -188,7 +194,8 @@ class Transcript:
             title: Short contextual heading.
         """
         prefix = "\n\n" if any(line.plain for line in self.lines) else ""
-        self.append(f"{prefix}{title}\n", "bold #b7c2d4")
+        marker = "## " if self.markdown else ""
+        self.append(f"{prefix}{marker}{title}\n", "bold #b7c2d4")
 
     def plain(self) -> str:
         """Return the full transcript for export and verification.
@@ -207,6 +214,8 @@ class TranscriptIndex:
             document: Styled logical lines owned by a transcript section.
         """
         self.document = document
+        self.lines = document.lines
+        self.markdown = MarkdownLayout() if document.markdown else None
         self.width = 0
         self.revision = -1
         self.offsets = [0]
@@ -227,7 +236,18 @@ class TranscriptIndex:
             return False
         resized = width != self.width
         start = 0 if resized or self.revision < 0 else max(0, len(self.starts) - 1)
-        if self.revision < self.document.rewrite_revision:
+        if self.markdown is not None:
+            lines = self.markdown.render(self.document.plain(), width)
+            if not resized and self.revision >= 0:
+                start = 0
+                for old, new in zip(self.lines, lines, strict=False):
+                    if old != new:
+                        break
+                    start += 1
+            self.lines = lines
+        else:
+            self.lines = self.document.lines
+        if self.markdown is None and self.revision < self.document.rewrite_revision:
             start = min(start, self.document.rewrite_line)
         if resized:
             self.cache.clear()
@@ -235,7 +255,7 @@ class TranscriptIndex:
             for key in list(self.cache):
                 if key[0] >= start:
                     del self.cache[key]
-        self.starts[start:] = [[0, *divide_line(line.plain, width, fold=True)] for line in self.document.lines[start:]]
+        self.starts[start:] = [[0, *divide_line(line.plain, width, fold=True)] for line in self.lines[start:]]
         self.offsets = self.offsets[:start + 1]
         for starts in self.starts[start:]:
             self.offsets.append(self.offsets[-1] + len(starts))
@@ -260,6 +280,9 @@ class TranscriptIndex:
         if index < 0:
             return 0, 0
         local = min(max(0, row - self.offsets[index]), len(self.starts[index]) - 1)
+        if self.markdown is not None:
+            line, offset = self.markdown.anchors[index]
+            return line, offset + self.starts[index][local]
         return index, self.starts[index][local]
 
     def row_at(self, line: int, character: int) -> int:
@@ -274,6 +297,10 @@ class TranscriptIndex:
         """
         if not self.starts:
             return 0
+        if self.markdown is not None:
+            index = max(0, bisect.bisect_right(self.markdown.anchors, (line, character)) - 1)
+            offset = max(0, character - self.markdown.anchors[index][1])
+            return self.offsets[index] + max(0, bisect.bisect_right(self.starts[index], offset) - 1)
         line = min(line, len(self.starts) - 1)
         return self.offsets[line] + max(0, bisect.bisect_right(self.starts[line], character) - 1)
 
@@ -293,7 +320,7 @@ class TranscriptIndex:
             return Strip.blank(self.width, base_style)
         key = index, local
         if key not in self.cache:
-            line = self.document.lines[index]
+            line = self.lines[index]
             starts = self.starts[index]
             start = starts[local]
             stop = starts[local + 1] if local + 1 < len(starts) else len(line)
