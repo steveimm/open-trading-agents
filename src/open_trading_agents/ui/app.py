@@ -25,6 +25,7 @@ from open_trading_agents.analysis.prompts import ROLES, system_prompt
 from open_trading_agents.reporting.usage import format_usage as usage_label
 from open_trading_agents.reporting.usage import request_usage
 from open_trading_agents.ui.chat import AgentPresentation, ChatView, TitleTooltip
+from open_trading_agents.ui.clipboard import copy_desktop_text
 from open_trading_agents.ui.transcript import FollowScrollView, Transcript, TranscriptView, literal_text
 
 DEBATE_ROLES = {
@@ -584,8 +585,8 @@ class TradingApp(App[None]):
         if self._action_available("compose_chat"):
             self.query_one("#chat-input", Input).focus()
 
-    def on_text_selected(self, event: events.TextSelected) -> None:
-        """Send a completed transcript selection to the terminal clipboard.
+    async def on_text_selected(self, event: events.TextSelected) -> None:
+        """Send a completed selection to the terminal and local desktop clipboard.
 
         Args:
             event: Mouse selection completed by the screen.
@@ -594,6 +595,8 @@ class TradingApp(App[None]):
             text = self.screen.get_selected_text()
             if text:
                 self.copy_to_clipboard(text)
+                if not self.is_headless:
+                    await asyncio.to_thread(copy_desktop_text, text)
 
     def action_leave_chat_input(self) -> None:
         """Return to the conversation, preserving any unfinished question."""

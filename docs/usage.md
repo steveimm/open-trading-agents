@@ -50,7 +50,7 @@ The terminal tab/window title shows the ticker and an animated activity indicato
 
 Click a turn or detail header to collapse it, or select it with `[` / `]` and press Space. Collapsed turns continue receiving output. `m` shows memory activity and reflection work when available.
 
-Drag over transcript, tool, system-prompt, or report text to highlight it. Releasing the mouse copies the selection through the terminal clipboard protocol (OSC 52), without an extra shortcut. Selection pauses stream-following. Your terminal must allow OSC 52 clipboard writes. If it does not, use terminal-native selection, commonly Shift while dragging, followed by Ctrl+Shift+C. Ctrl+C still quits.
+Drag over transcript, tool, system-prompt, or report text to highlight it. Releasing the mouse copies the selection without an extra shortcut. Local runs use an installed desktop clipboard utility (`wl-copy`, `xclip`, `xsel`, or macOS `pbcopy`), so copying also works in terminals without OSC 52 support. Remote sessions use the terminal clipboard protocol (OSC 52) and require terminal support. Selection pauses stream-following. Terminal-native selection is also available, commonly Shift while dragging followed by Ctrl+Shift+C. Ctrl+C still quits.
 
 Scrolling upward pauses stream-following. Scroll to the bottom or press End to follow again. Tool previews longer than 10,000 characters show the beginning and end with an omitted-character count. Complete content remains in the saved transcript.
 
